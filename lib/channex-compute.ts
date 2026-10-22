@@ -200,14 +200,6 @@ export async function computeChannexValues(
         v.max_stay = row.maxStay;
         hasValue = true;
       }
-      if (row?.cta) {
-        v.closed_to_arrival = true;
-        hasValue = true;
-      }
-      if (row?.ctd) {
-        v.closed_to_departure = true;
-        hasValue = true;
-      }
       const blocked = invBlocks.some(
         (b) =>
           b.from_date <= date &&
@@ -216,9 +208,15 @@ export async function computeChannexValues(
           (b.scope === "room_type" ||
             (b.scope === "channel" && b.channel_code === p.channel_code))
       );
-      if (row?.stopSell || blocked) {
-        v.stop_sell = true;
-        hasValue = true;
+      // Luon gui ro trang thai cac cong tac, ke ca false: neu
+      // thieu truong, Channex giu gia tri cu — viec TAT trong
+      // PMS se khong bao gio an sang Channex.
+      if (!p.derived_from_id || row) {
+        v.stop_sell = !!(row?.stopSell || blocked);
+        v.closed_to_arrival = !!row?.cta;
+        v.closed_to_departure = !!row?.ctd;
+        if (v.stop_sell || v.closed_to_arrival || v.closed_to_departure || p.derived_from_id)
+          hasValue = true;
       }
       if (hasValue) restrictions.push(v);
     }

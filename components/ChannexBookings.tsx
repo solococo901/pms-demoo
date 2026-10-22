@@ -94,12 +94,17 @@ export default function ChannexBookings() {
     setError(null);
     setMessage(null);
     try {
-      const [typesRes, plansRes] = await Promise.all([
+      const [typesRes, plansRes, hotelRes] = await Promise.all([
         supabase.from("room_types").select("id, channex_id").eq("hotel_id", HOTEL_ID).not("channex_id", "is", null),
-        supabase.from("rate_plans").select("id, channex_id").eq("hotel_id", HOTEL_ID).not("channex_id", "is", null),
+        supabase.from("rate_plans").select("id, channex_id, room_type_id").eq("hotel_id", HOTEL_ID).not("channex_id", "is", null),
+        supabase.from("hotels").select("currency").eq("id", HOTEL_ID).single(),
       ]);
-      const typeId = (typesRes.data ?? []).find((t) => t.id === "deluxe")?.channex_id;
-      const planId = (plansRes.data ?? []).find((p) => p.id === "bdc-flex")?.channex_id;
+      const typeRow = (typesRes.data ?? [])[0];
+      const planRow = (plansRes.data ?? []).find((p) => p.room_type_id === typeRow?.id);
+      const typeId = typeRow?.channex_id;
+      const planId = planRow?.channex_id;
+      const currency = hotelRes.data?.currency ?? "VND";
+      const dayRate = currency === "USD" ? "100.00" : "1000000.00";
       if (!typeId || !planId)
         throw new Error("Chưa mapping loại phòng/gói giá trên Channex — chạy Bước 1 và 2 trước.");
       const now = new Date();
@@ -118,7 +123,7 @@ export default function ChannexBookings() {
             arrival_date: d1,
             departure_date: d3,
             arrival_hour: "15:00",
-            currency: "VND",
+            currency,
             payment_collect: "property",
             notes: "Đơn test tạo từ PMS",
             customer: {
@@ -131,7 +136,7 @@ export default function ChannexBookings() {
               {
                 room_type_id: typeId,
                 rate_plan_id: planId,
-                days: { [d1]: "1000000.00", [d2]: "1000000.00" },
+                days: { [d1]: dayRate, [d2]: dayRate },
                 occupancy: { adults: 2, children: 0, infants: 0, ages: [] },
                 guests: [{ name: "Khách", surname: "Test Channex" }],
                 services: [],
