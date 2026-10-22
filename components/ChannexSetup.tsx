@@ -11,7 +11,7 @@
 // derived plans are created in step C3b — by design.
 // ============================================================
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
 
@@ -48,7 +48,7 @@ export default function ChannexSetup() {
   const [msg, setMsg] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
 
-  async function load() {
+  const load = useCallback(async () => {
     const [connRes, hotelRes, typesRes, roomsRes, plansRes] = await Promise.all([
       supabase.from("channel_connections").select("*").eq("hotel_id", HOTEL_ID).eq("provider", "channex").single(),
       supabase.from("hotels").select("*").eq("id", HOTEL_ID).single(),
@@ -103,9 +103,9 @@ export default function ChannexSetup() {
       parentPmsId: p.derived_from_id ?? null, formulaId: p.formula_id ?? null,
     })));
     setLoading(false);
-  }
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const missingTypes = types.filter((t) => !t.channexId);
   const missingPlans = plans.filter((p) => !p.channexId && !p.derived);
@@ -203,8 +203,8 @@ export default function ChannexSetup() {
     setBusyDerived(false);
   }
 
-  const row = (label: string, done: boolean, note?: string) => (
-    <li key={label} className="flex items-center justify-between rounded-lg bg-[#f4f7fb] px-3 py-1.5 text-sm">
+  const row = (label: string, done: boolean, note?: string, rowKey?: string) => (
+    <li key={rowKey ?? label} className="flex items-center justify-between rounded-lg bg-[#f4f7fb] px-3 py-1.5 text-sm">
       <span className="text-[#17293e]">{label}</span>
       <span className={done ? "font-medium text-[#0e7a56]" : "text-[#68707a]"}>
         {done ? "✓ Đã có trên Channex" : note ?? "○ Chưa tạo"}
@@ -230,7 +230,8 @@ export default function ChannexSetup() {
               row(
                 `Gói giá OTA — ${p.name}`,
                 !!p.channexId,
-                p.derived ? "○ Gói kế thừa — chưa tạo" : "○ Chưa tạo"
+                p.derived ? "○ Gói kế thừa — chưa tạo" : "○ Chưa tạo",
+                p.id
               )
             )}
           </ul>

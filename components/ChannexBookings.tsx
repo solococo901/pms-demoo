@@ -29,6 +29,7 @@ type CxAttrs = {
   booking_id: string;
   ota_reservation_code?: string;
   ota_name?: string;
+  meta?: { source?: string };
   status: string; // new | modified | cancelled
   rooms?: CxRoom[];
   customer?: { name?: string; surname?: string; phone?: string; mail?: string };
@@ -44,6 +45,7 @@ type CxRevision = { id: string; attributes: CxAttrs };
 
 function channelFromOta(otaName?: string): string {
   const n = (otaName ?? "").toLowerCase();
+  if (n.includes("website") || n.includes("direct")) return "website";
   if (n.includes("booking")) return "booking_com";
   if (n.includes("expedia")) return "expedia";
   if (n.includes("airbnb")) return "airbnb";
@@ -72,7 +74,7 @@ function addDaysStr(base: Date, days: number): string {
 
 export default function ChannexBookings() {
   const [propertyId, setPropertyId] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"" | "pull" | "test">("");
+  const [busy, setBusy] = useState<"" | "pull" | "test" | "testbdc">("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState<string[]>([]);
@@ -88,9 +90,9 @@ export default function ChannexBookings() {
       });
   }, []);
 
-  async function createTestBooking() {
+  async function createTestBooking(variant: "offline" | "bookingcom" = "offline") {
     if (!propertyId) return;
-    setBusy("test");
+    setBusy(variant === "bookingcom" ? "testbdc" : "test");
     setError(null);
     setMessage(null);
     try {
@@ -118,13 +120,13 @@ export default function ChannexBookings() {
         body: JSON.stringify({
           booking: {
             property_id: propertyId,
-            ota_name: "Offline",
+            ota_name: variant === "bookingcom" ? "Booking.com" : "Offline",
             ota_reservation_code: code,
             arrival_date: d1,
             departure_date: d3,
             arrival_hour: "15:00",
             currency,
-            payment_collect: "property",
+            payment_collect: variant === "bookingcom" ? "ota" : "property",
             notes: "Đơn test tạo từ PMS",
             customer: {
               name: "Khách",
@@ -238,6 +240,12 @@ export default function ChannexBookings() {
           money(a.amount) ||
           rooms.reduce((s, r) => s + money(r.amount), 0);
         const collector = a.payment_collect === "ota" ? "channel_collect" : "hotel_collect";
+        // Don Offline (CRS): nguon con nam o meta.source (website /
+        // walk-in / telephone / email), ota_name chi ghi "Offline".
+        const sourceName =
+          a.ota_name && a.ota_name.toLowerCase() !== "offline"
+            ? a.ota_name
+            : (a.meta?.source ?? a.ota_name);
         const guestName =
           [a.customer?.name, a.customer?.surname].filter(Boolean).join(" ").trim() ||
           "Khách OTA";
@@ -246,7 +254,7 @@ export default function ChannexBookings() {
             a.notes ?? null,
             a.ota_reservation_code ? `Mã OTA: ${a.ota_reservation_code}` : null,
             rooms.length > 1 ? `Đơn gồm ${rooms.length} phòng (Channex)` : null,
-            `Qua Channex (${a.ota_name ?? "OTA"})`,
+            `Qua Channex (${sourceName ?? "OTA"})`,
           ]
             .filter(Boolean)
             .join(" · ") || null;
@@ -257,7 +265,7 @@ export default function ChannexBookings() {
           const patch: Record<string, unknown> = {
             guest_name: guestName,
             guest_phone: a.customer?.phone ?? null,
-            channel_code: channelFromOta(a.ota_name),
+            channel_code: channelFromOta(sourceName),
             payment_collector: collector,
             room_type_id: roomTypeId,
             rate_plan_id: ratePlanId,
@@ -283,7 +291,7 @@ export default function ChannexBookings() {
             account_id: ACCOUNT_ID,
             guest_name: guestName,
             guest_phone: a.customer?.phone ?? null,
-            channel_code: channelFromOta(a.ota_name),
+            channel_code: channelFromOta(sourceName),
             payment_collector: collector,
             room_type_id: roomTypeId,
             rate_plan_id: ratePlanId,
@@ -368,11 +376,19 @@ export default function ChannexBookings() {
           </button>
           <button
             className="cb-btn-ghost"
-            onClick={createTestBooking}
+            onClick={() => createTestBooking()}
             disabled={busy !== ""}
             style={{ padding: "8px 14px", fontSize: 13 }}
           >
             {busy === "test" ? "Đang tạo..." : "Tạo đơn test trên Channex"}
+          </button>
+          <button
+            className="cb-btn-ghost"
+            onClick={() => createTestBooking("bookingcom")}
+            disabled={busy !== ""}
+            style={{ padding: "8px 14px", fontSize: 13 }}
+          >
+            {busy === "testbdc" ? "Đang tạo..." : "Tạo đơn test Booking.com (kênh thu hộ)"}
           </button>
         </div>
       )}
