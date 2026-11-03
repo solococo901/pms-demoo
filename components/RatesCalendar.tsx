@@ -1,11 +1,23 @@
 "use client";
 // ============================================================
-// FILE RATECAL3c — components/RatesCalendar.tsx (ezCloud-style
+// FILE RATECAL3d — components/RatesCalendar.tsx (ezCloud-style
 // "Ban phong" selling grid, Cloudbeds palette)
-// Fix 2026-11-04 so voi RATECAL3: them lai import ROOMS
-// (danh sach phong mau) — RATECAL3 cat nham khi gon import
-// nen trang bao "ROOMS is not defined". Con lai giong het
-// RATECAL3.
+// Fix 2026-11-04 so voi RATECAL3c: sua panel Cap nhat hang
+// loat (truoc day bam Ap dung ma gia khong doi):
+//  1) o Loai phong mac dinh tro vao loai phong mau cu
+//     ("deluxe") khong co trong du lieu that (toa test chi
+//     co Twin/Double) nen ghi bi loi khoa ngoai — gio tu
+//     chon loai phong that dau tien khi tai xong;
+//  2) khoang ngay mac dinh la thang 10 (ngay mau cu),
+//     lech khoi 14 ngay dang xem — gio mo panel la ngay
+//     tu theo dung cua so luoi dang hien;
+//  3) che do mac dinh "thay doi %" khong co tac dung len
+//     o chua co gia (tang % cua 0 van la 0), va cach lam
+//     tron cu (tron 1000) lam gia USD thanh 0 — gio mac
+//     dinh la "dat gia co dinh", tang/giam chi ap vao o
+//     da co gia (bo qua o trong, khong ghi 0), lam tron
+//     theo tien te (USD tron 1, VND tron 1000).
+// Con lai giong het RATECAL3c.
 // TWO TOP-LEVEL TABS:
 //   - Tab 1 "Ton phong": luoi so phong trong theo tung loai
 //     phong x tung ngay. Ton la QUY CHUNG moi kenh — khong
@@ -127,7 +139,7 @@ export default function RatesCalendar() {
   const [bulkFrom, setBulkFrom] = useState(TODAY);
   const [bulkTo, setBulkTo] = useState(addDays(TODAY, 13));
   const [bulkDays, setBulkDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
-  const [bulkMode, setBulkMode] = useState<"set" | "percent" | "amount">("percent");
+  const [bulkMode, setBulkMode] = useState<"set" | "percent" | "amount">("set");
   const [bulkValue, setBulkValue] = useState<number>(10);
 
   // Chong tao trung goi chuan khi bam nhanh 2 o cung kenh + loai.
@@ -204,6 +216,12 @@ export default function RatesCalendar() {
             active: t.active,
           }))
         );
+        // Loai phong mac dinh cua panel Dong ban + Cap nhat
+        // hang loat dang tro vao id mau cu — doi sang loai
+        // phong that dau tien neu id cu khong co trong DB.
+        const dbTypeIds = (typesRes.data ?? []).map((t) => t.id);
+        setBulkType((prev) => (dbTypeIds.includes(prev) ? prev : dbTypeIds[0]));
+        setIbType((prev) => (dbTypeIds.includes(prev) ? prev : dbTypeIds[0]));
       }
       const dbPlans: RatePlan[] = (plansRes.data ?? []).map((row) => ({
         id: row.id,
@@ -476,10 +494,16 @@ export default function RatesCalendar() {
     if (!bulkType) return;
     const plan = await ensureStandardPlan(bulkChannel, bulkType);
     if (!plan) return;
+    const step = currency === "USD" ? 1 : 1000;
     for (const date of bulkDates) {
-      const current = plan.prices[date] ?? 0;
+      const current = plan.prices[date];
+      // Tang/giam % hoac tien can gia goc — o chua co gia thi
+      // bo qua (khong ghi 0); chi che do "dat gia co dinh"
+      // moi ghi vao o trong.
+      if (current === undefined && bulkMode !== "set") continue;
+      const base = current ?? 0;
       const next =
-        bulkMode === "set" ? bulkValue : bulkMode === "percent" ? Math.round((current * (1 + bulkValue / 100)) / 1000) * 1000 : current + bulkValue;
+        bulkMode === "set" ? bulkValue : bulkMode === "percent" ? Math.round((base * (1 + bulkValue / 100)) / step) * step : base + bulkValue;
       setPrice(plan.id, date, next);
     }
   }
@@ -742,6 +766,8 @@ export default function RatesCalendar() {
           onClick={() => {
             if (priceChannel !== "all") setBulkChannel(priceChannel);
             if (priceTypeFilter !== "all") setBulkType(priceTypeFilter);
+            setBulkFrom(startDate);
+            setBulkTo(addDays(startDate, 13));
             setShowBulk((v) => !v);
           }}
           className="cb-btn-primary px-3 py-2 text-sm"
