@@ -1,49 +1,74 @@
 "use client";
+
 // ============================================================
-// FILE 10 — app/channels/page.tsx (Cloudbeds style)
-// Channels page: connection status of every sales channel.
-//   - OTA channels connect THROUGH Channex (one connection to
-//     Channex = all OTAs). The top box holds the Channex
-//     account: environment + API key (password field — the key
-//     is a secret; in Round B it is stored server-side only).
-//   - Direct channels (Website, Front Desk) need no connection.
-//   - Per channel: active on/off, commission %, status, and
-//     "last sync" time. Buttons are simulated in this phase —
-//     Round B calls the real Channex API (mapping + status).
-// Logic unchanged from the first version — colors only.
+// FILE CHANNELS2 — app/[hotelId]/channels/page.tsx
+// Trang KENH BAN: moi o kenh hien trang thai THAT (doc tu DB),
+// khong con du lieu mau viet cung nhu truoc (A7).
+//   - Da ket noi = kenh co goi gia mang channex_id tren Channex.
+//   - Dang ban = da ket noi + khong co block "Tat ban tren kenh".
+//     Tat cong tac = tao block dong ban theo kenh (scope=channel)
+//     cho moi loai phong, day stop-sell len Channex qua hang doi;
+//     bat lai = xoa cac block do.
+//   - Hoa hong luu that vao channel_connections.settings.
+//   - Dong bo gan nhat = settings.last_sync_at, do ChannexSync
+//     (dong bo tay) va ChannexOutbox (dong bo tu dong) ghi lai.
+//   - Khong con nut "Dong bo ngay" / "Ket noi" gia tren tung
+//     the: noi kenh that o the Thiet lap, dong bo that o the
+//     Dong bo API. Kênh trực tiếp (Website, Lễ tân) không có
+//     công tắc — bán trực tiếp trong PMS, không qua Channex.
 // ============================================================
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
 import { CHANNELS } from "@/lib/mock-data";
 import ChannexSetup from "@/components/ChannexSetup";
 import ChannexSync from "@/components/ChannexSync";
 import ChannexBookings from "@/components/ChannexBookings";
+import { supabase } from "@/lib/supabase";
+import { currentHotelId } from "@/lib/current-hotel";
+import { addDaysStr, isoDay } from "@/lib/channex-compute";
+import { patchChannelSettings, queueChannexDates, rangeDates } from "@/lib/channex-outbox";
 
-type ChannelState = {
-  code: string;
-  connected: boolean;
-  active: boolean;
-  commission: number; // % the channel keeps from each booking
-  lastSync: string;
+const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
+// Ly do danh dau block do cong tac tat-ban tao ra (de bat lai
+// chi xoa dung cac block nay, khong dong den block dong ban
+// theo ngay ma nguoi dung tao o trang Chan phong & Dong ban).
+const OFF_REASON = "Tắt bán trên kênh";
+const OFF_DAYS = 365;
+const DEFAULT_COMMISSIONS: Record<string, number> = {
+  booking_com: 15, expedia: 18, airbnb: 14, agoda: 16,
 };
 
-const INITIAL: ChannelState[] = [
-  { code: "website", connected: true, active: true, commission: 0, lastSync: "—" },
-  { code: "frontdesk", connected: true, active: true, commission: 0, lastSync: "—" },
-  { code: "booking_com", connected: true, active: true, commission: 15, lastSync: "5 phút trước" },
-  { code: "expedia", connected: true, active: true, commission: 18, lastSync: "5 phút trước" },
-  { code: "airbnb", connected: false, active: false, commission: 14, lastSync: "chưa từng" },
-  { code: "agoda", connected: true, active: false, commission: 16, lastSync: "2 giờ trước" },
-];
+type OffBlock = {
+  id: string; channelCode: string; roomTypeId: string;
+};
 
 const inputCls = "rounded-lg border border-[#dde3ea] px-3 py-2 text-[#17293e] outline-none focus:border-[#2563eb]";
 
+function relTime(iso: string | null): string {
+  if (!iso) return "chưa từng";
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1) return "vừa xong";
+  if (mins < 60) return `${mins} phút trước`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} giờ trước`;
+  return `${Math.floor(hours / 24)} ngày trước`;
+}
+
 export default function ChannelsPage() {
-  const [states, setStates] = useState<ChannelState[]>(INITIAL);
+  const params = useParams();
+  const HOTEL_ID = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
   const [environment, setEnvironment] = useState<"staging" | "production">("staging");
   const [channexStatus, setChannexStatus] = useState<"unchecked" | "checking" | "ok" | "error">("unchecked");
   const [channexMsg, setChannexMsg] = useState("");
   const [channexProps, setChannexProps] = useState<{ id: string; title: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [connected, setConnected] = useState<Record<string, boolean>>({});
+  const [offBlocks, setOffBlocks] = useState<OffBlock[]>([]);
+  const [roomTypeIds, setRoomTypeIds] = useState<string[]>([]);
+  const [commissions, setCommissions] = useState<Record<string, number>>(DEFAULT_COMMISSIONS);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [busyCode, setBusyCode] = useState<string | null>(null);
 
   // REAL connection test: the browser asks our own server
   // route, which holds the API key (see app/api/channex/test).
@@ -71,8 +96,79 @@ export default function ChannelsPage() {
     }
   }
 
-  function patch(code: string, change: Partial<ChannelState>) {
-    setStates((prev) => prev.map((s) => (s.code === code ? { ...s, ...change } : s)));
+  // ----- LOAD real channel state from Supabase -----
+  useEffect(() => {
+    (async () => {
+      const [plansRes, blocksRes, typesRes, connRes] = await Promise.all([
+        supabase.from("rate_plans").select("channel_code, channex_id").eq("hotel_id", HOTEL_ID),
+        supabase.from("inventory_blocks").select("id, scope, channel_code, room_type_id, reason").eq("hotel_id", HOTEL_ID),
+        supabase.from("room_types").select("id").eq("hotel_id", HOTEL_ID),
+        supabase.from("channel_connections").select("settings").eq("hotel_id", HOTEL_ID).eq("provider", "channex").maybeSingle(),
+      ]);
+      const conn: Record<string, boolean> = {};
+      for (const p of plansRes.data ?? []) {
+        if (p.channex_id) conn[p.channel_code] = true;
+      }
+      setConnected(conn);
+      setOffBlocks(
+        (blocksRes.data ?? [])
+          .filter((b) => b.scope === "channel" && b.reason === OFF_REASON)
+          .map((b) => ({ id: b.id, channelCode: b.channel_code ?? "", roomTypeId: b.room_type_id }))
+      );
+      setRoomTypeIds((typesRes.data ?? []).map((t) => t.id));
+      const settings = (connRes.data?.settings ?? {}) as Record<string, any>;
+      if (settings.commissions) setCommissions({ ...DEFAULT_COMMISSIONS, ...settings.commissions });
+      setLastSyncAt(settings.last_sync_at ?? null);
+      setLoading(false);
+    })();
+  }, [HOTEL_ID]);
+
+  const isOff = (code: string) => offBlocks.some((b) => b.channelCode === code);
+  const isSelling = (code: string) => !!connected[code] && !isOff(code);
+
+  // Bat/tat ban that tren 1 kenh OTA: tat = tao block dong ban
+  // theo kenh cho moi loai phong (hom nay..+365 ngay) roi xep
+  // hang doi de Channex nhan stop-sell; bat = xoa cac block do.
+  async function setSelling(code: string, sell: boolean) {
+    if (!connected[code] || busyCode) return;
+    setBusyCode(code);
+    const today = isoDay(new Date());
+    const to = addDaysStr(today, OFF_DAYS);
+    if (!sell) {
+      const missing = roomTypeIds.filter(
+        (tid) => !offBlocks.some((b) => b.channelCode === code && b.roomTypeId === tid)
+      );
+      const rows = missing.map((tid) => ({
+        id: `ib-off-${code}-${tid}`,
+        hotel_id: HOTEL_ID, account_id: ACCOUNT_ID,
+        scope: "channel", channel_code: code, room_type_id: tid,
+        from_date: today, to_date: to, reason: OFF_REASON,
+      }));
+      if (rows.length > 0) {
+        const { error } = await supabase.from("inventory_blocks").insert(rows);
+        if (error) { alert("Tắt bán không thành công: " + error.message); setBusyCode(null); return; }
+        setOffBlocks((prev) => [
+          ...prev,
+          ...rows.map((r) => ({ id: r.id, channelCode: code, roomTypeId: r.room_type_id })),
+        ]);
+      }
+      queueChannexDates(rangeDates(today, to), HOTEL_ID);
+    } else {
+      const doomed = offBlocks.filter((b) => b.channelCode === code);
+      if (doomed.length > 0) {
+        const { error } = await supabase.from("inventory_blocks").delete().in("id", doomed.map((b) => b.id));
+        if (error) { alert("Mở bán lại không thành công: " + error.message); setBusyCode(null); return; }
+        setOffBlocks((prev) => prev.filter((b) => !doomed.some((d) => d.id === b.id)));
+      }
+      queueChannexDates(rangeDates(today, to), HOTEL_ID);
+    }
+    setBusyCode(null);
+  }
+
+  async function saveCommission(code: string, value: number) {
+    const next = { ...commissions, [code]: value };
+    setCommissions(next);
+    await patchChannelSettings(HOTEL_ID, { commissions: next });
   }
 
   return (
@@ -134,74 +230,96 @@ export default function ChannelsPage() {
       <ChannexSync />
       <ChannexBookings />
 
-      {/* one card per channel */}
-      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {CHANNELS.map((c) => {
-          const s = states.find((x) => x.code === c.code)!;
-          const isOta = c.type === "ota";
-          return (
-            <div key={c.code} className="cb-card p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="font-bold text-[#17293e]">{c.name}</div>
-                  <div className="text-xs text-[#68707a]">
-                    {c.type === "direct" ? "Kênh trực tiếp" : c.type === "offline" ? "Tại quầy" : "OTA — qua Channex"}
+      {/* one card per channel — real state from the DB */}
+      {loading ? (
+        <p className="mt-5 text-sm text-[#68707a]">Đang tải trạng thái kênh...</p>
+      ) : (
+        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {CHANNELS.map((c) => {
+            const isOta = c.type === "ota";
+            if (!isOta) {
+              return (
+                <div key={c.code} className="cb-card p-5">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="font-bold text-[#17293e]">{c.name}</div>
+                      <div className="text-xs text-[#68707a]">
+                        {c.type === "direct" ? "Kênh trực tiếp" : "Tại quầy"}
+                      </div>
+                    </div>
+                    <span className="rounded-full bg-[#eef1f5] px-2.5 py-1 text-[11px] font-medium text-[#68707a]">
+                      Trong PMS
+                    </span>
+                  </div>
+                  <p className="mt-4 text-sm text-[#68707a]">
+                    Bán trực tiếp trong PMS — không qua Channex, không cần kết nối.
+                  </p>
+                </div>
+              );
+            }
+            const on = isSelling(c.code);
+            const conn = !!connected[c.code];
+            return (
+              <div key={c.code} className="cb-card p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="font-bold text-[#17293e]">{c.name}</div>
+                    <div className="text-xs text-[#68707a]">OTA — qua Channex</div>
+                  </div>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${conn ? "bg-[#e6f7f1] text-[#0e7a56]" : "bg-[#fdecec] text-[#e5484d]"}`}>
+                    {conn ? "Đã kết nối" : "Chưa kết nối"}
+                  </span>
+                </div>
+
+                <div className="mt-4 space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[#68707a]">Đang bán trên kênh này</span>
+                    <button
+                      onClick={() => setSelling(c.code, !on)}
+                      disabled={!conn || busyCode === c.code}
+                      className={`h-6 w-11 rounded-full p-0.5 transition ${on ? "bg-[#1db584]" : "bg-[#ccd5df]"} disabled:opacity-50`}
+                      title={conn ? "Bật/tắt bán trên kênh này (đẩy stop-sell lên Channex)" : "Cần tạo cấu trúc trên Channex trước"}
+                    >
+                      <span className={`block h-5 w-5 rounded-full bg-white transition ${on ? "translate-x-5" : ""}`} />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[#68707a]">Hoa hồng kênh thu</span>
+                    <span className="text-[#17293e]">
+                      <input
+                        type="number"
+                        value={commissions[c.code] ?? 0}
+                        onChange={(e) => setCommissions((prev) => ({ ...prev, [c.code]: Number(e.target.value) }))}
+                        onBlur={() => saveCommission(c.code, commissions[c.code] ?? 0)}
+                        className="w-16 rounded border border-[#dde3ea] px-2 py-1 text-right outline-none focus:border-[#2563eb]"
+                      /> %
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[#68707a]">Đồng bộ gần nhất</span>
+                    <span className="text-[#17293e]">{relTime(lastSyncAt)}</span>
                   </div>
                 </div>
-                <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
-                  !isOta ? "bg-[#eef1f5] text-[#68707a]" : s.connected ? "bg-[#e6f7f1] text-[#0e7a56]" : "bg-[#fdecec] text-[#e5484d]"
-                }`}>
-                  {!isOta ? "Trong PMS" : s.connected ? "Đã kết nối" : "Chưa kết nối"}
-                </span>
-              </div>
 
-              <div className="mt-4 space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-[#68707a]">Đang bán trên kênh này</span>
-                  <button
-                    onClick={() => patch(c.code, { active: !s.active })}
-                    className={`h-6 w-11 rounded-full p-0.5 transition ${s.active ? "bg-[#1db584]" : "bg-[#ccd5df]"}`}
-                    title="Bật/tắt bán trên kênh này"
-                  >
-                    <span className={`block h-5 w-5 rounded-full bg-white transition ${s.active ? "translate-x-5" : ""}`} />
-                  </button>
-                </div>
-                {isOta && (
-                  <>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#68707a]">Hoa hồng kênh thu</span>
-                      <span className="text-[#17293e]">
-                        <input
-                          type="number"
-                          value={s.commission}
-                          onChange={(e) => patch(c.code, { commission: Number(e.target.value) })}
-                          className="w-16 rounded border border-[#dde3ea] px-2 py-1 text-right outline-none focus:border-[#2563eb]"
-                        /> %
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#68707a]">Đồng bộ gần nhất</span>
-                      <span className="text-[#17293e]">{s.lastSync}</span>
-                    </div>
-                  </>
+                {!conn && (
+                  <p className="mt-4 rounded-lg bg-[#f7f9fb] px-3 py-2 text-[13px] text-[#68707a]">
+                    Chưa có gói giá trên Channex — nhập giá ở Lịch giá rồi bấm “Tạo cấu trúc trên Channex” ở thẻ phía trên.
+                  </p>
+                )}
+                {conn && !on && (
+                  <p className="mt-4 rounded-lg bg-[#fdf3e3] px-3 py-2 text-[13px] text-[#9a6a12]">
+                    Đang tắt bán trên kênh này (đã đẩy stop-sell lên Channex).
+                  </p>
                 )}
               </div>
-
-              {isOta && (
-                <button
-                  onClick={() => patch(c.code, { connected: true, lastSync: "vừa xong" })}
-                  className="cb-btn-ghost mt-4 w-full py-2 text-sm"
-                >
-                  {s.connected ? "Đồng bộ ngay" : "Kết nối kênh này qua Channex"}
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       <p className="mt-4 text-xs text-[#68707a]">
-        Tình huống trong dữ liệu mẫu: Agoda đã kết nối nhưng đang <b className="text-[#17293e]">tắt bán</b>, Airbnb <b className="text-[#17293e]">chưa kết nối</b> — hai trạng thái hoàn toàn khác nhau, trang này phải phân biệt rõ.
+        Trạng thái kênh đọc từ dữ liệu thật: đã kết nối = có gói giá trên Channex; tắt bán = đóng bán trên kênh đó (đẩy stop-sell lên Channex).
+        Tắt/bật xong nên bấm “Đồng bộ ngay” ở thẻ phía trên để đẩy ngay, nếu không hàng đợi tự đẩy dần trong vài phút.
       </p>
     </div>
   );

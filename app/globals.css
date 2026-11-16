@@ -1,25 +1,37 @@
 @import "tailwindcss";
 
 /* ============================================================
-   CLOUDBEDS-STYLE THEME — file: app/globals.css
-   The shared palette + base look for the WHOLE app.
-   Every page uses these colors, so the app feels like one product.
-   (Style reference: UI-STYLE-CLOUDBEDS.md)
-   NOTE: this project uses Tailwind v4 (create-next-app, Next 16),
-   so the file must start with the single line above. The old v3
-   "@tailwind base/components/utilities" lines break the whole
-   stylesheet in v4 — found 2026-10-22 when the UI lost all CSS.
+   FILE THEME1 — app/globals.css
+   CITYHOUSE MORE THEME — doi tu Cloudbeds (2026-11-10 theo
+   yeu cau cua Vos, mau lay mau tu cityhousemore.com):
+   nen kem, navy dam, nut dong. Màu lay mau truc tiep tu hinh
+   trang da hien thi (chua doc truc tiep stylesheet) nen la
+   mau xap xi rat gan.
+   - Nen trang: kem am #F4EFEA (trang web dung kem, khong
+     trang han); the trang giu nguyen.
+   - Chu chinh: navy #101C42; chu phu: #333C5B (chu thuong
+     cua trang web); link tren nen navy: #B7BAC6.
+   - Nut chinh / diem nhan: dong #B9887B (nut "Dat lich tu
+     van" cua trang web), chu tren nut mau kem #F4EFEA.
+   - Bien --cb-blue GIU TEN CU de khoi phai sua moi cho dung
+     no, nhung gia tri gio la mau dong (nut chinh), khong
+     con la xanh duong; --cb-blue-dark la dong dam hon khi
+     re chuot, --cb-blue-soft la dong nhat cho muc dang chon.
+   - Màu trang thai GIU NGUYEN (chi doi mau thuong hieu):
+     xanh la #1db584, vang #f59e0b, do #e5484d.
+   NOTE: Tailwind v4 — file phai mo dau bang 1 dong import
+   o tren. Cu phap v3 lam mat toan bo CSS (dinh 2026-10-22).
    ============================================================ */
 
 :root {
-  --cb-bg: #eef1f5; /* app background: light blue-gray */
+  --cb-bg: #f4efea; /* app background: warm cream */
   --cb-card: #ffffff; /* card / panel background */
-  --cb-border: #dde3ea; /* card border */
-  --cb-text: #17293e; /* main text: dark navy */
-  --cb-muted: #68707a; /* secondary text */
-  --cb-blue: #2563eb; /* primary button blue */
-  --cb-blue-dark: #1e4fd8; /* primary button hover */
-  --cb-blue-soft: #e8effe; /* soft blue background (selected item) */
+  --cb-border: #e7ddd3; /* card border: warm, matches login inputs */
+  --cb-text: #101c42; /* main text: dark navy */
+  --cb-muted: #333c5b; /* secondary text */
+  --cb-blue: #b9887b; /* primary button copper (name kept for compatibility) */
+  --cb-blue-dark: #a3776c; /* primary button hover: darker copper */
+  --cb-blue-soft: #f3e7e0; /* soft copper background (selected item) */
   --cb-green: #1db584; /* occupancy / success green */
   --cb-amber: #f59e0b; /* warning */
   --cb-red: #e5484d; /* danger / notification dot */
@@ -33,20 +45,20 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ---- Shared pieces in Cloudbeds style (used by many pages) ---- */
+/* ---- Shared pieces in CityHouse More style (used by many pages) ---- */
 
 /* White rounded card with a soft border and shadow */
 .cb-card {
   background: var(--cb-card);
   border: 1px solid var(--cb-border);
   border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(23, 41, 62, 0.06);
+  box-shadow: 0 1px 3px rgba(16, 28, 66, 0.08);
 }
 
-/* Main blue button (rounded, like the Cloudbeds "Check-in" button) */
+/* Main copper button (rounded, like the site's "Book a consultation" CTA) */
 .cb-btn-primary {
   background: var(--cb-blue);
-  color: #fff;
+  color: #f4efea;
   border-radius: 8px;
   font-weight: 600;
   transition: background 0.15s ease;
@@ -64,7 +76,7 @@ body {
   font-weight: 600;
 }
 .cb-btn-ghost:hover {
-  background: #f4f7fb;
+  background: #faf5f0;
 }
 
 /* Pill-shaped search box (top bar) */

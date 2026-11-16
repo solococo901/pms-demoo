@@ -2,6 +2,15 @@
 
 // ============================================================
 // CHANNEX SETUP — components/ChannexSetup.tsx
+// SETUP2 (2026-11-11): gui kem roomTypeMap (ma Channex cua loai
+// phong DA CO) khi bam nut tao cau truc — neu khong, dot chay them
+// kenh sau (Expedia) se bao loi vi may chu khong biet goi gia moi
+// thuoc loai phong nao. Cung sua thong bao xanh: co loi thi khong
+// noi "da tao xong" nua.
+// CHANRATE1 (2026-11-13): gia goc khi tao goi tren Channex lay
+// theo ngay hom nay that (hom nay chua co gia thi lay gia gan
+// nhat sau do), khong lay gia ngay mau 2026-10-21 nua; gia
+// goc hien ngay tren dong goi chua tao de doi chieu.
 // One card on the Channels page: shows which parts of the
 // pilot hotel are already mirrored on Channex (Property /
 // room types / OTA base rate plans) and a button that
@@ -87,16 +96,38 @@ export default function ChannexSetup() {
       roomCount: counts.get(t.id) ?? 0,
     })));
     const otaPlans = (plansRes.data ?? []).filter((p) => OTA_CHANNELS.includes(p.channel_code));
+    // Gia goc khi tao goi tren Channex: gia cua NGAY HOM NAY THAT.
+    // Neu hom nay chua co gia thi lay gia gan nhat tu hom nay tro
+    // di; khong co gia tuong lai thi lay gia gan nhat truoc do.
+    // Truoc day lay gia ngay mau 2026-10-21 — sai khi ngay do
+    // khong phai ngay hien tai.
+    const today = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    })();
     const priceByPlan = new Map<string, number>();
     if (otaPlans.length > 0) {
-      const { data: priceRows } = await supabase
-        .from("rate_prices").select("rate_plan_id, date, price")
-        .in("rate_plan_id", otaPlans.map((p) => p.id))
-        .order("date");
-      for (const pr of priceRows ?? []) {
-        if (pr.date === "2026-10-21" || !priceByPlan.has(pr.rate_plan_id)) {
-          priceByPlan.set(pr.rate_plan_id, pr.price);
-        }
+      // Lay theo trang (Supabase tra toi da 1000 dong/lan),
+      // sap theo ngay tang dan.
+      let priceRows: { rate_plan_id: string; date: string; price: number }[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data: page } = await supabase
+          .from("rate_prices").select("rate_plan_id, date, price")
+          .in("rate_plan_id", otaPlans.map((p) => p.id))
+          .order("date")
+          .range(from, from + 999);
+        priceRows = [...priceRows, ...(page ?? [])];
+        if (!page || page.length < 1000) break;
+      }
+      const byPlan = new Map<string, { date: string; price: number }[]>();
+      for (const pr of priceRows) {
+        const list = byPlan.get(pr.rate_plan_id) ?? [];
+        list.push({ date: pr.date, price: pr.price });
+        byPlan.set(pr.rate_plan_id, list);
+      }
+      for (const [planId, list] of byPlan) {
+        const future = list.find((r) => r.date >= today);
+        priceByPlan.set(planId, (future ?? list[list.length - 1]).price);
       }
     }
     setPlans(otaPlans.map((p) => ({
@@ -125,6 +156,14 @@ export default function ChannexSetup() {
       body: JSON.stringify({
         propertyId,
         property: hotelPayload,
+        // SETUP2: gui kem ma Channex cua loai phong DA CO. Dot chay
+        // dau gui ca loai phong con thieu nen may chu biet du ma;
+        // dot chay them (Expedia) khong con loai phong nao thieu
+        // nen may chu khong biet goi gia moi thuoc loai phong nao
+        // va bao loi — dung loi gap toi nay.
+        roomTypeMap: Object.fromEntries(
+          types.filter((t) => t.channexId).map((t) => [t.id, t.channexId as string])
+        ),
         roomTypes: missingTypes.map((t) => ({
           pmsId: t.id, title: t.name, countOfRooms: Math.max(t.roomCount, 1),
           occAdults: t.maxAdults, occChildren: t.maxChildren, occInfants: t.maxInfants,
@@ -155,7 +194,13 @@ export default function ChannexSetup() {
       await supabase.from("rate_plans").update({ channex_id: cid }).eq("id", pmsId);
     }
     setErrors(data.errors ?? []);
-    setMsg("Đã tạo xong phần cấu trúc còn thiếu trên Channex và lưu mã ánh xạ về kho.");
+    // SETUP2: co loi thi dung noi "da tao xong" nua — thong bao
+    // xanh hien cung o do nhu 2 lan toi nay rat de hieu lam.
+    setMsg(
+      (data.errors ?? []).length > 0
+        ? "Đã tạo được một phần — còn lỗi ở dưới, xem rồi báo tôi."
+        : "Đã tạo xong phần cấu trúc còn thiếu trên Channex và lưu mã ánh xạ về kho."
+    );
     await load();
     setBusy(false);
   }
@@ -207,6 +252,16 @@ export default function ChannexSetup() {
     setBusyDerived(false);
   }
 
+  // Gia goc hien cho nguoi xem truoc khi bam tao (de doi chieu
+  // voi gia tren Luoi gia — phai la gia ngay hom nay, khong
+  // phai gia ngay mau).
+  const fmtRate = (rate: string) => {
+    const n = Number(rate);
+    return (hotelPayload.currency ?? "VND") === "USD"
+      ? `$${n.toLocaleString("en-US")}`
+      : `${n.toLocaleString("vi-VN")}₫`;
+  };
+
   const row = (label: string, done: boolean, note?: string, rowKey?: string) => (
     <li key={rowKey ?? label} className="flex items-center justify-between rounded-lg bg-[#f4f7fb] px-3 py-1.5 text-sm">
       <span className="text-[#17293e]">{label}</span>
@@ -234,7 +289,7 @@ export default function ChannexSetup() {
               row(
                 `Gói giá OTA — ${p.name}`,
                 !!p.channexId,
-                p.derived ? "○ Gói kế thừa — chưa tạo" : "○ Chưa tạo",
+                p.derived ? "○ Gói kế thừa — chưa tạo" : `○ Chưa tạo · giá gốc ${fmtRate(p.rate)}`,
                 p.id
               )
             )}

@@ -61,6 +61,28 @@ async function enqueueValues(
 const pendingByHotel = new Map<string, Set<string>>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Nhung ngay tinh gia tri Channex that bai (loi DB/mang khi
+// tinh): truoc day chi ghi console.warn roi mat luon — chip
+// van hien "da dong bo" trong khi Channex chua nhan duoc gi.
+// Gio luu lai de chip canh bao va cho thu lai.
+export type QueueError = { hotelId: string; dates: string[]; message: string; at: string };
+const queueErrors = new Map<string, QueueError>();
+
+export function getChannexQueueErrors(): QueueError[] {
+  return [...queueErrors.values()];
+}
+
+// Tinh lai cac ngay loi truoc do va xep hang doi. Thanh cong
+// thi xoa loi; that bai thi giu nguyen de chip van canh bao.
+export async function retryChannexQueue(hotelId: string): Promise<void> {
+  const err = queueErrors.get(hotelId);
+  if (!err) return;
+  const { availability, restrictions } = await computeChannexValues(err.dates, hotelId);
+  await enqueueValues(availability, restrictions, hotelId);
+  queueErrors.delete(hotelId);
+  window.dispatchEvent(new Event("channex-queue-error"));
+}
+
 export function queueChannexDates(dates: string[], hotelId: string = currentHotelId()) {
   const today = isoDay(new Date());
   let added = false;
@@ -82,6 +104,11 @@ export function queueChannexDates(dates: string[], hotelId: string = currentHote
           const { availability, restrictions } = await computeChannexValues([...set], hid);
           await enqueueValues(availability, restrictions, hid);
         } catch (e) {
+          // Giu lai ngay loi de chip dong bo canh bao + cho thu
+          // lai — truoc day chi ghi console roi mat luon.
+          const msg = e instanceof Error ? e.message : "Lỗi tính giá trị Channex";
+          queueErrors.set(hid, { hotelId: hid, dates: [...set], message: msg, at: new Date().toISOString() });
+          window.dispatchEvent(new Event("channex-queue-error"));
           console.warn("Channex queue:", e);
         }
       }
@@ -166,4 +193,28 @@ export function rangeDates(from: string, to: string): string[] {
   const out: string[] = [];
   for (let d = from; d <= to && out.length < 370; d = addDaysStr(d, 1)) out.push(d);
   return out;
+}
+
+// Ghi them vao channel_connections.settings (jsonb) ma khong xoa
+// cac khoa khac — dung de luu dau thoi gian dong bo gan nhat
+// (last_sync_at) va hoa hong tung kenh (commissions) cho trang
+// Kênh bán đọc. Chi la thong tin phu: loi thi bo qua, khong
+// bao nguoi dung.
+export async function patchChannelSettings(hotelId: string, patch: Record<string, unknown>) {
+  try {
+    const { data } = await supabase
+      .from("channel_connections")
+      .select("settings")
+      .eq("hotel_id", hotelId)
+      .eq("provider", "channex")
+      .maybeSingle();
+    if (!data) return;
+    await supabase
+      .from("channel_connections")
+      .update({ settings: { ...((data.settings ?? {}) as Record<string, unknown>), ...patch } })
+      .eq("hotel_id", hotelId)
+      .eq("provider", "channex");
+  } catch {
+    // bo qua
+  }
 }

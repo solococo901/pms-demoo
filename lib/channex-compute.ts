@@ -5,7 +5,9 @@
 //  - The dong bo thu cong (ChannexSync) — cua so 30 ngay.
 //  - Hang doi tu dong (channex-outbox) — chi cac ngay vua doi.
 // Ton: theo loai phong (quy phong chung - don active - phong
-// hong out_of_order). Gia: theo goi OTA; goi ke thua chi gui
+// hong out_of_order, ca block theo ngay lan trang thai don
+// phong). Loai phong tat ban (active = false) gui ton 0 +
+// stop-sell. Gia: theo goi OTA; goi ke thua chi gui
 // restrictions, Channex tu suy gia tu goi goc.
 // ============================================================
 
@@ -59,8 +61,8 @@ export async function computeChannexValues(
 
   const [typesRes, roomsRes, resRes, rrRes, blocksRes, invRes, plansRes] =
     await Promise.all([
-      supabase.from("room_types").select("id, channex_id").eq("hotel_id", hotelId),
-      supabase.from("rooms").select("number, room_type_id").eq("hotel_id", hotelId),
+      supabase.from("room_types").select("id, channex_id, active").eq("hotel_id", hotelId),
+      supabase.from("rooms").select("number, room_type_id, housekeeping_status").eq("hotel_id", hotelId),
       supabase
         .from("reservations")
         .select("id, room_type_id, check_in, check_out, status")
@@ -80,6 +82,8 @@ export async function computeChannexValues(
   if (loadErr) throw new Error(loadErr.message);
 
   const types = (typesRes.data ?? []).filter((t) => t.channex_id);
+  // Loai phong tat ban (active = false) thi ngung ban: ton 0.
+  const typeActive = new Map(types.map((t) => [t.id, t.active !== false]));
   const rooms = roomsRes.data ?? [];
   const typeByRoom = new Map(rooms.map((r) => [r.number, r.room_type_id]));
   const roomsByRes = new Map<string, string[]>();
@@ -150,13 +154,19 @@ export async function computeChannexValues(
   const availability: AvailabilityValue[] = [];
   for (const t of types) {
     for (const date of uniqueDates) {
-      const sellable = rooms.filter(
-        (r) =>
-          r.room_type_id === t.id &&
-          !oooBlocks.some(
-            (b) => b.room_number === r.number && b.from_date <= date && date <= b.to_date
-          )
-      ).length;
+      // Loai tat ban: ton 0. Phong hong (trang thai don phong
+      // out_of_order) khong dem vao ton, giong nhu block theo ngay.
+      const sellable =
+        typeActive.get(t.id) === false
+          ? 0
+          : rooms.filter(
+              (r) =>
+                r.room_type_id === t.id &&
+                r.housekeeping_status !== "out_of_order" &&
+                !oooBlocks.some(
+                  (b) => b.room_number === r.number && b.from_date <= date && date <= b.to_date
+                )
+            ).length;
       let used = 0;
       for (const r of activeRes) {
         if (!(r.check_in <= date && date < r.check_out)) continue;
@@ -210,9 +220,10 @@ export async function computeChannexValues(
       );
       // Luon gui ro trang thai cac cong tac, ke ca false: neu
       // thieu truong, Channex giu gia tri cu — viec TAT trong
-      // PMS se khong bao gio an sang Channex.
+      // PMS se khong bao gio an sang Channex. Loai phong tat
+      // ban thi stop-sell luon, ke ca khong co dong gia nao.
       if (!p.derived_from_id || row) {
-        v.stop_sell = !!(row?.stopSell || blocked);
+        v.stop_sell = !!(row?.stopSell || blocked || typeActive.get(p.room_type_id) === false);
         v.closed_to_arrival = !!row?.cta;
         v.closed_to_departure = !!row?.ctd;
         if (v.stop_sell || v.closed_to_arrival || v.closed_to_departure || p.derived_from_id)

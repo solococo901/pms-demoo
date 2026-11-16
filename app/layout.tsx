@@ -1,14 +1,17 @@
 "use client";
 
 // ============================================================
-// FILE 2 — app/layout.tsx (Cloudbeds-style shell)
-// The app FRAME: white left menu + white top bar, on every page.
-// NEW vs the old dark shell:
-//  - Light theme (white menu, navy text) like Cloudbeds.
-//  - Top bar: hotel switcher (left), pill search (center),
-//    round "+" button, bell with a red dot, user avatar (right).
-//  - The menu item of the page you are on is highlighted
-//    (soft blue).
+// FILE ASIDE1 — app/layout.tsx (CityHouse More-style shell)
+// The app FRAME: navy left menu + navy top bar, on every page.
+// MENU1 (2026-11-10): sap xep lai menu theo flow thiet lap
+// khach san moi — nhom "Thiet lap khach san" (7 buoc danh so)
+// len dau, roi Van hanh, Quan li. Chi doi thu tu + ten nhom +
+// danh so buoc, khong doi chuc nang trang nao; nhan vien van
+// chi thay nhom Van hanh. Mau navy/dong giu tu THEME1b.
+// ASIDE1 (2026-11-13): aside dinh theo khi cuon (sticky top-0,
+// cao bang man hinh) — truoc day aside cuon theo trang nen menu
+// troi len khoi man hinh khi trang dai; nav da co overflow-y-auto
+// nen menu dai tu cuon ben trong aside.
 // Next.js 16 notes (do NOT "simplify" these away):
 //  - usePathname() only runs inside <Shell>, BELOW the <Suspense>
 //    boundary in RootLayout. Calling it directly in RootLayout
@@ -34,21 +37,27 @@ import { useCurrentRole } from "@/lib/current-role";
 // Left menu items. To add/remove a menu item, edit only this list.
 // adminOnly = chi quan tri vien thay (nhan vien bi an + chan duong dan).
 // group = tieu de nhom hien tren aside; thu tu nhom theo MENU_GROUPS.
+// THU TU MENU = flow thiet lap khach san moi (MENU1, 2026-11-10):
+// nhom "Thiet lap khach san" (7 buoc danh so, chi admin) len dau —
+// vao khach san moi thi di tu buoc 1 xuong buoc 7 la xong phan dung;
+// roi moi den Van hanh (dung hang ngay) va Quan li. Tao khach san
+// thi lam o trang Danh sach (nut "+ Them khach san"), khong nam
+// trong menu nay.
 const MENU = [
+  { label: "1. Thông tin chung", href: "/hotel-info", icon: "hotel", group: "Thiết lập khách sạn", adminOnly: true },
+  { label: "2. Thư viện ảnh", href: "/hotel-photos", icon: "image", group: "Thiết lập khách sạn", adminOnly: true },
+  { label: "3. Cấu hình khách sạn", href: "/hotel-config", icon: "tune", group: "Thiết lập khách sạn", adminOnly: true },
+  { label: "4. Thông tin loại phòng", href: "/room-types", icon: "bed", group: "Thiết lập khách sạn", adminOnly: true },
+  { label: "5. Kênh bán", href: "/channels", icon: "channels", group: "Thiết lập khách sạn", adminOnly: true },
+  { label: "6. Lịch giá", href: "/rates", icon: "rates", group: "Thiết lập khách sạn", adminOnly: true },
+  { label: "7. Chặn phòng & Đóng bán", href: "/inventory", icon: "archive", group: "Thiết lập khách sạn", adminOnly: true },
   { label: "Tổng quan", href: "/dashboard", icon: "dashboard", group: "Vận hành" },
   { label: "Lịch phòng", href: "/calendar", icon: "calendar", group: "Vận hành" },
   { label: "Đặt phòng", href: "/reservations", icon: "reservations", group: "Vận hành" },
-  { label: "Lịch giá", href: "/rates", icon: "rates", group: "Bán phòng", adminOnly: true },
-  { label: "Chặn phòng & Đóng bán", href: "/inventory", icon: "archive", group: "Bán phòng", adminOnly: true },
-  { label: "Kênh bán", href: "/channels", icon: "channels", group: "Bán phòng", adminOnly: true },
-  { label: "Thông tin chung", href: "/hotel-info", icon: "hotel", group: "Thông tin khách sạn", adminOnly: true },
-  { label: "Cấu hình khách sạn", href: "/hotel-config", icon: "tune", group: "Thông tin khách sạn", adminOnly: true },
-  { label: "Quản lý thư viện ảnh", href: "/hotel-photos", icon: "image", group: "Thông tin khách sạn", adminOnly: true },
-  { label: "Thông tin loại phòng", href: "/room-types", icon: "bed", group: "Thông tin khách sạn", adminOnly: true },
   { label: "Báo cáo", href: "/reports", icon: "reports", group: "Quản lí", adminOnly: true },
   { label: "Cài đặt", href: "/settings", icon: "settings", group: "Quản lí", adminOnly: true },
 ];
-const MENU_GROUPS = ["Vận hành", "Bán phòng", "Thông tin khách sạn", "Quản lí"];
+const MENU_GROUPS = ["Thiết lập khách sạn", "Vận hành", "Quản lí"];
 
 // Icon net don (stroke) cho menu — thay cho ky tu unicode/emoji cu
 // (⌂ 🏨 ▦...) hien khong deu tuy font. Them muc menu: them 1 dong vao
@@ -127,7 +136,7 @@ function HotelSwitcher() {
           window.location.reload();
         }
       }}
-      className="shrink-0 cursor-pointer rounded-lg border border-[#dde3ea] bg-white px-2 py-1.5 text-sm font-semibold text-[#17293e]"
+      className="shrink-0 cursor-pointer rounded-lg border border-white/20 bg-[#0F1A41] px-2 py-1.5 text-sm font-semibold text-white"
       title="Đổi khách sạn"
     >
       {hotels.length === 0 && <option value={pageHotel ?? current}>{pageHotel ?? current}</option>}
@@ -146,7 +155,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <Suspense
           fallback={
-            <div className="flex min-h-screen items-center justify-center text-sm text-[#68707a]">
+            <div className="flex min-h-screen items-center justify-center text-sm text-[var(--cb-muted)]">
               Đang tải...
             </div>
           }
@@ -250,7 +259,7 @@ function Shell({ children }: { children: ReactNode }) {
   if (pathname === "/") {
     return (
       <AuthGate>
-        <main className="mx-auto min-h-screen max-w-7xl bg-[#eef1f5] p-6">{children}</main>
+        <main className="mx-auto min-h-screen max-w-7xl bg-[var(--cb-bg)] p-6">{children}</main>
       </AuthGate>
     );
   }
@@ -259,17 +268,17 @@ function Shell({ children }: { children: ReactNode }) {
   return (
     <AuthGate>
       <div className="flex min-h-screen">
-        {/* ============ LEFT MENU (white) ============ */}
-        <aside className="flex w-60 shrink-0 flex-col border-r border-[#dde3ea] bg-white">
-          <Link href="/" title="Về danh sách khách sạn" className="flex items-center gap-2.5 border-b border-[#eef1f5] px-5 py-4">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#2563eb] text-base font-bold text-white">
+        {/* ============ LEFT MENU (navy) ============ */}
+        <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-white/10 bg-[#0F1A41]">
+          <Link href="/" title="Về danh sách khách sạn" className="flex items-center gap-2.5 border-b border-white/10 px-5 py-4">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#B9887B] text-base font-bold text-[#F4EFEA]">
               P
             </div>
             <div>
-              <div className="text-[15px] font-bold leading-tight text-[#17293e]">
+              <div className="text-[15px] font-bold leading-tight text-white">
                 PMS Hotel
               </div>
-              <div className="text-[11px] leading-tight text-[#68707a]">
+              <div className="text-[11px] leading-tight text-[#B7BAC6]">
                 Quản lí khách sạn
               </div>
             </div>
@@ -285,7 +294,7 @@ function Shell({ children }: { children: ReactNode }) {
                   <button
                     onClick={() => toggleGroup(group)}
                     aria-expanded={open}
-                    className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#9aa3ad] hover:bg-[#f4f7fb]"
+                    className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#B7BAC6] hover:bg-white/10"
                   >
                     <span>{group}</span>
                     <svg className={`h-4 w-4 shrink-0 transition-transform ${open ? "" : "rotate-180"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -303,8 +312,8 @@ function Shell({ children }: { children: ReactNode }) {
                           aria-current={active ? "page" : undefined}
                           className={
                             active
-                              ? "relative flex items-center gap-3 rounded-lg bg-[#e8effe] px-3 py-2 text-sm font-semibold text-[#2563eb] before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:bg-[#2563eb]"
-                              : "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-[#17293e] hover:bg-[#f4f7fb]"
+                              ? "relative flex items-center gap-3 rounded-lg bg-white/10 px-3 py-2 text-sm font-semibold text-[#F4EFEA] before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:bg-[#B9887B]"
+                              : "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-[#B7BAC6] hover:bg-white/10 hover:text-[#F4EFEA]"
                           }
                         >
                           <MenuIcon name={item.icon} />
@@ -324,7 +333,7 @@ function Shell({ children }: { children: ReactNode }) {
 
         {/* ============ RIGHT COLUMN: top bar + page content ============ */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex items-center gap-4 border-b border-[#dde3ea] bg-white px-6 py-3">
+          <header className="flex items-center gap-4 border-b border-white/10 bg-[#0F1A41] px-6 py-3">
             <HotelSwitcher />
 
             {/* Pill search, centered like Cloudbeds */}
@@ -346,15 +355,15 @@ function Shell({ children }: { children: ReactNode }) {
             {/* Bell with red dot */}
             <button className="relative shrink-0 text-xl" title="Thông báo">
               🔔
-              <span className="cb-dot absolute right-0 top-0 h-2.5 w-2.5 border-2 border-white" />
+              <span className="cb-dot absolute right-0 top-0 h-2.5 w-2.5 border-2 border-[#0F1A41]" />
             </button>
           </header>
 
           <main className="flex-1 p-6">
             {blockedForStaff ? (
               <div className="cb-card mx-auto mt-10 max-w-md p-6 text-center">
-                <div className="text-base font-bold text-[#17293e]">Trang dành cho quản trị viên</div>
-                <p className="mt-2 text-sm text-[#68707a]">
+                <div className="text-base font-bold text-[var(--cb-text)]">Trang dành cho quản trị viên</div>
+                <p className="mt-2 text-sm text-[var(--cb-muted)]">
                   Tài khoản nhân viên chỉ dùng được Tổng quan, Lịch phòng, Đặt phòng
                   và danh sách Khách sạn.
                   Nếu bạn cần quyền quản trị, hãy nhờ quản trị viên cấp lại vai trò.

@@ -1,6 +1,10 @@
 "use client";
 // ============================================================
 // FILE 11 — app/settings/page.tsx (Cloudbeds style)
+// SETTINGS2 (2026-11-13): nut "Luu cai dat" ghi THAT vao bang
+// system_settings (file SQL 17) thay cho luu gia; nut bat/tat
+// dong bo dem cung luu ngay khi bam. Tai lai trang van giu
+// nguyen gia tri da luu.
 // SYSTEM-WIDE settings only (restructured 2026-10-22).
 //
 // The product manages many hotels, so hotel data does NOT
@@ -22,6 +26,8 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 const inputCls = "rounded-lg border border-[#dde3ea] px-3 py-2 text-sm text-[#17293e] outline-none focus:border-[#2563eb]";
+
+const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 
 const ROLES = [
   {
@@ -51,6 +57,57 @@ export default function SettingsPage() {
   });
   const [nightlySync, setNightlySync] = useState(true);
   const [savedMsg, setSavedMsg] = useState("");
+  const [saveErr, setSaveErr] = useState("");
+  const [syncMsg, setSyncMsg] = useState("");
+  const [loadErr, setLoadErr] = useState("");
+
+  // Doc cai dat da luu (bang system_settings, file SQL 17).
+  // Chua co dong nao thi giu mac dinh tren form.
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase
+        .from("system_settings")
+        .select("language, timezone, currency, date_format, nightly_sync")
+        .eq("account_id", ACCOUNT_ID)
+        .maybeSingle();
+      if (error) {
+        setLoadErr("Chưa đọc được cài đặt đã lưu — kiểm tra xem đã chạy file SQL 17 (system_settings) trên Supabase chưa. Lỗi: " + error.message);
+        return;
+      }
+      if (!data) return;
+      setGeneral({
+        language: data.language,
+        timezone: data.timezone,
+        currency: data.currency,
+        dateFormat: data.date_format,
+      });
+      setNightlySync(data.nightly_sync);
+    })();
+  }, []);
+
+  // Ghi THAT vao co so du lieu (upsert theo account_id).
+  async function saveSettings(nextGeneral: typeof general, nextNightly: boolean) {
+    setSavedMsg("");
+    setSaveErr("");
+    setSyncMsg("");
+    const { error } = await supabase.from("system_settings").upsert({
+      account_id: ACCOUNT_ID,
+      language: nextGeneral.language,
+      timezone: nextGeneral.timezone,
+      currency: nextGeneral.currency,
+      date_format: nextGeneral.dateFormat,
+      nightly_sync: nextNightly,
+    });
+    if (error) {
+      setSaveErr("Lưu không thành công: " + error.message);
+      return false;
+    }
+    return true;
+  }
+
+  async function saveGeneral() {
+    if (await saveSettings(general, nightlySync)) setSavedMsg("Đã lưu cài đặt.");
+  }
 
   return (
     <div>
@@ -60,6 +117,7 @@ export default function SettingsPage() {
         <Link href="/hotels" className="text-[#2563eb] hover:underline">Khách sạn</Link>, tài khoản Channex nằm ở mục{" "}
         <Link href={channelsHref} className="text-[#2563eb] hover:underline">Kênh bán</Link>.
       </p>
+      {loadErr && <p className="mt-3 rounded-lg bg-[#fef3c7] px-3 py-2 text-sm text-[#92400e]">{loadErr}</p>}
 
       {/* ===== general system options ===== */}
       <section className="cb-card mt-6 p-5">
@@ -97,12 +155,13 @@ export default function SettingsPage() {
         </div>
         <div className="mt-4 flex items-center gap-3">
           <button
-            onClick={() => setSavedMsg("Đã lưu (mô phỏng — Vòng B mới ghi vào cơ sở dữ liệu).")}
+            onClick={saveGeneral}
             className="cb-btn-primary px-4 py-2 text-sm"
           >
             Lưu cài đặt
           </button>
           {savedMsg && <span className="text-sm text-[#0e7a56]">{savedMsg}</span>}
+          {saveErr && <span className="text-sm text-[#e5484d]">{saveErr}</span>}
         </div>
       </section>
 
@@ -118,13 +177,18 @@ export default function SettingsPage() {
             </p>
           </div>
           <button
-            onClick={() => setNightlySync((v) => !v)}
+            onClick={async () => {
+              const next = !nightlySync;
+              setNightlySync(next);
+              if (await saveSettings(general, next)) setSyncMsg("Đã lưu.");
+            }}
             className={`h-6 w-11 shrink-0 rounded-full p-0.5 transition ${nightlySync ? "bg-[#1db584]" : "bg-[#ccd5df]"}`}
             title="Bật/tắt đồng bộ đêm"
           >
             <span className={`block h-5 w-5 rounded-full bg-white transition ${nightlySync ? "translate-x-5" : ""}`} />
           </button>
         </div>
+        {syncMsg && <p className="mt-3 text-sm text-[#0e7a56]">{syncMsg}</p>}
       </section>
 
       {/* ===== users & roles (live, Round D2b) ===== */}

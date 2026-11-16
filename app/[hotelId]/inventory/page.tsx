@@ -164,7 +164,7 @@ export default function InventoryPage() {
     <div>
       <h1 className="text-2xl font-bold text-[#17293e]">Chặn phòng & Đóng bán</h1>
       <p className="mt-1 text-sm text-[#68707a]">
-        Chặn phòng và đóng bán của khách sạn này. Chặn phòng cũng tạo được từ Lịch phòng, đóng bán cũng sửa được từ tab Chính sách giá. Muốn xem số phòng trống theo ngày thì sang trang Bán phòng, tab Tồn phòng.
+        Chặn phòng và đóng bán của khách sạn này. Chặn phòng cũng tạo được từ Lịch phòng, đóng bán cũng sửa được từ trang Lịch giá (nút Đóng bán). Muốn xem số phòng trống theo ngày thì sang trang Lịch giá, tab Tồn phòng.
       </p>
 
       {loading && <p className="mt-4 text-sm text-[#68707a]">Đang tải dữ liệu từ Supabase...</p>}
@@ -246,7 +246,11 @@ export default function InventoryPage() {
                 <td className="py-2.5 pr-3">{fmtDate(b.to)}</td>
                 <td className="py-2.5 pr-3">{b.reason ?? "—"}</td>
                 <td className="py-2.5 text-right">
-                  <button onClick={() => removeInvBlock(b.id)} className="font-medium text-[#e5484d] hover:underline">Xoá</button>
+                  {b.reason === "Tắt bán trên kênh" ? (
+                    <span className="text-xs text-[#68707a]" title="Tắt bằng công tắc ở trang Kênh bán — bật lại công tắc ở đó để mở bán">Quản lý ở Kênh bán</span>
+                  ) : (
+                    <button onClick={() => removeInvBlock(b.id)} className="font-medium text-[#e5484d] hover:underline">Xoá</button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -255,6 +259,9 @@ export default function InventoryPage() {
             )}
           </tbody>
         </table>
+        <p className="mt-3 text-xs text-[#68707a]">
+          Các dòng “Tắt bán trên kênh” do công tắc ở trang Kênh bán tạo ra — muốn mở bán lại thì bật công tắc ở đó, không xoá ở đây.
+        </p>
         <div className="mt-4 flex flex-wrap items-end gap-2">
           <select className={inputSm} value={ibScope} onChange={(e) => setIbScope(e.target.value as "channel" | "room_type")}>
             <option value="channel">Theo kênh</option>

@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
-import { countPendingOutbox, drainChannexOutbox } from "@/lib/channex-outbox";
+import { countPendingOutbox, drainChannexOutbox, getChannexQueueErrors, patchChannelSettings, retryChannexQueue, type QueueError } from "@/lib/channex-outbox";
 
 type Conn = { hotelId: string; propertyId: string };
 
@@ -20,6 +20,7 @@ export default function ChannexOutbox() {
   const [pending, setPending] = useState(0);
   const [lastOk, setLastOk] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [queueErrors, setQueueErrors] = useState<QueueError[]>([]);
   const draining = useRef(false);
 
   useEffect(() => {
@@ -49,7 +50,11 @@ export default function ChannexOutbox() {
       let sentAny = false;
       for (const c of conns) {
         const r = await drainChannexOutbox(c.hotelId, c.propertyId);
-        if (r.sent > 0) sentAny = true;
+        if (r.sent > 0) {
+          sentAny = true;
+          // Ghi dau thoi gian de trang Kênh bán hiện "Đồng bộ gần nhất" thật.
+          void patchChannelSettings(c.hotelId, { last_sync_at: new Date().toISOString() });
+        }
       }
       if (sentAny) {
         setLastOk(
@@ -78,8 +83,32 @@ export default function ChannexOutbox() {
     };
   }, [conns, drain]);
 
+  // Nghe loi tinh gia tri Channex (ngay rot khoi hang doi):
+  // truoc day loi nay chi nam trong console, chip van hien
+  // "da dong bo". Gio chip canh bao va cho bam de thu lai.
+  useEffect(() => {
+    const onQueueError = () => setQueueErrors(getChannexQueueErrors());
+    window.addEventListener("channex-queue-error", onQueueError);
+    onQueueError();
+    return () => window.removeEventListener("channex-queue-error", onQueueError);
+  }, []);
+
+  const retryQueue = useCallback(async () => {
+    for (const q of queueErrors) {
+      try {
+        await retryChannexQueue(q.hotelId);
+      } catch {
+        // Loi van con — giu lai de chip van canh bao.
+      }
+    }
+    setQueueErrors(getChannexQueueErrors());
+    await drain();
+  }, [queueErrors, drain]);
+
   if (conns.length === 0) return null;
 
+  const queueDates = queueErrors.reduce((n, q) => n + q.dates.length, 0);
+  const hasQueueError = queueErrors.length > 0;
   const style: CSSProperties = {
     position: "fixed",
     right: 16,
@@ -89,19 +118,23 @@ export default function ChannexOutbox() {
     padding: "6px 12px",
     fontSize: 12,
     boxShadow: "0 2px 8px rgba(23,41,62,0.18)",
-    cursor: error ? "pointer" : "default",
-    background: error ? "#fdecec" : pending > 0 ? "#fdf3e3" : "#e8f7f1",
-    color: error ? "#b42318" : pending > 0 ? "#9a6a12" : "#0d7a55",
+    cursor: error || hasQueueError ? "pointer" : "default",
+    background: error ? "#fdecec" : hasQueueError || pending > 0 ? "#fdf3e3" : "#e8f7f1",
+    color: error ? "#b42318" : hasQueueError || pending > 0 ? "#9a6a12" : "#0d7a55",
     border: "1px solid #dde3ea",
   };
   const text = error
     ? `Channex: ⚠️ lỗi gửi — bấm để thử lại`
-    : pending > 0
-      ? `Channex: ⏳ ${pending} mục đang chờ gửi`
-      : `Channex: ✓ đã đồng bộ${lastOk ? ` lúc ${lastOk}` : ""}`;
+    : hasQueueError
+      ? `Channex: ⚠ ${queueDates} ngày chưa tính được — bấm để thử lại`
+      : pending > 0
+        ? `Channex: ⏳ ${pending} mục đang chờ gửi`
+        : `Channex: ✓ đã đồng bộ${lastOk ? ` lúc ${lastOk}` : ""}`;
+  const onClick = error ? drain : hasQueueError ? () => void retryQueue() : undefined;
+  const title = error ?? (hasQueueError ? queueErrors.map((q) => q.message).join("; ") : undefined);
 
   return (
-    <div style={style} onClick={error ? drain : undefined} title={error ?? undefined}>
+    <div style={style} onClick={onClick} title={title}>
       {text}
     </div>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 // ============================================================
-// FILE HOTELCONFIG2 — app/[hotelId]/hotel-config/page.tsx
+// FILE HOTELCONFIG3 — app/[hotelId]/hotel-config/page.tsx
 // Trang CAU HINH KHACH SAN rieng biet (theo yeu cau 2026-10-27):
 // khong con thanh tab lon (Thong tin chung / Cau hinh / Loai
 // phong & Phong chung 1 trang) nua. Trang nay chi co 5 tab con:
@@ -11,6 +11,16 @@
 // dung chung component HotelDetailPage nua — dan 1 file nay
 // la chay ngay. Ham luu ghi lai toan bo profile nen cac phan
 // khac (thong tin chung, tien ich, hinh anh...) khong bi mat.
+// HOTELCONFIG3 (2026-11-13, chuot lai tu tren xuong duoi):
+//   - Tien te mo rong quoc te (12 loai thay vi 3).
+//   - Nam xay dung / so tang / khoang cach de trong khi chua
+//     nhap, thay vi hien 0.
+//   - Ten + mo ta chinh sach sua duoc ngay trong bang (truoc
+//     day muon sua phai xoa roi them lai).
+//   - O "Phuong thuc" canh bao bo select khoa cung chi co
+//     Email, doi thanh dong chu ro rang.
+//   - Ghi ro 2 cai dat chi luu chu chua chay that (huy tu
+//     dong, canh bao phong sap het) — can may chu 24/7 o GĐ4.
 // ============================================================
 
 import { useEffect, useRef, useState } from "react";
@@ -111,8 +121,21 @@ function PolicySection({
         <tbody>
           {items.map((p) => (
             <tr key={p.id} className="border-b border-[#eef1f5]">
-              <td className="py-2.5 pr-3 font-medium text-[#17293e]">{p.name}</td>
-              <td className="py-2.5 pr-3 text-[#68707a]">{p.description || "—"}</td>
+              <td className="py-2.5 pr-3">
+                <input
+                  className={`${inputSm} w-full font-medium text-[#17293e]`}
+                  value={p.name}
+                  onChange={(e) => setItems((prev) => prev.map((x) => (x.id === p.id ? { ...x, name: e.target.value } : x)))}
+                />
+              </td>
+              <td className="py-2.5 pr-3">
+                <input
+                  className={`${inputSm} w-full text-[#68707a]`}
+                  value={p.description}
+                  placeholder="—"
+                  onChange={(e) => setItems((prev) => prev.map((x) => (x.id === p.id ? { ...x, description: e.target.value } : x)))}
+                />
+              </td>
               <td className="py-2.5 pr-3">
                 <button
                   onClick={() =>
@@ -313,6 +336,9 @@ export default function HotelConfigPage() {
                 phút
               </label>
             </div>
+            <p className="mt-2 text-[13px] text-[#68707a]">
+              Huỷ tự động chỉ chạy khi có máy chủ chạy 24/7 — hiện chỉ lưu cài đặt, chưa tự huỷ (làm ở GĐ4).
+            </p>
 
             <GroupTitle>Ngôn ngữ hiển thị & ngày cuối tuần</GroupTitle>
             <div className="mt-3 grid gap-4 sm:grid-cols-2">
@@ -386,9 +412,9 @@ export default function HotelConfigPage() {
             <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field label="Đơn vị tiền tệ">
                 <select className={inputCls} value={config.currency} onChange={(e) => setConfig({ ...config, currency: e.target.value })}>
-                  <option value="VND">VND</option>
-                  <option value="USD">USD</option>
-                  <option value="EUR">EUR</option>
+                  {["VND", "USD", "EUR", "GBP", "JPY", "KRW", "SGD", "THB", "AUD", "CAD", "CNY", "HKD"].map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
                 </select>
               </Field>
               <Field label="Thuế VAT (%)">
@@ -432,10 +458,10 @@ export default function HotelConfigPage() {
                 <input className={inputCls} value={roomCount} disabled />
               </Field>
               <Field label="Năm xây dựng">
-                <input type="number" className={inputCls} value={config.yearBuilt} onChange={(e) => setConfig({ ...config, yearBuilt: Number(e.target.value) })} />
+                <input type="number" className={inputCls} value={config.yearBuilt || ""} onChange={(e) => setConfig({ ...config, yearBuilt: Number(e.target.value) || 0 })} />
               </Field>
               <Field label="Tổng số tầng">
-                <input type="number" className={inputCls} value={config.floors} onChange={(e) => setConfig({ ...config, floors: Number(e.target.value) })} />
+                <input type="number" className={inputCls} value={config.floors || ""} onChange={(e) => setConfig({ ...config, floors: Number(e.target.value) || 0 })} />
               </Field>
               <Field label="Dịch vụ phòng">
                 <select className={inputCls} value={config.roomService ? "yes" : "no"} onChange={(e) => setConfig({ ...config, roomService: e.target.value === "yes" })}>
@@ -444,13 +470,13 @@ export default function HotelConfigPage() {
                 </select>
               </Field>
               <Field label="Khoảng cách tới sân bay (km)">
-                <input type="number" className={inputCls} value={config.distanceAirportKm} onChange={(e) => setConfig({ ...config, distanceAirportKm: Number(e.target.value) })} />
+                <input type="number" className={inputCls} value={config.distanceAirportKm || ""} onChange={(e) => setConfig({ ...config, distanceAirportKm: Number(e.target.value) || 0 })} />
               </Field>
               <Field label="Thời gian tới sân bay (phút)">
-                <input type="number" className={inputCls} value={config.airportMinutes} onChange={(e) => setConfig({ ...config, airportMinutes: Number(e.target.value) })} />
+                <input type="number" className={inputCls} value={config.airportMinutes || ""} onChange={(e) => setConfig({ ...config, airportMinutes: Number(e.target.value) || 0 })} />
               </Field>
               <Field label="Khoảng cách tới trung tâm (km)">
-                <input type="number" step="0.1" className={inputCls} value={config.distanceCenterKm} onChange={(e) => setConfig({ ...config, distanceCenterKm: Number(e.target.value) })} />
+                <input type="number" step="0.1" className={inputCls} value={config.distanceCenterKm || ""} onChange={(e) => setConfig({ ...config, distanceCenterKm: Number(e.target.value) || 0 })} />
               </Field>
             </div>
             <div className="mt-3">
@@ -518,9 +544,9 @@ export default function HotelConfigPage() {
             <GroupTitle>Phương thức nhận cảnh báo</GroupTitle>
             <div className="mt-3 grid gap-4 sm:grid-cols-2">
               <Field label="Phương thức">
-                <select className={inputCls} value="email" disabled>
-                  <option value="email">Email</option>
-                </select>
+                <div className="rounded-lg border border-[#dde3ea] bg-[#f7f9fb] px-3 py-2 text-sm text-[#17293e]">
+                  Email <span className="text-[#68707a]">— SMS / Zalo sẽ có sau</span>
+                </div>
               </Field>
               <Field label="Nhập email *">
                 <input className={inputCls} value={alerts.email} onChange={(e) => setAlerts({ ...alerts, email: e.target.value })} />
@@ -538,6 +564,9 @@ export default function HotelConfigPage() {
               />
               phòng trở xuống
             </label>
+            <p className="mt-3 text-[13px] text-[#68707a]">
+              Cảnh báo chỉ gửi được khi có email + máy chủ kiểm tra tồn phòng — hiện chỉ lưu cài đặt (làm ở GĐ4).
+            </p>
             <SaveRow msg={savedMsg} onSave={save} />
           </div>
         )}

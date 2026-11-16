@@ -1,6 +1,8 @@
 "use client";
 // ============================================================
 // FILE DT2 — components/ReservationForm.tsx (Cloudbeds style)
+// CALDATE1 (2026-11-13): form mo dung ngay hom nay that theo
+// gio dia phuong, khong mac dinh ngay mau 21/10/2026 nua.
 // The "create reservation" form (front desk: walk-in / phone).
 //
 // Upgrades in this version:
@@ -16,7 +18,7 @@
 //     extra-guest fees, so staff can explain it to the guest.
 // ============================================================
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CHANNELS,
   TODAY,
@@ -59,8 +61,19 @@ export default function ReservationForm({
   const [channelCode, setChannelCode] = useState(firstPlan?.channelCode ?? "frontdesk");
   const [roomTypeId, setRoomTypeId] = useState(firstType?.id ?? "");
   const [ratePlanId, setRatePlanId] = useState(firstPlan?.id ?? "");
+  const [todayStr, setTodayStr] = useState<string>(TODAY);
   const [checkIn, setCheckIn] = useState(TODAY);
   const [checkOut, setCheckOut] = useState(addDays(TODAY, 1));
+
+  // Ngay hom nay that theo gio dia phuong (tinh o client, sau
+  // khi mount). Form mo dung ngay hom nay thay vi ngay mau TODAY.
+  useEffect(() => {
+    const d = new Date();
+    const s = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    setTodayStr(s);
+    setCheckIn(s);
+    setCheckOut(addDays(s, 1));
+  }, []);
   const [adults, setAdults] = useState(2);
   const [children, setChildren] = useState(0);
   const [roomNumber, setRoomNumber] = useState(""); // "" = leave unassigned
@@ -117,7 +130,7 @@ export default function ReservationForm({
       totalAmount: total,
       paidAmount: 0,
       status: "confirmed",
-      createdAt: TODAY,
+      createdAt: todayStr,
       note: note || undefined,
     });
   }

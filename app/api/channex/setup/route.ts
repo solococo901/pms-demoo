@@ -1,5 +1,7 @@
 // ============================================================
 // API ROUTE — app/api/channex/setup/route.ts
+// SETUP2 (2026-11-11): nhan them roomTypeMap (ma Channex cua loai
+// phong DA CO) de dot chay them kenh sau van tao duoc goi gia moi.
 // Creates the STRUCTURE on Channex: Property -> Room Types ->
 // (base) Rate Plans. The browser assembles the payload from
 // Supabase (it owns the data + the user session) and posts it
@@ -16,6 +18,8 @@ import { NextResponse } from "next/server";
 
 type SetupBody = {
   propertyId?: string | null;
+  // SETUP2: ma Channex cua loai phong DA CO (trinh duyet gui kem).
+  roomTypeMap?: Record<string, string>;
   property: {
     title: string;
     currency: string;
@@ -110,7 +114,10 @@ export async function POST(req: Request) {
   }
 
   // ----- 2) Room types -----
-  const roomTypeIds: Record<string, string> = {};
+  // SETUP2: gop san ma cua loai phong DA CO (tu roomTypeMap) vao
+  // bang ma — neu khong, goi gia moi o buoc 3 se khong tim thay
+  // loai phong cua no va bao loi.
+  const roomTypeIds: Record<string, string> = { ...(input.roomTypeMap ?? {}) };
   for (const rt of input.roomTypes) {
     try {
       const created = await channexPost(base, key, "/api/v1/room_types", {

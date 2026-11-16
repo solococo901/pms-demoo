@@ -1,6 +1,9 @@
 "use client";
 // ============================================================
 // components/StaffCalendar.tsx — LICH PHONG kieu Cloudbeds
+// CALDATE1 (2026-11-13): lich + form chan phong mo dung ngay
+// hom nay that theo gio dia phuong, khong ket o ngay mau
+// 21/10/2026 cua mock-data nua (cach lam giong RatesCalendar).
 // Tape chart: truc thoi gian DAI (28 ngay), nhom theo loai
 // phong, moi cot ngay co % cong suat + so phong trong, moi
 // nhom loai phong co dong tom tat (trong + gia quay).
@@ -87,6 +90,7 @@ export default function StaffCalendar() {
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [showBlockForm, setShowBlockForm] = useState(false);
   const [startDate, setStartDate] = useState(TODAY);
+  const [todayStr, setTodayStr] = useState<string>(TODAY);
 
   // block form state
   const [bfRoom, setBfRoom] = useState<string>("");
@@ -102,6 +106,19 @@ export default function StaffCalendar() {
     () => Array.from({ length: WINDOW }, (_, i) => addDays(startDate, i)),
     [startDate]
   );
+
+  // Ngay hom nay that theo gio dia phuong (tinh o client, sau
+  // khi mount, de khong lech ngay khi render phia may chu).
+  // Lich mo dung ngay hom nay thay vi ket o ngay mau TODAY.
+  // (Cung cach nhu RatesCalendar.)
+  useEffect(() => {
+    const d = new Date();
+    const s = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    setTodayStr(s);
+    setStartDate(s);
+    setBfFrom(s);
+    setBfTo(s);
+  }, []);
 
   // ---------- load everything from Supabase ----------
   useEffect(() => {
@@ -649,12 +666,12 @@ export default function StaffCalendar() {
         key={`${keyPrefix}${d}`}
         onClick={() => { setAssignDate(assignDate === d ? null : d); setCalMonth(null); }}
         title={unCount > 0 ? `Xem ${unCount} đơn chưa gán đến ngày ${d}` : "Không có đơn chưa gán đến ngày này"}
-        className={`cursor-pointer border-b border-l border-[#eef1f5] px-1 py-1.5 text-center ${d === assignDate ? "bg-[#fef9c3]" : d === TODAY ? "bg-[#e8effe]" : "bg-[#f7f9fb]"}`}
+        className={`cursor-pointer border-b border-l border-[#eef1f5] px-1 py-1.5 text-center ${d === assignDate ? "bg-[#fef9c3]" : d === todayStr ? "bg-[#e8effe]" : "bg-[#f7f9fb]"}`}
       >
         <div className={`mx-auto w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${unCount > 0 ? "bg-[#2563eb] text-white" : "bg-[#e5e9ef] text-[#68707a]"}`}>
           {unCount}
         </div>
-        <div className={`text-sm font-bold ${weekend ? "text-[#e5484d]" : d === TODAY ? "text-[#2563eb]" : "text-[#17293e]"}`}>
+        <div className={`text-sm font-bold ${weekend ? "text-[#e5484d]" : d === todayStr ? "text-[#2563eb]" : "text-[#17293e]"}`}>
           {WEEKDAYS[dt.getDay()]} {dt.getDate()}
         </div>
         <div className="text-[10px] text-[#68707a]">{occByDay[i]}%</div>
@@ -670,7 +687,7 @@ export default function StaffCalendar() {
       {/* week navigation kieu Cloudbeds: pill ‹ TODAY › + loc loai phong */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <button onClick={() => setStartDate((d) => addDays(d, -7))} className="rounded-full border border-[#dde3ea] bg-white px-3 py-1.5 text-sm font-semibold text-[#17293e]">‹</button>
-        <button onClick={() => setStartDate(TODAY)} className="rounded-full border border-[#dde3ea] bg-white px-4 py-1.5 text-sm font-bold text-[#2563eb]">Hôm nay</button>
+        <button onClick={() => setStartDate(todayStr)} className="rounded-full border border-[#dde3ea] bg-white px-4 py-1.5 text-sm font-bold text-[#2563eb]">Hôm nay</button>
         <button onClick={() => setStartDate((d) => addDays(d, 7))} className="rounded-full border border-[#dde3ea] bg-white px-3 py-1.5 text-sm font-semibold text-[#17293e]">›</button>
         <select value={typeFilter ?? ""} onChange={(e) => setTypeFilter(e.target.value || null)} className="rounded-full border border-[#dde3ea] bg-white px-3 py-1.5 text-sm text-[#17293e]">
           <option value="">All Room Types</option>
@@ -795,7 +812,7 @@ export default function StaffCalendar() {
                       <button
                         key={c}
                         onClick={() => { setAssignDate(c); setCalOpen(false); }}
-                        className={`rounded-lg py-1.5 text-sm ${c === assignDate ? "bg-[#2563eb] font-bold text-white" : c === TODAY ? "font-bold text-[#2563eb] ring-1 ring-[#2563eb]" : "text-[#17293e] hover:bg-[#eef1f5]"}`}
+                        className={`rounded-lg py-1.5 text-sm ${c === assignDate ? "bg-[#2563eb] font-bold text-white" : c === todayStr ? "font-bold text-[#2563eb] ring-1 ring-[#2563eb]" : "text-[#17293e] hover:bg-[#eef1f5]"}`}
                       >
                         {Number(c.slice(8, 10))}
                       </button>
@@ -1017,7 +1034,7 @@ export default function StaffCalendar() {
                           ? "cursor-pointer bg-[#dbeafe] ring-1 ring-inset ring-[#2563eb]"
                           : day === assignDate
                             ? "bg-[#fffde7]"
-                            : day === TODAY
+                            : day === todayStr
                               ? "bg-[#f2f6fe]"
                               : ""
                       }`}

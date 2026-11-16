@@ -386,7 +386,10 @@ export default function RatesCalendar() {
   }
 
   function pushToChannex(code: string) {
-    // Simulated for now — Round B calls the real Channex API here.
+    // Day thay doi cua kenh nay vao hang doi Channex ngay (bo gui
+    // nen se day di trong vai giay) — truoc day chi xoa co hieu
+    // ma khong day gi ca.
+    queueChannexDates(days, HOTEL_ID);
     setDirtyChannels((prev) => {
       const next = new Set(prev);
       next.delete(code);
@@ -759,7 +762,18 @@ export default function RatesCalendar() {
           <input type="date" value={startDate} onChange={(e) => e.target.value && setStartDate(e.target.value)} className={inputCls} />
           <button onClick={() => setStartDate(addDays(startDate, WINDOW))} className="cb-btn-ghost px-3 py-2" title="Tiến 14 ngày">›</button>
         </span>
-        <button onClick={() => setShowInvPanel((v) => !v)} className="cb-btn-ghost px-3 py-2 text-sm">
+        <button
+          onClick={() => {
+            // Mo panel bang dung cua so luoi dang xem + loai phong
+            // dang loc (giong nut Cap nhat hang loat) — truoc day
+            // panel mo o ngay mau 21/10/2026, loai phong mau.
+            if (priceTypeFilter !== "all") setIbType(priceTypeFilter);
+            setIbFrom(startDate);
+            setIbTo(addDays(startDate, 13));
+            setShowInvPanel((v) => !v);
+          }}
+          className="cb-btn-ghost px-3 py-2 text-sm"
+        >
           Đóng bán
         </button>
         <button

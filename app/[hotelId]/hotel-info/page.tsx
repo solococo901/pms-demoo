@@ -1,14 +1,20 @@
 "use client";
 
 // ============================================================
-// FILE HOTELINFO2 — app/[hotelId]/hotel-info/page.tsx
+// FILE HOTELINFO3 — app/[hotelId]/hotel-info/page.tsx
 // Trang THONG TIN CHUNG rieng biet (theo yeu cau 2026-10-27):
 // khong con thanh tab lon (Thong tin chung / Cau hinh / Loai
-// phong & Phong chung 1 trang) nua. Trang nay chi co 3 tab con:
-//   Thong tin dang ky | Tien ich | Hinh anh
-// (dung nhu anh Vos gui). Dia diem lan can TAM khong co cho
-// sua o day — du lieu cu van giu nguyen trong DB vi ham luu
-// ghi lai toan bo profile, chi khong hien muc sua no nua.
+// phong & Phong chung 1 trang) nua. Trang nay co 4 tab con:
+//   Thong tin dang ky | Tien ich | Hinh anh | Dia diem lan can
+// (dung nhu anh Vos gui, them tab Dia diem lan can).
+// HOTELINFO3 (2026-11-13, chuot lai tu tren xuong duoi):
+//   - Ma khach san nhap duoc khi con trong, luu that vao DB.
+//   - Logo + anh them bang link (co xem truoc, sua chu thich,
+//     dat anh bia); tai file truc tiep can kho anh (buoc sau).
+//   - Them tab Dia diem lan can (truc day khong co cho sua).
+//   - Mui gio mo rong quoc te; sao co muc "Chua xep hang";
+//     vi do/kinh do trong thi de trong thay vi 0; mo ta gioi
+//     han that 3000 ky tu.
 // Trang nay TU CHUA moi thu, khong dung chung component
 // HotelDetailPage nua — dan 1 file nay la chay ngay.
 // ============================================================
@@ -25,12 +31,16 @@ import {
   type HotelConfig,
   type HotelPhoto,
   type NamedPolicy,
+  type NearbyCategory,
   type NearbyPlace,
   type PaymentMethods,
 } from "@/lib/mock-data";
 
 const inputCls =
   "w-full rounded-lg border border-[#dde3ea] bg-white px-3 py-2 text-sm outline-none focus:border-[#2563eb]";
+// Ban input khong w-full, dung cho cac dong form nhieu o nam ngang.
+const rowInputCls =
+  "rounded-lg border border-[#dde3ea] bg-white px-3 py-2 text-sm outline-none focus:border-[#2563eb]";
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -61,9 +71,17 @@ function GroupTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
+const NEARBY_LABELS: Record<NearbyCategory, string> = {
+  nearest: "Địa điểm gần nhất",
+  popular: "Địa điểm nổi tiếng",
+  airport: "Sân bay gần nhất",
+  tourist: "Điểm du lịch",
+  food: "Nhà hàng & chợ địa phương",
+};
+
 // ---------- defaults for a hotel that has not filled these in ----------
 // (kept so SAVE writes the whole profile back untouched — the parts
-// this page does not edit, like nearby places and config, are never lost)
+// this page does not edit, like config, are never lost)
 const DEFAULT_CONFIG: HotelConfig = {
   notifyEmail: "", ccEmail: "", bccEmail: "", cardEmail: "",
   autoCancelUnconfirmed: false, autoCancelFailedPaymentMinutes: 0,
@@ -80,7 +98,7 @@ const DEFAULT_METHODS: PaymentMethods = {
 };
 const DEFAULT_ALERTS: HotelAlerts = { email: "", lowRoomThreshold: 2, enabled: false };
 
-type SubTab = "info" | "amenities" | "photos";
+type SubTab = "info" | "amenities" | "photos" | "nearby";
 
 export default function HotelInfoPage() {
   const params = useParams();
@@ -104,6 +122,13 @@ export default function HotelInfoPage() {
   const [dbError, setDbError] = useState("");
   const loadedRef = useRef(false);
   const [sub, setSub] = useState<SubTab>("info");
+  // ----- form them dia diem lan can -----
+  const [nbCategory, setNbCategory] = useState<NearbyCategory>("tourist");
+  const [nbName, setNbName] = useState("");
+  const [nbDistance, setNbDistance] = useState(0);
+  // ----- form them anh bang link -----
+  const [newPhotoUrl, setNewPhotoUrl] = useState("");
+  const [newPhotoCaption, setNewPhotoCaption] = useState("");
 
   // ----- LOAD this hotel's row from Supabase -----
   useEffect(() => {
@@ -155,7 +180,7 @@ export default function HotelInfoPage() {
       paymentMethods: methods, alerts,
     };
     const { error } = await supabase.from("hotels").update({
-      name: hotel.name, address: hotel.address || null, city: hotel.city || null,
+      name: hotel.name, code: hotel.code || null, address: hotel.address || null, city: hotel.city || null,
       star_rating: hotel.starRating ?? null,
       timezone: hotel.timezone || null,
       check_in_time: hotel.checkInTime, check_out_time: hotel.checkOutTime,
@@ -188,11 +213,12 @@ export default function HotelInfoPage() {
       {loading && <p className="mt-3 text-sm text-[#68707a]">Đang tải dữ liệu từ Supabase...</p>}
       {dbError && <p className="mt-3 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">Lỗi cơ sở dữ liệu: {dbError}</p>}
 
-      {/* ===== 3 tab con cua Thong tin chung ===== */}
+      {/* ===== 4 tab con cua Thong tin chung ===== */}
       <div className="mt-5 flex flex-wrap border-b border-[#dde3ea]">
         <button className={subBtn(sub === "info")} onClick={() => setSub("info")}>Thông tin đăng ký</button>
         <button className={subBtn(sub === "amenities")} onClick={() => setSub("amenities")}>Tiện ích</button>
         <button className={subBtn(sub === "photos")} onClick={() => setSub("photos")}>Hình ảnh</button>
+        <button className={subBtn(sub === "nearby")} onClick={() => setSub("nearby")}>Địa điểm lân cận</button>
       </div>
 
       <div className="cb-card mt-5 p-5">
@@ -204,7 +230,13 @@ export default function HotelInfoPage() {
             </h2>
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <Field label="Mã khách sạn">
-                <input className={inputCls} value={hotel.code ?? "—"} disabled />
+                <input
+                  className={inputCls}
+                  value={hotel.code ?? ""}
+                  placeholder="Nhập mã, VD: DEMO"
+                  disabled={!!hotel.code}
+                  onChange={(e) => setHotel({ ...hotel, code: e.target.value || undefined })}
+                />
               </Field>
               <Field label="Tên khách sạn *">
                 <input className={inputCls} value={hotel.name} onChange={(e) => setHotel({ ...hotel, name: e.target.value })} />
@@ -213,7 +245,8 @@ export default function HotelInfoPage() {
                 <input className={inputCls} value={hotel.nameEn ?? ""} onChange={(e) => setHotel({ ...hotel, nameEn: e.target.value })} />
               </Field>
               <Field label="Hạng sao">
-                <select className={inputCls} value={hotel.starRating ?? 3} onChange={(e) => setHotel({ ...hotel, starRating: Number(e.target.value) })}>
+                <select className={inputCls} value={hotel.starRating ?? ""} onChange={(e) => setHotel({ ...hotel, starRating: e.target.value === "" ? undefined : Number(e.target.value) })}>
+                  <option value="">— Chưa xếp hạng —</option>
                   {[1, 2, 3, 4, 5].map((s) => (<option key={s} value={s}>{s} sao</option>))}
                 </select>
               </Field>
@@ -226,8 +259,22 @@ export default function HotelInfoPage() {
                 <select className={inputCls} value={hotel.timezone ?? "Asia/Ho_Chi_Minh"} onChange={(e) => setHotel({ ...hotel, timezone: e.target.value })}>
                   <option value="Asia/Ho_Chi_Minh">(GMT+07:00) Hồ Chí Minh</option>
                   <option value="Asia/Bangkok">(GMT+07:00) Bangkok</option>
+                  <option value="Asia/Jakarta">(GMT+07:00) Jakarta</option>
                   <option value="Asia/Singapore">(GMT+08:00) Singapore</option>
+                  <option value="Asia/Kuala_Lumpur">(GMT+08:00) Kuala Lumpur</option>
+                  <option value="Asia/Manila">(GMT+08:00) Manila</option>
+                  <option value="Asia/Shanghai">(GMT+08:00) Thượng Hải</option>
+                  <option value="Asia/Hong_Kong">(GMT+08:00) Hồng Kông</option>
                   <option value="Asia/Tokyo">(GMT+09:00) Tokyo</option>
+                  <option value="Asia/Seoul">(GMT+09:00) Seoul</option>
+                  <option value="Asia/Dubai">(GMT+04:00) Dubai</option>
+                  <option value="Europe/London">(GMT+00:00) London</option>
+                  <option value="Europe/Paris">(GMT+01:00) Paris</option>
+                  <option value="America/New_York">(GMT-05:00) New York</option>
+                  <option value="America/Los_Angeles">(GMT-08:00) Los Angeles</option>
+                  <option value="Australia/Sydney">(GMT+11:00) Sydney</option>
+                  <option value="Pacific/Auckland">(GMT+13:00) Auckland</option>
+                  <option value="UTC">(GMT+00:00) UTC</option>
                 </select>
               </Field>
               <Field label="Số điện thoại liên hệ *">
@@ -237,9 +284,21 @@ export default function HotelInfoPage() {
                 <input className={inputCls} value={hotel.email} onChange={(e) => setHotel({ ...hotel, email: e.target.value })} />
               </Field>
               <Field label="Logo khách sạn">
-                <div className="flex h-[38px] items-center rounded-lg border border-dashed border-[#c4cedb] px-3 text-[13px] text-[#68707a]">
-                  {hotel.logoUrl ? "Đã có logo" : "Chưa có logo — tải lên ở Vòng B"}
-                </div>
+                {hotel.logoUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={hotel.logoUrl} alt="Logo khách sạn" className="mb-2 h-12 w-auto rounded-lg border border-[#dde3ea] bg-white object-contain" />
+                )}
+                <input
+                  className={inputCls}
+                  value={hotel.logoUrl ?? ""}
+                  placeholder="Dán link ảnh logo (https://...)"
+                  onChange={(e) => setHotel({ ...hotel, logoUrl: e.target.value || undefined })}
+                />
+                {hotel.logoUrl && (
+                  <button onClick={() => setHotel({ ...hotel, logoUrl: undefined })} className="mt-1 text-xs font-medium text-[#e5484d] hover:underline">
+                    Xoá logo
+                  </button>
+                )}
               </Field>
               <Field label="Website">
                 <input className={inputCls} value={hotel.websiteUrl ?? ""} onChange={(e) => setHotel({ ...hotel, websiteUrl: e.target.value })} />
@@ -266,20 +325,20 @@ export default function HotelInfoPage() {
 
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <Field label={`Mô tả (Tiếng Việt) — ${(hotel.descriptionVi ?? "").length}/3000 ký tự`}>
-                <textarea className={inputCls} rows={4} value={hotel.descriptionVi ?? ""} onChange={(e) => setHotel({ ...hotel, descriptionVi: e.target.value })} />
+                <textarea className={inputCls} rows={4} maxLength={3000} value={hotel.descriptionVi ?? ""} onChange={(e) => setHotel({ ...hotel, descriptionVi: e.target.value })} />
               </Field>
               <Field label={`Description (English) — ${(hotel.descriptionEn ?? "").length}/3000 ký tự`}>
-                <textarea className={inputCls} rows={4} value={hotel.descriptionEn ?? ""} onChange={(e) => setHotel({ ...hotel, descriptionEn: e.target.value })} />
+                <textarea className={inputCls} rows={4} maxLength={3000} value={hotel.descriptionEn ?? ""} onChange={(e) => setHotel({ ...hotel, descriptionEn: e.target.value })} />
               </Field>
             </div>
 
             <GroupTitle>Vị trí trên bản đồ</GroupTitle>
             <div className="mt-3 grid gap-4 sm:grid-cols-3">
               <Field label="Vĩ độ">
-                <input type="number" step="0.0001" className={inputCls} value={hotel.latitude ?? 0} onChange={(e) => setHotel({ ...hotel, latitude: Number(e.target.value) })} />
+                <input type="number" step="0.0001" className={inputCls} value={hotel.latitude ?? ""} onChange={(e) => setHotel({ ...hotel, latitude: e.target.value === "" ? undefined : Number(e.target.value) })} />
               </Field>
               <Field label="Kinh độ">
-                <input type="number" step="0.0001" className={inputCls} value={hotel.longitude ?? 0} onChange={(e) => setHotel({ ...hotel, longitude: Number(e.target.value) })} />
+                <input type="number" step="0.0001" className={inputCls} value={hotel.longitude ?? ""} onChange={(e) => setHotel({ ...hotel, longitude: e.target.value === "" ? undefined : Number(e.target.value) })} />
               </Field>
               <Field label="Mức zoom">
                 <input type="number" className={inputCls} value={hotel.mapZoom ?? 15} onChange={(e) => setHotel({ ...hotel, mapZoom: Number(e.target.value) })} />
@@ -326,22 +385,26 @@ export default function HotelInfoPage() {
         {/* ----- photos ----- */}
         {sub === "photos" && (
           <div>
-            <div className="rounded-xl border-2 border-dashed border-[#c4cedb] px-4 py-8 text-center">
-              <div className="font-medium text-[#17293e]">Kéo thả ảnh vào đây</div>
+            <div className="rounded-xl border border-[#dde3ea] bg-[#f7f9fb] px-4 py-4">
+              <div className="font-medium text-[#17293e]">Thêm ảnh bằng link</div>
               <div className="mt-1 text-sm text-[#68707a]">
-                Tải ảnh thật (tối đa 5MB/ảnh) hoạt động ở Vòng B — hiện đang dùng ảnh mẫu bên dưới.
+                Dán link ảnh (https://...) — ảnh lưu vào hồ sơ khách sạn khi bấm Lưu bên dưới. Tải file ảnh trực tiếp từ máy lên sẽ có ở bước kho ảnh sau.
               </div>
-              <button
-                onClick={() =>
-                  setPhotos((p) => [
-                    ...p,
-                    { id: `photo-${Date.now()}`, url: `https://picsum.photos/seed/${Date.now()}/800/600`, caption: "Ảnh mới" },
-                  ])
-                }
-                className="cb-btn-primary mt-3 px-4 py-2 text-sm"
-              >
-                + Thêm ảnh mẫu
-              </button>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <input className={`${rowInputCls} min-w-56 flex-1`} placeholder="Link ảnh, VD: https://..." value={newPhotoUrl} onChange={(e) => setNewPhotoUrl(e.target.value)} />
+                <input className={`${rowInputCls} w-56`} placeholder="Chú thích ảnh" value={newPhotoCaption} onChange={(e) => setNewPhotoCaption(e.target.value)} />
+                <button
+                  onClick={() => {
+                    if (!newPhotoUrl.trim().startsWith("http")) return alert("Link ảnh phải bắt đầu bằng http:// hoặc https://");
+                    setPhotos((p) => [...p, { id: `photo-${Date.now()}`, url: newPhotoUrl.trim(), caption: newPhotoCaption.trim() || "Ảnh mới" }]);
+                    setNewPhotoUrl("");
+                    setNewPhotoCaption("");
+                  }}
+                  className="cb-btn-primary px-4 py-2 text-sm"
+                >
+                  + Thêm ảnh
+                </button>
+              </div>
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {photos.map((ph, i) => (
@@ -360,18 +423,94 @@ export default function HotelInfoPage() {
                   >
                     ✕
                   </button>
-                  <div className="px-3 py-2 text-[13px] text-[#68707a]">{ph.caption}</div>
+                  <div className="px-3 py-2">
+                    <input
+                      className="w-full rounded-md border border-transparent px-1 py-0.5 text-[13px] text-[#17293e] outline-none focus:border-[#2563eb]"
+                      value={ph.caption}
+                      placeholder="Chú thích ảnh"
+                      onChange={(e) => setPhotos((p) => p.map((x) => (x.id === ph.id ? { ...x, caption: e.target.value } : x)))}
+                    />
+                    {i > 0 && (
+                      <button
+                        onClick={() => setPhotos((p) => [ph, ...p.filter((x) => x.id !== ph.id)])}
+                        className="mt-0.5 text-xs font-medium text-[#2563eb] hover:underline"
+                      >
+                        Đặt làm ảnh bìa
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
               {photos.length === 0 && (
                 <div className="py-6 text-sm text-[#68707a] sm:col-span-2 lg:col-span-3">
-                  Chưa có ảnh nào — bấm &quot;+ Thêm ảnh mẫu&quot; để xem thử bố cục.
+                  Chưa có ảnh nào — thêm ảnh đầu tiên bằng link ở trên.
                 </div>
               )}
             </div>
             <div className="mt-4 text-[13px] text-[#68707a]">
               Kênh bán áp dụng: <b className="text-[#17293e]">Website (Booking Engine)</b> — ảnh chỉ phục vụ
               trang đặt phòng của khách sạn, không đẩy lên các OTA.
+            </div>
+            <SaveRow msg={savedMsg} onSave={save} />
+          </div>
+        )}
+
+        {/* ----- nearby places ----- */}
+        {sub === "nearby" && (
+          <div>
+            <p className="text-sm text-[#68707a]">
+              Địa điểm xung quanh khách sạn — hiện trên trang đặt phòng để khách hình dung vị trí.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <select className={rowInputCls} value={nbCategory} onChange={(e) => setNbCategory(e.target.value as NearbyCategory)}>
+                {(Object.keys(NEARBY_LABELS) as NearbyCategory[]).map((c) => (
+                  <option key={c} value={c}>{NEARBY_LABELS[c]}</option>
+                ))}
+              </select>
+              <input className={`${rowInputCls} min-w-56 flex-1`} placeholder="Tên địa điểm, VD: Hồ Xuân Hương" value={nbName} onChange={(e) => setNbName(e.target.value)} />
+              <input type="number" step="0.1" min={0} className={`${rowInputCls} w-28`} value={nbDistance} onChange={(e) => setNbDistance(Number(e.target.value))} title="Khoảng cách (km)" />
+              <span className="self-center text-sm text-[#68707a]">km</span>
+              <button
+                onClick={() => {
+                  if (!nbName.trim()) return alert("Chưa nhập tên địa điểm.");
+                  setNearby((p) => [...p, { category: nbCategory, name: nbName.trim(), distanceKm: nbDistance }]);
+                  setNbName("");
+                }}
+                className="cb-btn-primary px-4 py-2 text-sm"
+              >
+                + Thêm
+              </button>
+            </div>
+            {(Object.keys(NEARBY_LABELS) as NearbyCategory[]).map((cat) => {
+              const items = nearby.filter((n) => n.category === cat);
+              if (items.length === 0) return null;
+              return (
+                <div key={cat} className="mt-5">
+                  <h3 className="text-sm font-bold text-[#17293e]">{NEARBY_LABELS[cat]}</h3>
+                  <div className="mt-2 divide-y divide-[#eef1f5]">
+                    {items.map((n) => (
+                      <div key={n.name} className="flex items-center justify-between py-2 text-sm">
+                        <span>{n.name}</span>
+                        <span className="flex items-center gap-4">
+                          <span className="text-[#68707a]">{n.distanceKm} km</span>
+                          <button
+                            onClick={() => setNearby((p) => p.filter((x) => x !== n))}
+                            className="font-medium text-[#e5484d] hover:underline"
+                          >
+                            Xoá
+                          </button>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            {nearby.length === 0 && (
+              <p className="mt-4 text-sm text-[#68707a]">Chưa có địa điểm nào — thêm địa điểm đầu tiên ở trên.</p>
+            )}
+            <div className="mt-4 text-[13px] text-[#68707a]">
+              Kênh bán áp dụng: <b className="text-[#17293e]">Website (Booking Engine)</b>.
             </div>
             <SaveRow msg={savedMsg} onSave={save} />
           </div>

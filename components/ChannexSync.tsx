@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
 import { useParams } from "next/navigation";
 import { addDaysStr, computeChannexValues, isoDay } from "@/lib/channex-compute";
+import { patchChannelSettings } from "@/lib/channex-outbox";
 
 
 export default function ChannexSync() {
@@ -66,6 +67,8 @@ export default function ChannexSync() {
             )
           );
         }
+        // Ghi dau thoi gian de trang Kênh bán hiện "Đồng bộ gần nhất" thật.
+        void patchChannelSettings(HOTEL_ID, { last_sync_at: new Date().toISOString() });
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Đồng bộ thất bại.");

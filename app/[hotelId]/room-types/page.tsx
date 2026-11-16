@@ -1,7 +1,7 @@
 "use client";
 
 // ============================================================
-// FILE HOTELROOMTYPES2 — app/[hotelId]/room-types/page.tsx
+// FILE HOTELROOMTYPES3 — app/[hotelId]/room-types/page.tsx
 // Trang THONG TIN LOAI PHONG rieng biet (theo yeu cau 2026-10-27):
 // khong con thanh tab lon (Thong tin chung / Cau hinh / Loai
 // phong & Phong chung 1 trang) nua. Noi dung chinh la bang
@@ -11,10 +11,20 @@
 // trang chi tiet rieng nhu cu.
 // Khoi Phong vat ly giu lai ben duoi (can 1 cho de quan ly
 // phong that — lich phong cua le tan chay tren cac phong nay).
-// Gia ban KHONG nam o day: gia theo tung kenh set o trang
-// Ban phong, tab Chinh sach gia — tranh 2 noi cung giu 1 gia.
+// Gia ban KHONG nam o day: gia theo tung kenh nhap o trang
+// Lich gia, tab Gia theo kenh — tranh 2 noi cung giu 1 gia.
 // Trang nay TU CHUA moi thu, khong dung chung component
 // HotelDetailPage nua — dan 1 file nay la chay ngay.
+// HOTELROOMTYPES3 (2026-11-13, chuot lai tu tren xuong duoi):
+//   - Hien trang thai tu dong luu (Dang luu... / Da luu) —
+//     truoc day luu am tham, khong biet da luu hay chua.
+//   - Ma loai phong moi tao tu ten tieng Viet dung (Phong Doi
+//     -> phong-doi, thay vi ph-ng-i) nho bo dau tieng Viet.
+//   - Nut them doi ten cho dung ("+ Them loai phong").
+//   - Ghi chu ve gia sua theo ten trang/tab moi.
+//   - Cong tac tat ban + phong Ngung ban gio co tac dung
+//     that tren Channex (xem lib/channex-compute.ts) — truoc
+//     day chi doi hien thi, OTA van ban nhu thuong.
 // ============================================================
 
 import { useEffect, useRef, useState } from "react";
@@ -35,6 +45,20 @@ const HK_LABELS: Record<Room["housekeepingStatus"], string> = {
   out_of_order: "Ngừng bán",
 };
 
+// Ma dinh danh loai phong tu ten tieng Viet: bo dau roi noi
+// bang gach ngang ("Phòng Đôi" -> "phong-doi").
+function slugifyTypeName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "loai-phong";
+}
+
 export default function HotelRoomTypesPage() {
   const params = useParams();
   const id = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
@@ -50,6 +74,8 @@ export default function HotelRoomTypesPage() {
   const [activeRoomNumbers, setActiveRoomNumbers] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [dbError, setDbError] = useState("");
+  // Trang thai tu dong luu (luu am tham 600ms sau moi thay doi).
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const loadedRef = useRef(false);
 
   // ----- ezCloud-style toolbar state -----
@@ -121,6 +147,7 @@ export default function HotelRoomTypesPage() {
   useEffect(() => {
     if (!loadedRef.current) return;
     const t = setTimeout(async () => {
+      setSaveState("saving");
       const typeRows = roomTypes.map((rt) => ({
         id: rt.id, hotel_id: id, account_id: ACCOUNT_ID, code: rt.code ?? null, name: rt.name,
         max_adults: rt.maxAdults, max_children: rt.maxChildren, max_infants: rt.maxInfants ?? 0,
@@ -132,14 +159,14 @@ export default function HotelRoomTypesPage() {
       }));
       if (typeRows.length > 0) {
         const { error } = await supabase.from("room_types").upsert(typeRows);
-        if (error) { setDbError(error.message); return; }
+        if (error) { setDbError(error.message); setSaveState("error"); return; }
       }
       const { data: dbTypes } = await supabase.from("room_types").select("id").eq("hotel_id", id);
       const keepT = new Set(roomTypes.map((x) => x.id));
       for (const d of dbTypes ?? []) {
         if (!keepT.has(d.id)) {
           const { error } = await supabase.from("room_types").delete().eq("id", d.id);
-          if (error) { setDbError("Không xoá được loại phòng trong kho: " + error.message); return; }
+          if (error) { setDbError("Không xoá được loại phòng trong kho: " + error.message); setSaveState("error"); return; }
         }
       }
       const roomRows = rooms.map((r) => ({
@@ -149,20 +176,21 @@ export default function HotelRoomTypesPage() {
       }));
       if (roomRows.length > 0) {
         const { error } = await supabase.from("rooms").upsert(roomRows);
-        if (error) { setDbError(error.message); return; }
+        if (error) { setDbError(error.message); setSaveState("error"); return; }
       }
       const { data: dbRooms } = await supabase.from("rooms").select("id").eq("hotel_id", id);
       const keepR = new Set(roomRows.map((x) => x.id));
       for (const d of dbRooms ?? []) {
         if (!keepR.has(d.id)) await supabase.from("rooms").delete().eq("id", d.id);
       }
+      setSaveState("saved");
     }, 600);
     return () => clearTimeout(t);
   }, [roomTypes, rooms, id]);
 
   function addRoomType() {
     if (!typeName.trim()) return alert("Chưa nhập tên loại phòng.");
-    const newId = typeName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const newId = slugifyTypeName(typeName);
     if (roomTypes.some((t) => t.id === newId)) return alert("Loại phòng này đã tồn tại ở khách sạn này.");
     setRoomTypes((p) => [
       ...p,
@@ -224,6 +252,11 @@ export default function HotelRoomTypesPage() {
       <p className="mt-1 text-sm text-[#68707a]">
         Trang quản lí riêng của khách sạn này — không ảnh hưởng khách sạn khác.
       </p>
+      {saveState !== "idle" && (
+        <p className={`mt-1 text-[13px] ${saveState === "error" ? "text-[#e5484d]" : saveState === "saving" ? "text-[#68707a]" : "text-[#1db584]"}`}>
+          {saveState === "saving" ? "Đang lưu..." : saveState === "saved" ? "✓ Đã lưu tự động." : "Lỗi khi lưu — xem thông báo đỏ phía trên."}
+        </p>
+      )}
       {loading && <p className="mt-3 text-sm text-[#68707a]">Đang tải dữ liệu từ Supabase...</p>}
       {dbError && <p className="mt-3 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">Lỗi cơ sở dữ liệu: {dbError}</p>}
 
@@ -232,7 +265,7 @@ export default function HotelRoomTypesPage() {
         <div className="flex flex-wrap items-center gap-3">
           <h2 className="text-base font-bold text-[#17293e]">Loại phòng</h2>
           <button onClick={() => setShowAddType((v) => !v)} className="cb-btn-primary ml-auto px-4 py-2 text-sm">
-            + Thêm mới phòng
+            + Thêm loại phòng
           </button>
         </div>
         <p className="mt-0.5 text-sm text-[#68707a]">Mỗi loại phòng có mã ngắn để khớp nối với các kênh bán. Tắt công tắc = ngừng bán mà không xoá dữ liệu.</p>
@@ -318,12 +351,12 @@ export default function HotelRoomTypesPage() {
               </tr>
             ))}
             {shownTypes.length === 0 && (
-              <tr><td colSpan={8} className="py-6 text-center text-[#68707a]">{roomTypes.length === 0 ? "Chưa có loại phòng nào — bấm \"+ Thêm mới phòng\" để tạo." : "Không tìm thấy loại phòng nào khớp."}</td></tr>
+              <tr><td colSpan={8} className="py-6 text-center text-[#68707a]">{roomTypes.length === 0 ? "Chưa có loại phòng nào — bấm \"+ Thêm loại phòng\" để tạo." : "Không tìm thấy loại phòng nào khớp."}</td></tr>
             )}
           </tbody>
         </table>
         <p className="mt-3 text-xs text-[#68707a]">
-          Giá bán không nằm ở đây: giá theo từng kênh set ở trang Bán phòng, tab Chính sách giá — để khỏi có 2 nơi cùng giữ 1 giá.
+          Giá bán không nằm ở đây: giá theo từng kênh nhập ở trang Lịch giá (tab Giá theo kênh) — để khỏi có 2 nơi cùng giữ 1 giá.
         </p>
       </div>
 

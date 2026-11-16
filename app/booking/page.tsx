@@ -16,9 +16,9 @@
 //   - Availability is the SHARED inventory: rooms left =
 //     physical rooms of the type − rooms already taken by
 //     bookings from ANY channel on those nights.
-//   - Room types with no website plan (Twin, Studio in the
-//     mock data) show "book by phone" instead of a price —
-//     a channel only sells what it has plans for.
+//   - Room types with no website plan show "book by phone"
+//     instead of a price — a channel only sells what it has
+//     plans for.
 //   - The header photo is the hotel's cover photo from its
 //     photo library (Khách sạn → tab Hình ảnh).
 //   - On confirm, the booking is built exactly like a staff
@@ -26,17 +26,24 @@
 //     system it lands in the PMS list as source
 //     "Website (Booking Engine)".
 // Logic unchanged from the first version — colors + photo.
+// BOOKING2 (2026-11-13): bo ghim khach san cityhouse-mark (da
+// xoa) — dung khach san dang chon theo tab; loai phong, gia,
+// anh bia, ten khach san deu doc tu co so du lieu; ngay mac
+// dinh la ngay hom nay that; gia lay theo trang (Supabase tra
+// toi da 1000 dong/lan). Chua chon khach san thi chan trang
+// lai bang thong bao thay vi ghi don vao khach san khong co.
 // ============================================================
 
 import { useEffect, useMemo, useState } from "react";
-import { INVENTORY_BLOCKS, RATE_PLANS, RESERVATIONS, ROOM_BLOCKS, ROOMS, ROOM_TYPES, TODAY, extraFeesPerNight, getHotelData, inventoryBlockOn, resolvePlanPrice, roomBlockOn, type RatePlan, type Reservation } from "@/lib/mock-data";
+import Link from "next/link";
+import { extraFeesPerNight, inventoryBlockOn, resolvePlanPrice, roomBlockOn, type InventoryBlock, type RatePlan, type Reservation, type Room, type RoomBlock, type RoomType } from "@/lib/mock-data";
 import { supabase } from "@/lib/supabase";
+import { currentHotelId } from "@/lib/current-hotel";
 import { queueChannexDates, stayDates } from "@/lib/channex-outbox";
 
 // Round B (Buoc 4.4c): availability + prices come from Supabase
 // and confirming a booking INSERTS a real reservation row —
 // it appears in the PMS list, the calendar and the reports.
-const HOTEL_ID = "cityhouse-mark";
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 
 const DAY_MS = 86_400_000;
@@ -55,10 +62,10 @@ const newCode = () =>
 // total; a stop-sell block for the website channel (or for the
 // whole room type) closes the night completely.
 function roomsLeftOn(
-  rooms: typeof ROOMS,
-  reservations: typeof RESERVATIONS,
-  roomBlocks: typeof ROOM_BLOCKS,
-  inventoryBlocks: typeof INVENTORY_BLOCKS,
+  rooms: Room[],
+  reservations: Reservation[],
+  roomBlocks: RoomBlock[],
+  inventoryBlocks: InventoryBlock[],
   roomTypeId: string,
   date: string
 ) {
@@ -81,9 +88,13 @@ function priceFor(plan: RatePlan, date: string, allPlans: RatePlan[], overrides?
 const inputCls = "rounded-lg border border-[#dde3ea] px-3 py-2 text-[#17293e] outline-none focus:border-[#2563eb]";
 
 export default function BookingPage() {
+  // Khach san dang chon theo tab (giong moi trang khac); chua
+  // chon thi chuoi rong — trang se chan lai bang thong bao.
+  const HOTEL_ID = currentHotelId();
   const [step, setStep] = useState(1);
-  const [checkIn, setCheckIn] = useState(TODAY);
-  const [checkOut, setCheckOut] = useState(addDays(TODAY, 2));
+  const [todayStr, setTodayStr] = useState("");
+  const [checkIn, setCheckIn] = useState("");
+  const [checkOut, setCheckOut] = useState("");
   const [guests, setGuests] = useState(2);
   const [planId, setPlanId] = useState<string>("");
   const [guestName, setGuestName] = useState("");
@@ -94,31 +105,45 @@ export default function BookingPage() {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
 
-  const coverPhoto = getHotelData("cityhouse-mark").photos?.[0];
+  const [hotelName, setHotelName] = useState("");
+  const [coverPhoto, setCoverPhoto] = useState<{ url: string; caption?: string } | null>(null);
 
   const nights = Math.max(0, Math.round((toTime(checkOut) - toTime(checkIn)) / DAY_MS));
-  // ---------- data from Supabase (starts as sample, replaced on load) ----------
-  const [roomsDb, setRoomsDb] = useState(ROOMS);
-  const [reservationsDb, setReservationsDb] = useState<Reservation[]>(RESERVATIONS);
-  const [roomBlocksDb, setRoomBlocksDb] = useState(ROOM_BLOCKS);
-  const [invBlocksDb, setInvBlocksDb] = useState(INVENTORY_BLOCKS);
-  const [plansDb, setPlansDb] = useState<RatePlan[]>(RATE_PLANS);
+  // ---------- data from Supabase (starts empty, replaced on load) ----------
+  const [roomsDb, setRoomsDb] = useState<Room[]>([]);
+  const [reservationsDb, setReservationsDb] = useState<Reservation[]>([]);
+  const [roomBlocksDb, setRoomBlocksDb] = useState<RoomBlock[]>([]);
+  const [invBlocksDb, setInvBlocksDb] = useState<InventoryBlock[]>([]);
+  const [plansDb, setPlansDb] = useState<RatePlan[]>([]);
+  const [typesDb, setTypesDb] = useState<RoomType[]>([]);
   const [priceOverrides, setPriceOverrides] = useState<Record<string, number>>({});
   const [dbError, setDbError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Ngay hom nay that theo gio dia phuong (tinh o client, sau
+  // khi mount). Trang mo dung ngay hom nay thay vi ngay mau.
   useEffect(() => {
+    const d = new Date();
+    const s = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    setTodayStr(s);
+    setCheckIn(s);
+    setCheckOut(addDays(s, 2));
+  }, []);
+
+  useEffect(() => {
+    if (!HOTEL_ID) return;
     (async () => {
-      const [roomsRes, resRes, rrRes, blocksRes, invRes, plansRes, pricesRes] = await Promise.all([
+      const [roomsRes, resRes, rrRes, blocksRes, invRes, plansRes, typesRes, hotelRes] = await Promise.all([
         supabase.from("rooms").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("reservations").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("reservation_rooms").select("reservation_id, room_number"),
         supabase.from("room_blocks").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("inventory_blocks").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("rate_plans").select("*").eq("hotel_id", HOTEL_ID),
-        supabase.from("rate_prices").select("*"),
+        supabase.from("room_types").select("*").eq("hotel_id", HOTEL_ID),
+        supabase.from("hotels").select("name, profile").eq("id", HOTEL_ID).maybeSingle(),
       ]);
-      const err = roomsRes.error ?? resRes.error ?? rrRes.error ?? blocksRes.error ?? invRes.error ?? plansRes.error ?? pricesRes.error;
+      const err = roomsRes.error ?? resRes.error ?? rrRes.error ?? blocksRes.error ?? invRes.error ?? plansRes.error ?? typesRes.error ?? hotelRes.error;
       if (err) return setDbError(err.message);
       setRoomsDb(
         (roomsRes.data ?? []).map((r) => ({ number: r.number, roomTypeId: r.room_type_id, housekeepingStatus: r.housekeeping_status }))
@@ -181,7 +206,21 @@ export default function BookingPage() {
         formulaId: row.formula_id ?? undefined,
       }));
       const planIds = new Set(dbPlans.map((p) => p.id));
-      const priceRows = (pricesRes.data ?? []).filter((r) => planIds.has(r.rate_plan_id));
+      // Gia theo ngay: chi lay cua cac goi cua khach san nay, lay
+      // theo trang (Supabase tra toi da 1000 dong/lan).
+      let priceRows: { rate_plan_id: string; date: string; price: number }[] = [];
+      if (planIds.size > 0) {
+        for (let from = 0; ; from += 1000) {
+          const { data: page, error: priceErr } = await supabase
+            .from("rate_prices")
+            .select("rate_plan_id, date, price")
+            .in("rate_plan_id", [...planIds])
+            .range(from, from + 999);
+          if (priceErr) return setDbError(priceErr.message);
+          priceRows = [...priceRows, ...(page ?? [])];
+          if (!page || page.length < 1000) break;
+        }
+      }
       for (const row of priceRows) {
         const plan = dbPlans.find((p) => p.id === row.rate_plan_id);
         if (plan && !plan.derivedFromId) plan.prices[row.date] = Number(row.price);
@@ -195,24 +234,43 @@ export default function BookingPage() {
       }
       setPlansDb(dbPlans);
       setPriceOverrides(dbOverrides);
+      setTypesDb(
+        (typesRes.data ?? []).map((t) => {
+          const d = (t.details ?? {}) as Record<string, any>;
+          return {
+            id: t.id, code: t.code ?? undefined, name: t.name,
+            maxOccupancy: t.max_occupancy, maxAdults: t.max_adults, maxChildren: t.max_children,
+            maxInfants: t.max_infants, sizeM2: t.size_sqm ?? undefined,
+            bedConfig: t.bed_config ?? "—", priceFloor: t.min_price ?? undefined, priceCeiling: t.max_price ?? undefined,
+            descriptionVi: t.description_vi ?? undefined, descriptionEn: t.description_en ?? undefined,
+            views: d.views ?? [], bedOptions: d.bedOptions ?? [], photos: d.photos ?? [], amenities: d.amenities ?? [],
+            active: t.active !== false,
+          };
+        })
+      );
+      if (hotelRes.data) {
+        setHotelName(hotelRes.data.name ?? "");
+        const photos = (hotelRes.data.profile as { photos?: { url: string; caption?: string }[] } | null)?.photos ?? [];
+        setCoverPhoto(photos[0] ?? null);
+      }
     })();
-  }, []);
+  }, [HOTEL_ID]);
 
   const nightsList = useMemo(() => Array.from({ length: nights }, (_, i) => addDays(checkIn, i)), [checkIn, nights]);
 
   // availability + website plans per room type for the chosen range
   const offers = useMemo(
     () =>
-      ROOM_TYPES.map((t) => {
+      typesDb.map((t) => {
         const left = nightsList.length ? Math.min(...nightsList.map((d) => roomsLeftOn(roomsDb, reservationsDb, roomBlocksDb, invBlocksDb, t.id, d))) : 0;
         const plans = plansDb.filter((p) => p.channelCode === "website" && p.roomTypeId === t.id);
         return { type: t, left, plans };
       }),
-    [nightsList, roomsDb, reservationsDb, roomBlocksDb, invBlocksDb, plansDb]
+    [nightsList, roomsDb, reservationsDb, roomBlocksDb, invBlocksDb, plansDb, typesDb]
   );
 
   const plan = plansDb.find((p) => p.id === planId);
-  const planType = plan ? ROOM_TYPES.find((t) => t.id === plan.roomTypeId) : undefined;
+  const planType = plan ? typesDb.find((t) => t.id === plan.roomTypeId) : undefined;
   const perNight = plan ? nightsList.map((d) => ({ date: d, price: priceFor(plan, d, plansDb, priceOverrides) })) : [];
   const total = perNight.reduce((s, n) => s + n.price, 0);
   // Extra-guest fees: the booking page collects ONE guest count
@@ -247,7 +305,7 @@ export default function BookingPage() {
       paid_amount: payMethod === "card" ? grandTotal : 0,
       status: "confirmed",
       note: note || null,
-      booked_at: TODAY,
+      booked_at: todayStr,
     });
     setSaving(false);
     if (dbErr) return setError("Đặt phòng chưa lưu được vào hệ thống: " + dbErr.message);
@@ -272,7 +330,7 @@ export default function BookingPage() {
         totalAmount: grandTotal,
         paidAmount: payMethod === "card" ? grandTotal : 0,
         status: "confirmed",
-        createdAt: TODAY,
+        createdAt: todayStr,
         note: note || undefined,
       },
     ]);
@@ -283,6 +341,24 @@ export default function BookingPage() {
   const stepCls = (n: number) =>
     `flex items-center gap-2 rounded-full px-3 py-1.5 text-sm ${step === n ? "bg-[#2563eb] font-medium text-white" : step > n ? "bg-[#e6f7f1] text-[#0e7a56]" : "bg-[#eef1f5] text-[#68707a]"}`;
 
+  // Chua chon khach san thi chan trang lai (khung app cung day ve
+  // danh sach, day la lop chan thu hai cho trang nay).
+  if (!HOTEL_ID) {
+    return (
+      <div className="mx-auto max-w-3xl">
+        <div className="cb-card mt-10 p-6 text-center">
+          <h1 className="text-xl font-bold text-[#17293e]">Chưa chọn khách sạn</h1>
+          <p className="mt-2 text-sm text-[#68707a]">
+            Trang đặt phòng cần biết khách sạn nào đang bán — hãy chọn khách sạn trong danh sách trước.
+          </p>
+          <Link href="/" className="cb-btn-primary mt-4 inline-block px-4 py-2 text-sm">
+            Về danh sách khách sạn
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-3xl">
       {/* hotel cover photo from the photo library */}
@@ -291,7 +367,7 @@ export default function BookingPage() {
         <img src={coverPhoto.url} alt={coverPhoto.caption ?? "Ảnh khách sạn"} className="mb-4 h-48 w-full rounded-xl object-cover" />
       )}
       <h1 className="text-2xl font-bold text-[#17293e]">Đặt phòng trực tuyến</h1>
-      <p className="mt-1 text-sm text-[#68707a]">CityHouse MARK El Pino Realm — đặt trực tiếp trên website, giá tốt nhất vì không qua trung gian.</p>
+      <p className="mt-1 text-sm text-[#68707a]">{hotelName || "Khách sạn"} — đặt trực tiếp trên website, giá tốt nhất vì không qua trung gian.</p>
       {dbError && <p className="mt-3 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">Lỗi cơ sở dữ liệu: {dbError}</p>}
 
       {/* progress */}
@@ -326,7 +402,7 @@ export default function BookingPage() {
 
               {plans.length === 0 ? (
                 <p className="mt-3 rounded-lg bg-[#fff8ec] px-3 py-2 text-sm text-[#92600a]">
-                  Loại phòng này chưa mở bán online — vui lòng gọi lễ tân để đặt. (Kênh Website chưa có gói giá cho loại phòng này; tạo thêm ở Khách sạn → tab Gói giá.)
+                  Loại phòng này chưa mở bán online — vui lòng gọi lễ tân để đặt. (Kênh Website chưa có giá cho loại phòng này; nhập giá ở trang Lịch giá.)
                 </p>
               ) : (
                 <div className="mt-3 space-y-2">

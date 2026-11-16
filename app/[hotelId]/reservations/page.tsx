@@ -581,7 +581,12 @@ export default function ReservationsPage() {
                   <td className="px-3 py-3">{fmtDate(r.checkIn)}</td>
                   <td className="px-3 py-3">{fmtDate(r.checkOut)}</td>
                   <td className="px-3 py-3">{nightsOf(r)}</td>
-                  <td className="px-3 py-3">₫{fmt(r.totalAmount)}</td>
+                  <td className="px-3 py-3">
+                    ₫{fmt(r.totalAmount)}
+                    {r.totalAmount === 0 && nightsOf(r) > 0 && !["cancelled", "no_show"].includes(r.status) && (
+                      <span className="ml-1.5 whitespace-nowrap rounded-full bg-[#fdf3e3] px-2 py-0.5 text-xs font-semibold text-[#9a6a12]" title="Tổng 0₫ — có thể do chưa nhập giá cho các đêm này ở Lịch giá. Kiểm tra giá theo kênh rồi sửa đơn.">⚠ chưa có giá</span>
+                    )}
+                  </td>
                   <td className="px-3 py-3">
                     <span className={`mr-1.5 inline-block h-2.5 w-2.5 rounded-full ${STATUS_STYLES[r.status].split(" ")[0]}`} />
                     {STATUS_LABELS[r.status]}
@@ -801,6 +806,9 @@ export default function ReservationsPage() {
                   <div className="flex justify-between"><span className="text-[#68707a]">Tổng phải thu (phòng + dịch vụ)</span><span className="font-semibold text-[#17293e]">{fmt(totalDue)}₫</span></div>
                   <div className="flex justify-between"><span className="text-[#68707a]">Đã thanh toán{detail.paymentCollector === "channel_collect" ? " (kênh thu hộ)" : ""}</span><span className="font-semibold text-[#17293e]">{fmt(detail.paidAmount)}₫</span></div>
                   <div className="flex justify-between"><span className="font-semibold text-[#17293e]">Còn nợ</span><span className={`font-bold ${balance > 0 ? "text-[#e5484d]" : "text-[#1db584]"}`}>{balance > 0 ? fmt(balance) + "₫" : "Đã thanh toán đủ"}</span></div>
+                  {detail.totalAmount === 0 && detailNights > 0 && !["cancelled", "no_show"].includes(detail.status) && (
+                    <p className="rounded-lg bg-[#fdf3e3] px-3 py-2 text-xs text-[#9a6a12]">⚠ Tổng đơn đang là 0₫ — có thể do chưa nhập giá cho các đêm này ở Lịch giá. Kiểm tra giá theo kênh rồi sửa đơn.</p>
+                  )}
                 </div>
 
                 {balance > 0 && detail.paymentCollector === "hotel_collect" && (
