@@ -10,24 +10,41 @@
 // Logic giu nguyen: keo-tha doi phong/ngay, chan phong,
 // check-in/out, du lieu doc/ghi Supabase, day Channex qua
 // hang doi khi ton phong thay doi.
+// CBCAL1 (2026-11-17): huy hieu "0 don chua gan" doi mau kem
+// #e7ddd3 sang vien --cb-border theo bang mau Cloudbeds moi.
 // ============================================================
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   TODAY,
+  getChannelName,
   getRoomTypeName,
   resolvePlanPrice,
   roomBlockOn,
+  type InventoryBlock,
   type RatePlan,
   type Reservation,
   type Room,
   type RoomBlock,
 } from "@/lib/mock-data";
+import {
+  canCancel,
+  canCheckIn,
+  canCheckOut,
+  priceBreakdown,
+  roomFits,
+  validateAssign,
+  validateBlock,
+  validateDrop,
+  type AvailabilityData,
+} from "@/lib/booking-rules";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
 import { useParams } from "next/navigation";
 import { queueChannexDates, rangeDates, stayDates } from "@/lib/channex-outbox";
 import ReservationBar, { STATUS_STYLES, STATUS_LABELS } from "./ReservationBar";
+import { DateRangePicker } from "@/components/DatePicker";
+import { IconBan, IconCalendar, IconDroplet } from "@/components/icons";
 import BookingPopup from "./BookingPopup";
 
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
@@ -60,7 +77,7 @@ const HK_DOT: Record<string, string> = {
   clean: "bg-[#1db584]",
   dirty: "bg-[#e5484d]",
   in_progress: "bg-[#f59e0b]",
-  out_of_order: "bg-[#9aa7b4]",
+  out_of_order: "bg-[var(--cb-muted)]",
 };
 const HK_LABEL: Record<string, string> = {
   clean: "Đã dọn",
@@ -80,8 +97,19 @@ export default function StaffCalendar() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [blocks, setBlocks] = useState<RoomBlock[]>([]);
+  const [invBlocks, setInvBlocks] = useState<InventoryBlock[]>([]);
   const [typeNames, setTypeNames] = useState<Record<string, string>>({});
   const [rack, setRack] = useState<Record<string, Record<string, number>>>({});
+  // Goi gia + gia rieng (goi ke thua) — phuc vu tinh lai tien khi
+  // keo doi ngay / gan sang loai phong khac.
+  const [planObjs, setPlanObjs] = useState<RatePlan[]>([]);
+  const [priceOverrides, setPriceOverrides] = useState<Record<string, number>>({});
+
+  // Du lieu dung chung cho bo kiem tra: phong + don + chan phong + dong ban.
+  const availData: AvailabilityData = useMemo(
+    () => ({ rooms, reservations, blocks, invBlocks }),
+    [rooms, reservations, blocks, invBlocks],
+  );
   const [currency, setCurrency] = useState("VND");
   const [dbError, setDbError] = useState("");
   const [dragging, setDragging] = useState<DragItem | null>(null);
@@ -123,7 +151,7 @@ export default function StaffCalendar() {
   // ---------- load everything from Supabase ----------
   useEffect(() => {
     (async () => {
-      const [roomsRes, resRes, rrRes, blocksRes, typesRes, hotelRes, plansRes] = await Promise.all([
+      const [roomsRes, resRes, rrRes, blocksRes, typesRes, hotelRes, plansRes, invRes] = await Promise.all([
         supabase.from("rooms").select("*").eq("hotel_id", HOTEL_ID).order("number"),
         supabase.from("reservations").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("reservation_rooms").select("reservation_id, room_number"),
@@ -131,6 +159,7 @@ export default function StaffCalendar() {
         supabase.from("room_types").select("id, name").eq("hotel_id", HOTEL_ID),
         supabase.from("hotels").select("currency").eq("id", HOTEL_ID).single(),
         supabase.from("rate_plans").select("*").eq("hotel_id", HOTEL_ID),
+        supabase.from("inventory_blocks").select("*").eq("hotel_id", HOTEL_ID),
       ]);
       const err = roomsRes.error ?? resRes.error ?? rrRes.error ?? blocksRes.error;
       if (err) return setDbError(err.message);
@@ -184,6 +213,15 @@ export default function StaffCalendar() {
           reason: b.reason ?? "",
         }))
       );
+      setInvBlocks((invRes.data ?? []).map((b) => ({
+        id: b.id,
+        scope: b.scope,
+        channelCode: b.channel_code ?? undefined,
+        roomTypeId: b.room_type_id,
+        from: b.from_date,
+        to: b.to_date,
+        reason: b.reason ?? undefined,
+      })));
 
       // ----- dem ghi chu theo don (cham vang tren thanh lich) -----
       // Bang reservation_notes co the chua ton tai neu chua chay SQL 14:
@@ -212,6 +250,10 @@ export default function StaffCalendar() {
         channelCode: p.channel_code,
         roomTypeId: p.room_type_id,
         name: p.name,
+        mealPlan: p.meal_plan as RatePlan["mealPlan"],
+        baseOccupancy: p.base_occupancy,
+        extraAdultFee: p.extra_adult_fee,
+        extraChildFee: p.extra_child_fee,
         cancellationPolicy: p.cancellation_policy as RatePlan["cancellationPolicy"],
         prices: {},
         derivedFromId: p.derived_from_id ?? undefined,
@@ -228,6 +270,14 @@ export default function StaffCalendar() {
         for (const p of chosen.values()) {
           needIds.add(p.id);
           if (p.derivedFromId) needIds.add(p.derivedFromId);
+        }
+        // Them gia cua goi tung don dang co tren lich (de tinh lai
+        // tien khi keo doi ngay) + goi goc cua cac goi ke thua do.
+        for (const r of resRes.data ?? []) {
+          if (!r.rate_plan_id) continue;
+          needIds.add(r.rate_plan_id);
+          const pl = planObjs.find((x) => x.id === r.rate_plan_id);
+          if (pl?.derivedFromId) needIds.add(pl.derivedFromId);
         }
         // Supabase tra toi da 1000 dong/lan — lay theo trang
         let priceRows: { rate_plan_id: string; date: string; price: number }[] = [];
@@ -258,12 +308,17 @@ export default function StaffCalendar() {
           rackMap[tid] = m;
         }
         setRack(rackMap);
+        setPlanObjs(planObjs);
+        setPriceOverrides(overrides);
       }
     })();
   }, []);
 
   async function addBlock() {
     if (!bfRoom || !bfFrom || !bfTo || bfTo < bfFrom) return;
+    // Khong chan duoc phong dang co khach o trong khoang nay.
+    const check = validateBlock(reservations, bfRoom, bfFrom, bfTo);
+    if (!check.ok) return alert(check.error);
     const nb: RoomBlock = {
       id: `blk-${Date.now()}`,
       roomNumber: bfRoom,
@@ -379,26 +434,20 @@ export default function StaffCalendar() {
   // doi dropdown se loc lai danh sach phong)
   const [assignTypeId, setAssignTypeId] = useState<string | null>(null);
 
-  // Phong nay co nhan duoc don b khong? (cung logic chan nhu
-  // handleDrop: cung loai phong, khong bi chan hong ngay nao
-  // trong ky o, khong trung don khac tren phong do)
-  // Phong co ghep duoc cho don khong (cung loai phong dang chon, khong
-  // dinh phong hong, khong trung don khac) — typeId rieng de form doi
-  // loai phong van loc dung
-  const roomFitsForType = (b: Reservation, room: Room, typeId: string) => {
-    if (room.roomTypeId !== typeId) return false;
-    for (let d = b.checkIn; d < b.checkOut; d = addDays(d, 1)) {
-      if (roomBlockOn(blocks, room.number, d, "out_of_order")) return false;
-    }
-    return !reservations.some(
-      (other) =>
-        other.id !== b.id &&
-        !["cancelled", "no_show"].includes(other.status) &&
-        other.roomNumbers.includes(room.number) &&
-        overlaps(b.checkIn, b.checkOut, other.checkIn, other.checkOut)
+  // Phong nay co nhan duoc don b khong? Dung bo kiem tra dung chung
+  // (cung loai phong, khong dinh phong hong, khong trung don khac
+  // dang o — don da tra phong thi phong duoc tinh la trong).
+  // typeId rieng de form doi loai phong van loc dung.
+  const roomFitsForType = (b: Reservation, room: Room, typeId: string) =>
+    roomFits(availData, room, typeId, b.checkIn, b.checkOut, b.id).ok;
+  // Goi chuan cua 1 kenh + 1 loai phong (goi khong ke thua, uu tien
+  // chi phong khong kem an) — dung khi gan don sang loai phong khac.
+  const standardPlanFor = (channelCode: string, typeId: string) => {
+    const plans = planObjs.filter(
+      (p) => p.channelCode === channelCode && p.roomTypeId === typeId && !p.derivedFromId,
     );
+    return plans.find((p) => p.mealPlan === "room_only") ?? plans[0];
   };
-  const roomFits = (b: Reservation, room: Room) => roomFitsForType(b, room, b.roomTypeId);
   // Phong trong sap theo so phong, dung cho dropdown Room #
   const fittingRoomsFor = (b: Reservation, typeId: string) =>
     rooms.filter((rm) => roomFitsForType(b, rm, typeId)).sort((a, z) => a.number.localeCompare(z.number));
@@ -409,27 +458,46 @@ export default function StaffCalendar() {
   async function assignRoom(roomNumber: string) {
     const res = assigningBooking;
     if (!res) return;
-    const room = rooms.find((rm) => rm.number === roomNumber);
+    if (["checked_out", "cancelled", "no_show"].includes(res.status))
+      return alert("Không gán phòng cho đơn đã trả phòng / đã huỷ / khách không đến.");
     const effType = assignTypeId ?? res.roomTypeId;
-    if (!room || !roomFitsForType(res, room, effType)) return alert("Phòng này không còn trống phù hợp cho đơn này.");
+    // Kiem tra dung chung: dung loai phong / khong phong hong / khong trung don khac.
+    const check = validateAssign(availData, res, roomNumber, effType);
+    if (!check.ok) return alert(check.error);
+    const room = rooms.find((rm) => rm.number === roomNumber);
+    if (!room) return alert("Không tìm thấy phòng này.");
     // Canh bao (khong chan): phong chua don xong hoac tam dong — de nguoi quyet
     if (["dirty", "in_progress"].includes(room.housekeepingStatus)) {
       if (!confirm(`Phòng ${roomNumber} chưa dọn xong (${HK_LABEL[room.housekeepingStatus] ?? room.housekeepingStatus}). Vẫn gán cho khách?`)) return;
     }
     const oosBlk = stayDates(res.checkIn, res.checkOut).map((d) => roomBlockOn(blocks, roomNumber, d, "out_of_service")).find(Boolean);
     if (oosBlk && !confirm(`Phòng ${roomNumber} đang tạm đóng (${oosBlk.reason}) trong kỳ ở. Vẫn gán cho khách?`)) return;
+    // Doi loai phong (kieu Cloudbeds: gan sang loai khac thi don chuyen
+    // sang loai do) — tinh lai gia theo goi chuan cua kenh + loai moi,
+    // hoi truoc khi ap gia moi.
+    let newTotal = res.totalAmount;
+    let newPlanId = res.ratePlanId;
+    if (effType !== res.roomTypeId) {
+      const newPlan = standardPlanFor(res.channelCode, effType);
+      if (!newPlan) return alert(`Kênh ${getChannelName(res.channelCode)} chưa có gói giá cho loại phòng này — không gán sang loại khác được.`);
+      const bd = priceBreakdown(newPlan, planObjs, res.checkIn, res.checkOut, res.adults ?? res.guests, res.children ?? 0, priceOverrides);
+      if (bd.unpriced.length > 0)
+        return alert(`Chưa có giá cho đêm ${bd.unpriced.join(", ")} ở loại phòng mới — nhập giá ở Lịch giá rồi gán lại.`);
+      if (bd.grandTotal <= 0) return alert("Tổng tiền mới bằng 0 — kiểm tra lại giá loại phòng mới.");
+      if (bd.grandTotal !== res.totalAmount && !window.confirm(`Đổi sang loại phòng mới, tổng tiền đổi từ ${fmtPrice(res.totalAmount)} thành ${fmtPrice(bd.grandTotal)}. Áp giá mới?`)) return;
+      newTotal = bd.grandTotal;
+      newPlanId = newPlan.id;
+    }
     const { error } = await supabase
       .from("reservation_rooms")
       .insert({ reservation_id: res.id, room_number: roomNumber });
     if (error) return alert("Gán phòng không thành công: " + error.message);
-    // Doi loai phong neu form chon loai khac loai cua don (kieu Cloudbeds:
-    // gan sang loai phong khac thi don chuyen sang loai do)
     if (effType !== res.roomTypeId) {
-      await supabase.from("reservations").update({ room_type_id: effType }).eq("id", res.id);
+      await supabase.from("reservations").update({ room_type_id: effType, rate_plan_id: newPlanId, total_amount: newTotal }).eq("id", res.id);
     }
     setReservations((prev) =>
       prev.map((r) =>
-        r.id === res.id ? { ...r, roomNumbers: [...r.roomNumbers, roomNumber], roomTypeId: effType } : r
+        r.id === res.id ? { ...r, roomNumbers: [...r.roomNumbers, roomNumber], roomTypeId: effType, ratePlanId: newPlanId, totalAmount: newTotal } : r
       )
     );
     setAssigningId(null);
@@ -452,7 +520,8 @@ export default function StaffCalendar() {
   async function autoAssignAll() {
     const taken = new Map<string, { checkIn: string; checkOut: string }[]>();
     for (const r of reservations) {
-      if (["cancelled", "no_show"].includes(r.status)) continue;
+      // Don da tra phong thi phong duoc tinh la trong.
+      if (["cancelled", "no_show", "checked_out"].includes(r.status)) continue;
       for (const n of r.roomNumbers) {
         const list = taken.get(n) ?? [];
         list.push({ checkIn: r.checkIn, checkOut: r.checkOut });
@@ -496,7 +565,7 @@ export default function StaffCalendar() {
     else if (done < panelUnassigned.length) alert(`Đã tự gán ${done}/${panelUnassigned.length} đơn, còn lại không đủ phòng trống phù hợp.`);
   }
 
-  // ---------- drop logic (unchanged) ----------
+  // ---------- drop logic (kieu Cloudbeds: keo doi phong/ngay) ----------
   async function handleDrop(roomNumber: string, dayIndex: number) {
     if (!dragging) return;
     const res = reservations.find((r) => r.id === dragging.reservationId);
@@ -507,37 +576,30 @@ export default function StaffCalendar() {
     const newCheckIn = addDays(res.checkIn, shift);
     const newCheckOut = addDays(res.checkOut, shift);
 
-    for (let d = newCheckIn; d < newCheckOut; d = addDays(d, 1)) {
-      const blk = roomBlockOn(blocks, roomNumber, d, "out_of_order");
-      if (blk) {
-        alert(`Phòng ${roomNumber} đang bị chặn vì hỏng (${blk.reason}) từ ${blk.from} đến ${blk.to}. Không chuyển khách vào được.`);
-        return;
-      }
-    }
-    const oosDrop = (() => {
-      for (let d = newCheckIn; d < newCheckOut; d = addDays(d, 1)) {
-        const blk = roomBlockOn(blocks, roomNumber, d, "out_of_service");
-        if (blk) return blk;
-      }
-      return null;
-    })();
-    if (oosDrop && !confirm(`Phòng ${roomNumber} đang tạm đóng (${oosDrop.reason}) trong khoảng ngày này. Vẫn chuyển khách vào?`)) return;
+    // Kiem tra dung chung: don con keo duoc / ngay khong qua khu /
+    // cung loai phong / khong phong hong / khong trung don khac.
+    const check = validateDrop(availData, res, roomNumber, newCheckIn, newCheckOut, todayStr);
+    if (!check.ok) return alert(check.error);
+    if (check.warnings.length > 0 && !window.confirm(`${check.warnings.join("\n")}\nVẫn chuyển?`)) return;
 
-    const conflict = reservations.some(
-      (other) =>
-        other.id !== res.id &&
-        !["cancelled", "no_show"].includes(other.status) &&
-        other.roomNumbers.includes(roomNumber) &&
-        overlaps(newCheckIn, newCheckOut, other.checkIn, other.checkOut)
-    );
-    if (conflict) {
-      alert(`Phòng ${roomNumber} đã có khách trong khoảng ngày này. Không chuyển được.`);
-      return;
+    // Doi ngay: tinh lai gia theo goi cua don (kieu Cloudbeds hoi
+    // "giu gia cu / ap gia moi" — o day hoi truoc khi ap gia moi).
+    // Chua co gia cho dem moi thi khong keo duoc.
+    let newTotal = res.totalAmount;
+    if (newCheckIn !== res.checkIn || newCheckOut !== res.checkOut) {
+      const plan = planObjs.find((p) => p.id === res.ratePlanId);
+      if (!plan) return alert("Không tìm thấy gói giá của đơn này — không tính được tiền ngày mới.");
+      const bd = priceBreakdown(plan, planObjs, newCheckIn, newCheckOut, res.adults ?? res.guests, res.children ?? 0, priceOverrides);
+      if (bd.unpriced.length > 0)
+        return alert(`Chưa có giá cho đêm ${bd.unpriced.join(", ")} — nhập giá ở Lịch giá rồi kéo lại.`);
+      if (bd.grandTotal <= 0) return alert("Tổng tiền mới bằng 0 — kiểm tra lại giá các đêm mới.");
+      if (bd.grandTotal !== res.totalAmount && !window.confirm(`Đổi ngày: tổng tiền đổi từ ${fmtPrice(res.totalAmount)} thành ${fmtPrice(bd.grandTotal)}. Áp giá mới?`)) return;
+      newTotal = bd.grandTotal;
     }
 
     const { error: e1 } = await supabase
       .from("reservations")
-      .update({ check_in: newCheckIn, check_out: newCheckOut })
+      .update({ check_in: newCheckIn, check_out: newCheckOut, ...(newTotal !== res.totalAmount ? { total_amount: newTotal } : {}) })
       .eq("id", res.id);
     if (e1) return alert("Lưu thay đổi không thành công: " + e1.message);
     if (dragging.roomNumber === null) {
@@ -561,20 +623,41 @@ export default function StaffCalendar() {
           dragging.roomNumber === null
             ? [...r.roomNumbers, roomNumber]
             : r.roomNumbers.map((n) => (n === dragging.roomNumber ? roomNumber : n));
-        return { ...r, roomNumbers, checkIn: newCheckIn, checkOut: newCheckOut };
+        return { ...r, roomNumbers, checkIn: newCheckIn, checkOut: newCheckOut, totalAmount: newTotal };
       })
     );
     queueChannexDates([...stayDates(res.checkIn, res.checkOut), ...stayDates(newCheckIn, newCheckOut)]);
   }
 
   async function setStatus(id: string, status: Reservation["status"]) {
+    const r = reservations.find((x) => x.id === id);
+    if (!r) return;
+    // Chay qua bo kiem tra dung chung truoc khi doi trang thai
+    // (giong trang Dat phong): nhan phong chan khi chua gan phong
+    // hoac phong hong; tra phong canh bao khi con no; huy chi don
+    // cho / da xac nhan.
+    if (status === "in_house") {
+      const check = canCheckIn(availData, r);
+      if (!check.ok) return alert(check.error);
+      if (check.warnings.length > 0 && !window.confirm(`${check.warnings.join("\n")}\nVẫn nhận phòng?`)) return;
+    } else if (status === "checked_out") {
+      const check = canCheckOut(r);
+      if (!check.ok) return alert(check.error);
+      if (check.warnings.length > 0 && !window.confirm(check.warnings.join("\n"))) return;
+    } else if (status === "cancelled") {
+      const check = canCancel(r);
+      if (!check.ok) return alert(check.error);
+      if (!window.confirm(`Huỷ đơn ${r.id} của ${r.guestName}?`)) return;
+    } else if (status === "no_show") {
+      if (r.status !== "confirmed") return alert("Chỉ đánh dấu không đến cho đơn đã xác nhận.");
+      if (!window.confirm(`Đánh dấu khách không đến cho đơn ${r.id} của ${r.guestName}?`)) return;
+    }
     const { error } = await supabase.from("reservations").update({ status }).eq("id", id);
     if (error) return alert("Lưu trạng thái không thành công: " + error.message);
-    setReservations((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)));
+    setReservations((prev) => prev.map((x) => (x.id === id ? { ...x, status } : x)));
     // Huy don thi dong popup + thanh booking bien khoi lich ngay
     if (status === "cancelled") closePopup();
-    const r = reservations.find((x) => x.id === id);
-    if (r) queueChannexDates(stayDates(r.checkIn, r.checkOut));
+    queueChannexDates(stayDates(r.checkIn, r.checkOut));
   }
 
   // ---------- derived display data ----------
@@ -666,15 +749,15 @@ export default function StaffCalendar() {
         key={`${keyPrefix}${d}`}
         onClick={() => { setAssignDate(assignDate === d ? null : d); setCalMonth(null); }}
         title={unCount > 0 ? `Xem ${unCount} đơn chưa gán đến ngày ${d}` : "Không có đơn chưa gán đến ngày này"}
-        className={`cursor-pointer border-b border-l border-[#eef1f5] px-1 py-1.5 text-center ${d === assignDate ? "bg-[#fef9c3]" : d === todayStr ? "bg-[#e8effe]" : "bg-[#f7f9fb]"}`}
+        className={`cursor-pointer border-b border-l border-[var(--cb-bg)] px-1 py-1.5 text-center ${d === assignDate ? "bg-[#fef9c3]" : d === todayStr ? "bg-[var(--cb-blue-soft)]" : "bg-[var(--cb-blue-soft)]"}`}
       >
-        <div className={`mx-auto w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${unCount > 0 ? "bg-[#2563eb] text-white" : "bg-[#e5e9ef] text-[#68707a]"}`}>
+        <div className={`mx-auto w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${unCount > 0 ? "bg-[var(--cb-blue)] text-white" : "bg-[var(--cb-border)] text-[var(--cb-muted)]"}`}>
           {unCount}
         </div>
-        <div className={`text-sm font-bold ${weekend ? "text-[#e5484d]" : d === todayStr ? "text-[#2563eb]" : "text-[#17293e]"}`}>
+        <div className={`text-sm font-bold ${weekend ? "text-[#e5484d]" : d === todayStr ? "text-[var(--cb-blue)]" : "text-[var(--cb-text)]"}`}>
           {WEEKDAYS[dt.getDay()]} {dt.getDate()}
         </div>
-        <div className="text-[10px] text-[#68707a]">{occByDay[i]}%</div>
+        <div className="text-[10px] text-[var(--cb-muted)]">{occByDay[i]}%</div>
       </div>
     );
   };
@@ -686,16 +769,16 @@ export default function StaffCalendar() {
 
       {/* week navigation kieu Cloudbeds: pill ‹ TODAY › + loc loai phong */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <button onClick={() => setStartDate((d) => addDays(d, -7))} className="rounded-full border border-[#dde3ea] bg-white px-3 py-1.5 text-sm font-semibold text-[#17293e]">‹</button>
-        <button onClick={() => setStartDate(todayStr)} className="rounded-full border border-[#dde3ea] bg-white px-4 py-1.5 text-sm font-bold text-[#2563eb]">Hôm nay</button>
-        <button onClick={() => setStartDate((d) => addDays(d, 7))} className="rounded-full border border-[#dde3ea] bg-white px-3 py-1.5 text-sm font-semibold text-[#17293e]">›</button>
-        <select value={typeFilter ?? ""} onChange={(e) => setTypeFilter(e.target.value || null)} className="rounded-full border border-[#dde3ea] bg-white px-3 py-1.5 text-sm text-[#17293e]">
+        <button onClick={() => setStartDate((d) => addDays(d, -7))} className="rounded-full border border-[var(--cb-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--cb-text)]">‹</button>
+        <button onClick={() => setStartDate(todayStr)} className="rounded-full border border-[var(--cb-border)] bg-white px-4 py-1.5 text-sm font-bold text-[var(--cb-blue)]">Hôm nay</button>
+        <button onClick={() => setStartDate((d) => addDays(d, 7))} className="rounded-full border border-[var(--cb-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--cb-text)]">›</button>
+        <select value={typeFilter ?? ""} onChange={(e) => setTypeFilter(e.target.value || null)} className="rounded-full border border-[var(--cb-border)] bg-white px-3 py-1.5 text-sm text-[var(--cb-text)]">
           <option value="">All Room Types</option>
           {groups.map((g) => (
             <option key={g.typeId} value={g.typeId}>{g.name}</option>
           ))}
         </select>
-        <span className="ml-1 text-sm text-[#68707a]">
+        <span className="ml-1 text-sm text-[var(--cb-muted)]">
           {days[0]} → {days[days.length - 1]} · {WINDOW} ngày
         </span>
       </div>
@@ -720,8 +803,8 @@ export default function StaffCalendar() {
               <button onClick={() => { setPendingRoom(null); setSpotAnchor(null); }} className="rounded-full px-1.5 leading-none hover:bg-white/20">✕</button>
             </div>
             <div className="p-2 text-sm">
-              <button onClick={() => assignRoom(pendingRoom)} className="block w-full rounded-lg px-3 py-2 text-left font-medium text-[#17293e] hover:bg-[#eef4ff]">› Assign</button>
-              <button onClick={() => { setSelectedId(assigningBooking.id); setPopupAnchor(spotAnchor); }} className="block w-full rounded-lg px-3 py-2 text-left font-medium text-[#17293e] hover:bg-[#eef4ff]">› Go to Reservation</button>
+              <button onClick={() => assignRoom(pendingRoom)} className="block w-full rounded-lg px-3 py-2 text-left font-medium text-[var(--cb-text)] hover:bg-[var(--cb-blue-soft)]">› Assign</button>
+              <button onClick={() => { setSelectedId(assigningBooking.id); setPopupAnchor(spotAnchor); }} className="block w-full rounded-lg px-3 py-2 text-left font-medium text-[var(--cb-text)] hover:bg-[var(--cb-blue-soft)]">› Go to Reservation</button>
             </div>
           </div>
         </>
@@ -733,33 +816,29 @@ export default function StaffCalendar() {
           ＋ Chặn phòng (sửa chữa / tạm đóng)
         </button>
         {showBlockForm && (
-          <div className="cb-card mt-3 flex flex-wrap items-end gap-3 p-4 text-sm text-[#17293e]">
+          <div className="cb-card mt-3 flex flex-wrap items-end gap-3 p-4 text-sm text-[var(--cb-text)]">
             <label>
               Phòng
-              <select value={bfRoom} onChange={(e) => setBfRoom(e.target.value)} className="ml-2 rounded-lg border border-[#dde3ea] px-2 py-2">
+              <select value={bfRoom} onChange={(e) => setBfRoom(e.target.value)} className="ml-2 rounded-lg border border-[var(--cb-border)] px-2 py-2">
                 {rooms.map((r) => (
                   <option key={r.number} value={r.number}>{r.number} — {typeName(r.roomTypeId)}</option>
                 ))}
               </select>
             </label>
-            <label>
-              Từ đêm
-              <input type="date" value={bfFrom} onChange={(e) => setBfFrom(e.target.value)} className="ml-2 rounded-lg border border-[#dde3ea] px-2 py-2" />
-            </label>
-            <label>
-              Đến đêm (tính cả đêm này)
-              <input type="date" value={bfTo} onChange={(e) => setBfTo(e.target.value)} className="ml-2 rounded-lg border border-[#dde3ea] px-2 py-2" />
-            </label>
+            <div className="flex items-center gap-2">
+              <span className="text-sm">Từ đêm → đến đêm (tính cả đêm này)</span>
+              <DateRangePicker from={bfFrom} to={bfTo} onChange={(f, t) => { setBfFrom(f); setBfTo(t); }} />
+            </div>
             <label>
               Loại chặn
-              <select value={bfKind} onChange={(e) => setBfKind(e.target.value as RoomBlock["kind"])} className="ml-2 rounded-lg border border-[#dde3ea] px-2 py-2">
+              <select value={bfKind} onChange={(e) => setBfKind(e.target.value as RoomBlock["kind"])} className="ml-2 rounded-lg border border-[var(--cb-border)] px-2 py-2">
                 <option value="out_of_order">Phòng hỏng — trừ khỏi phòng bán được</option>
                 <option value="out_of_service">Tạm đóng — vẫn tính trong tồn, chỉ đánh dấu</option>
               </select>
             </label>
             <label>
               Lý do
-              <input value={bfReason} onChange={(e) => setBfReason(e.target.value)} className="ml-2 rounded-lg border border-[#dde3ea] px-2 py-2" placeholder="VD: Sửa điều hoà" />
+              <input value={bfReason} onChange={(e) => setBfReason(e.target.value)} className="ml-2 rounded-lg border border-[var(--cb-border)] px-2 py-2" placeholder="VD: Sửa điều hoà" />
             </label>
             <button onClick={addBlock} className="cb-btn-primary px-4 py-2 text-sm">Thêm chặn</button>
           </div>
@@ -767,17 +846,17 @@ export default function StaffCalendar() {
       </div>
 
       {/* ===== assignments layout: panel trai + lich ===== */}
-      <div className="flex items-start gap-0 border border-[#dde3ea] bg-white">
+      <div className="flex items-start gap-0 border border-[var(--cb-border)] bg-white">
         {/* panel don chua xep phong (co the thu lai) */}
         {panelOpen ? (
-        <aside className="sticky top-4 max-h-[calc(100vh-2rem)] w-[280px] shrink-0 overflow-y-auto border-r border-[#dde3ea] bg-white p-3">
+        <aside className="sticky top-4 max-h-[calc(100vh-2rem)] w-[280px] shrink-0 overflow-y-auto border-r border-[var(--cb-border)] bg-white p-3">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="flex items-center gap-1.5 text-sm font-bold text-[#17293e]">Đơn chưa xếp phòng <span className="rounded-full bg-[#2563eb] px-1.5 py-0.5 text-[11px] font-bold text-white">{panelUnassigned.length}</span></h3>
-            <button onClick={() => setPanelOpen(false)} title="Thu panel" className="shrink-0 rounded-md px-1.5 text-sm font-bold text-[#68707a] hover:bg-[#eef1f5]">«</button>
+            <h3 className="flex items-center gap-1.5 text-sm font-bold text-[var(--cb-text)]">Đơn chưa xếp phòng <span className="rounded-full bg-[var(--cb-blue)] px-1.5 py-0.5 text-[11px] font-bold text-white">{panelUnassigned.length}</span></h3>
+            <button onClick={() => setPanelOpen(false)} title="Thu panel" className="shrink-0 rounded-md px-1.5 text-sm font-bold text-[var(--cb-muted)] hover:bg-[var(--cb-bg)]">«</button>
           </div>
           {assignDate && (
             <div className="mt-1 text-right">
-              <button onClick={() => { setAssignDate(null); setCalOpen(false); }} className="text-xs font-semibold text-[#2563eb]">Xem tất cả</button>
+              <button onClick={() => { setAssignDate(null); setCalOpen(false); }} className="text-xs font-semibold text-[var(--cb-blue)]">Xem tất cả</button>
             </div>
           )}
           {/* O chon ngay: nut ngay + lich mini popup (fixed de khong bi panel cuon cat) */}
@@ -791,20 +870,20 @@ export default function StaffCalendar() {
                 }
                 setCalOpen(!calOpen);
               }}
-              className="flex w-full items-center justify-between rounded-lg border border-[#dde3ea] bg-white px-3 py-2 text-sm font-medium text-[#17293e]">
-              <span>📅 {assignDate ? `${assignDate.slice(8, 10)}/${assignDate.slice(5, 7)}/${assignDate.slice(0, 4)}` : "Tất cả ngày"}</span>
-              <span className="text-[#68707a]">▾</span>
+              className="flex w-full items-center justify-between rounded-lg border border-[var(--cb-border)] bg-white px-3 py-2 text-sm font-medium text-[var(--cb-text)]">
+              <span className="flex items-center gap-1.5"><IconCalendar className="h-4 w-4" /> {assignDate ? `${assignDate.slice(8, 10)}/${assignDate.slice(5, 7)}/${assignDate.slice(0, 4)}` : "Tất cả ngày"}</span>
+              <span className="text-[var(--cb-muted)]">▾</span>
             </button>
             {calOpen && calAnchor && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setCalOpen(false)} />
-                <div className="fixed z-50 rounded-xl border border-[#dde3ea] bg-white p-3 shadow-xl" style={{ top: calAnchor.top, left: calAnchor.left, width: calAnchor.width }}>
+                <div className="fixed z-50 rounded-xl border border-[var(--cb-border)] bg-white p-3 shadow-xl" style={{ top: calAnchor.top, left: calAnchor.left, width: calAnchor.width }}>
                   <div className="flex items-center justify-between">
-                    <button onClick={() => setCalMonth(addMonths(effMonth, -1))} className="rounded-md px-2 py-1 font-bold text-[#68707a] hover:bg-[#eef1f5]">‹</button>
-                    <span className="text-sm font-bold text-[#17293e]">Tháng {Number(effMonth.slice(5, 7))} · {effMonth.slice(0, 4)}</span>
-                    <button onClick={() => setCalMonth(addMonths(effMonth, 1))} className="rounded-md px-2 py-1 font-bold text-[#68707a] hover:bg-[#eef1f5]">›</button>
+                    <button onClick={() => setCalMonth(addMonths(effMonth, -1))} className="rounded-md px-2 py-1 font-bold text-[var(--cb-muted)] hover:bg-[var(--cb-bg)]">‹</button>
+                    <span className="text-sm font-bold text-[var(--cb-text)]">Tháng {Number(effMonth.slice(5, 7))} · {effMonth.slice(0, 4)}</span>
+                    <button onClick={() => setCalMonth(addMonths(effMonth, 1))} className="rounded-md px-2 py-1 font-bold text-[var(--cb-muted)] hover:bg-[var(--cb-bg)]">›</button>
                   </div>
-                  <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-[#68707a]">
+                  <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-[var(--cb-muted)]">
                     {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((w) => <div key={w}>{w}</div>)}
                   </div>
                   <div className="mt-1 grid grid-cols-7 gap-1">
@@ -812,7 +891,7 @@ export default function StaffCalendar() {
                       <button
                         key={c}
                         onClick={() => { setAssignDate(c); setCalOpen(false); }}
-                        className={`rounded-lg py-1.5 text-sm ${c === assignDate ? "bg-[#2563eb] font-bold text-white" : c === todayStr ? "font-bold text-[#2563eb] ring-1 ring-[#2563eb]" : "text-[#17293e] hover:bg-[#eef1f5]"}`}
+                        className={`rounded-lg py-1.5 text-sm ${c === assignDate ? "bg-[var(--cb-blue)] font-bold text-white" : c === todayStr ? "font-bold text-[var(--cb-blue)] ring-1 ring-[var(--cb-blue)]" : "text-[var(--cb-text)] hover:bg-[var(--cb-bg)]"}`}
                       >
                         {Number(c.slice(8, 10))}
                       </button>
@@ -829,21 +908,21 @@ export default function StaffCalendar() {
             value={assignQuery}
             onChange={(e) => setAssignQuery(e.target.value)}
             placeholder="Tìm tên khách / mã đơn…"
-            className="mt-2 w-full rounded-full border border-[#dde3ea] px-2 py-1.5 text-sm text-[#17293e]"
+            className="mt-2 w-full rounded-full border border-[var(--cb-border)] px-2 py-1.5 text-sm text-[var(--cb-text)]"
           />
 
 
           {/* danh sach don chua gan, nhom theo loai phong */}
           <div className="mt-3 space-y-3">
             {unassignedGroups.length === 0 && (
-              <p className="text-sm font-semibold text-[#68707a]">Không còn đơn chờ xếp phòng</p>
+              <p className="text-sm font-semibold text-[var(--cb-muted)]">Không còn đơn chờ xếp phòng</p>
             )}
             {unassignedGroups.map((g) => (
               <div key={g.typeId}>
-                <div className="text-xs font-bold text-[#17293e]">▾ {typeName(g.typeId)} ({g.rows.length})</div>
+                <div className="text-xs font-bold text-[var(--cb-text)]">▾ {typeName(g.typeId)} ({g.rows.length})</div>
                 <div className="mt-1 space-y-2">
                   {g.rows.map((r) => (
-                    <div key={r.id} className={`overflow-hidden rounded-lg border bg-white ${assigningId === r.id ? "border-[#2563eb]" : "border-[#dde3ea]"}`}>
+                    <div key={r.id} className={`overflow-hidden rounded-lg border bg-white ${assigningId === r.id ? "border-[var(--cb-blue)]" : "border-[var(--cb-border)]"}`}>
                       <div
                         draggable
                         onDragStart={() => setDragging({ reservationId: r.id, roomNumber: null, visibleStart: 0 })}
@@ -859,19 +938,19 @@ export default function StaffCalendar() {
                           }
                         }}
                         title="Bấm để mở form gán phòng (kéo để thả vào phòng)"
-                        className={`cursor-pointer px-2 py-1.5 ${assigningId === r.id ? "bg-[#eef4ff]" : "bg-white"}`}
+                        className={`cursor-pointer px-2 py-1.5 ${assigningId === r.id ? "bg-[var(--cb-blue-soft)]" : "bg-white"}`}
                       >
                         <div className="flex items-center gap-1.5">
                           <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_STYLES[r.status].split(" ")[0]}`} />
-                          <span className="text-xs font-bold text-[#17293e]">{r.guestName}</span>
-                          <span className="text-[11px] text-[#68707a]">{r.id}</span>
+                          <span className="text-xs font-bold text-[var(--cb-text)]">{r.guestName}</span>
+                          <span className="text-[11px] text-[var(--cb-muted)]">{r.id}</span>
                         </div>
-                        <div className="mt-0.5 text-[11px] text-[#68707a]">{r.checkIn.slice(5)} → {r.checkOut.slice(5)} · {diffDays(r.checkIn, r.checkOut)} đêm</div>
+                        <div className="mt-0.5 text-[11px] text-[var(--cb-muted)]">{r.checkIn.slice(5)} → {r.checkOut.slice(5)} · {diffDays(r.checkIn, r.checkOut)} đêm</div>
                       </div>
                       {/* form gán phòng mở ngay dưới đơn đang chọn */}
                       {assigningId === r.id && assigningBooking && (
-                        <div className="border-t border-[#dde3ea] bg-[#eef4ff] p-2">
-                          <label className="block text-xs text-[#68707a]">
+                        <div className="border-t border-[var(--cb-border)] bg-[var(--cb-blue-soft)] p-2">
+                          <label className="block text-xs text-[var(--cb-muted)]">
                             Loại phòng:
                             <select
                               value={assignEffType ?? ""}
@@ -882,19 +961,19 @@ export default function StaffCalendar() {
                                 setPendingRoom(first ? first.number : null);
                                 setSpotAnchor(null);
                               }}
-                              className="mt-1 w-full rounded-lg border border-[#dde3ea] bg-white px-2 py-1.5 text-sm text-[#17293e]"
+                              className="mt-1 w-full rounded-lg border border-[var(--cb-border)] bg-white px-2 py-1.5 text-sm text-[var(--cb-text)]"
                             >
                               {groups.map((g) => (
                                 <option key={g.typeId} value={g.typeId}>{g.name}</option>
                               ))}
                             </select>
                           </label>
-                          <label className="mt-2 block text-xs text-[#68707a]">
+                          <label className="mt-2 block text-xs text-[var(--cb-muted)]">
                             Phòng:
                             <select
                               value={pendingRoom ?? ""}
                               onChange={(e) => { setPendingRoom(e.target.value || null); setSpotAnchor(null); }}
-                              className="mt-1 w-full rounded-lg border border-[#dde3ea] bg-white px-2 py-1.5 text-sm text-[#17293e]"
+                              className="mt-1 w-full rounded-lg border border-[var(--cb-border)] bg-white px-2 py-1.5 text-sm text-[var(--cb-text)]"
                             >
                               {assignFitting.length === 0 && <option value="">Hết phòng trống phù hợp</option>}
                               {assignFitting.map((rm) => (
@@ -904,13 +983,13 @@ export default function StaffCalendar() {
                           </label>
                           {/* Het phong: giai thich tung dem + goi y loai khac con phong ca ky */}
                           {assignFitting.length === 0 && assignEffType && (
-                            <div className="mt-2 rounded-lg bg-white/70 p-2 text-xs text-[#68707a]">
-                              <div className="font-semibold text-[#17293e]">Không có phòng nào trống cả kỳ ở:</div>
+                            <div className="mt-2 rounded-lg bg-white/70 p-2 text-xs text-[var(--cb-muted)]">
+                              <div className="font-semibold text-[var(--cb-text)]">Không có phòng nào trống cả kỳ ở:</div>
                               {stayDates(assigningBooking.checkIn, assigningBooking.checkOut).map((d) => {
                                 const free = rooms.filter((rm) =>
                                   rm.roomTypeId === assignEffType &&
                                   !roomBlockOn(blocks, rm.number, d, "out_of_order") &&
-                                  !reservations.some((o) => o.id !== assigningBooking.id && !["cancelled", "no_show"].includes(o.status) && o.roomNumbers.includes(rm.number) && o.checkIn <= d && d < o.checkOut)
+                                  !reservations.some((o) => o.id !== assigningBooking.id && !["cancelled", "no_show", "checked_out"].includes(o.status) && o.roomNumbers.includes(rm.number) && o.checkIn <= d && d < o.checkOut)
                                 );
                                 return <div key={d}>Đêm {d.slice(5)} còn: {free.length > 0 ? free.map((rm) => rm.number).join(", ") : "hết"}</div>;
                               })}
@@ -921,7 +1000,7 @@ export default function StaffCalendar() {
                                   <button
                                     key={g.typeId}
                                     onClick={() => { setAssignTypeId(g.typeId); setPendingRoom(fit[0].number); setSpotAnchor(null); }}
-                                    className="mt-1 block font-semibold text-[#2563eb]"
+                                    className="mt-1 block font-semibold text-[var(--cb-blue)]"
                                   >
                                     → Chuyển sang {g.name}: còn phòng {fit.map((rm) => rm.number).join(", ")}
                                   </button>
@@ -933,13 +1012,13 @@ export default function StaffCalendar() {
                             <button
                               disabled={!pendingRoom}
                               onClick={() => pendingRoom && assignRoom(pendingRoom)}
-                              className="w-full rounded-full bg-[#2563eb] py-2 text-sm font-bold text-white disabled:opacity-40"
+                              className="w-full rounded-full bg-[var(--cb-blue)] py-2 text-sm font-bold text-white disabled:opacity-40"
                             >
                               ASSIGN
                             </button>
-                            <button onClick={() => { setAssigningId(null); setPendingRoom(null); setSpotAnchor(null); setAssignTypeId(null); }} className="w-full rounded-full bg-[#eef1f5] py-2 text-sm font-semibold text-[#17293e]">CANCEL</button>
+                            <button onClick={() => { setAssigningId(null); setPendingRoom(null); setSpotAnchor(null); setAssignTypeId(null); }} className="w-full rounded-full bg-[var(--cb-bg)] py-2 text-sm font-semibold text-[var(--cb-text)]">CANCEL</button>
                           </div>
-                          <p className="mt-2 text-xs text-[#68707a]">Hoặc bấm ô sáng trên lịch để chọn phòng.</p>
+                          <p className="mt-2 text-xs text-[var(--cb-muted)]">Hoặc bấm ô sáng trên lịch để chọn phòng.</p>
                         </div>
                       )}
                     </div>
@@ -950,7 +1029,7 @@ export default function StaffCalendar() {
           </div>
         </aside>
         ) : (
-          <button onClick={() => setPanelOpen(true)} title="Mở panel đơn chưa xếp phòng" className="sticky top-4 shrink-0 rounded-xl border border-[#dde3ea] bg-white px-2 py-3 text-sm font-bold text-[#2563eb] shadow-[0_1px_3px_rgba(23,41,62,0.06)]">»</button>
+          <button onClick={() => setPanelOpen(true)} title="Mở panel đơn chưa xếp phòng" className="sticky top-4 shrink-0 rounded-xl border border-[var(--cb-border)] bg-white px-2 py-3 text-sm font-bold text-[var(--cb-blue)] shadow-[0_1px_3px_rgba(16,28,66,0.06)]">»</button>
         )}
 
         {/* lich (phan con lai) */}
@@ -965,13 +1044,13 @@ export default function StaffCalendar() {
           }}
         >
           {/* month band */}
-          <div className={`${stickyCell} border-b border-[#eef1f5] bg-[#eef1f5] px-3 py-1.5 text-[11px] font-semibold text-[#68707a]`}>
+          <div className={`${stickyCell} border-b border-[var(--cb-bg)] bg-[var(--cb-bg)] px-3 py-1.5 text-[11px] font-semibold text-[var(--cb-muted)]`}>
             Phòng ↓ · Ngày →
           </div>
           {monthRuns.map((m, i) => (
             <div
               key={i}
-              className="border-b border-l border-[#eef1f5] bg-[#eef1f5] px-2 py-1.5 text-[11px] font-bold tracking-wide text-[#17293e]"
+              className="border-b border-l border-[var(--cb-bg)] bg-[var(--cb-bg)] px-2 py-1.5 text-[11px] font-bold tracking-wide text-[var(--cb-text)]"
               style={{ gridColumn: `span ${m.span}` }}
             >
               {m.label}
@@ -979,25 +1058,25 @@ export default function StaffCalendar() {
           ))}
 
           {/* day header kieu Cloudbeds: vien so + thu/ngay + % */}
-          <div className="sticky left-0 z-20 border-b border-[#eef1f5] bg-[#f7f9fb] px-3 py-2 text-xs font-semibold text-[#68707a]">Phòng</div>
+          <div className="sticky left-0 z-20 border-b border-[var(--cb-bg)] bg-[var(--cb-blue-soft)] px-3 py-2 text-xs font-semibold text-[var(--cb-muted)]">Phòng</div>
           {days.map((d, i) => dayHeaderCell(d, i, "t-"))}
 
           {/* one section per room type */}
           {gridGroups.map((g) => (
             <div key={g.typeId} className="contents">
               {/* section summary row: rooms left + rack price per day */}
-              <div className="sticky left-0 z-20 flex items-center justify-between border-b border-[#eef1f5] bg-[#eef4fb] px-3 py-1.5">
-                <span className="text-xs font-bold text-[#17293e]">▾ {g.name}</span>
-                <span className="text-[10px] text-[#68707a]">{g.rooms.length} phòng</span>
+              <div className="sticky left-0 z-20 flex items-center justify-between border-b border-[var(--cb-bg)] bg-[#eef4fb] px-3 py-1.5">
+                <span className="text-xs font-bold text-[var(--cb-text)]">▾ {g.name}</span>
+                <span className="text-[10px] text-[var(--cb-muted)]">{g.rooms.length} phòng</span>
               </div>
               {days.map((d, i) => {
                 const left = leftByType[g.typeId]?.[i] ?? 0;
                 return (
-                  <div key={d} className={`border-b border-l border-[#eef1f5] px-1 py-1 text-center leading-tight ${d === assignDate ? "bg-[#fef9c3]" : "bg-[#eef4fb]"}`}>
-                    <div className={`text-xs font-bold ${left <= 0 ? "text-[#e5484d]" : left === 1 ? "text-[#b45309]" : "text-[#17293e]"}`}>
+                  <div key={d} className={`border-b border-l border-[var(--cb-bg)] px-1 py-1 text-center leading-tight ${d === assignDate ? "bg-[#fef9c3]" : "bg-[#eef4fb]"}`}>
+                    <div className={`text-xs font-bold ${left <= 0 ? "text-[#e5484d]" : left === 1 ? "text-[#b45309]" : "text-[var(--cb-text)]"}`}>
                       {left}
                     </div>
-                    <div className="text-[10px] text-[#68707a]">{fmtPrice(rack[g.typeId]?.[d])}</div>
+                    <div className="text-[10px] text-[var(--cb-muted)]">{fmtPrice(rack[g.typeId]?.[d])}</div>
                   </div>
                 );
               })}
@@ -1005,9 +1084,9 @@ export default function StaffCalendar() {
               {/* physical room rows */}
               {g.rooms.map((room) => (
                 <div key={room.number} className="contents">
-                  <div className="sticky left-0 z-10 flex items-center gap-2 border-b border-[#eef1f5] bg-white px-3 py-1">
+                  <div className="sticky left-0 z-10 flex items-center gap-2 border-b border-[var(--cb-bg)] bg-white px-3 py-1">
                     <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${HK_DOT[room.housekeepingStatus]}`} title={HK_LABEL[room.housekeepingStatus]} />
-                    <div className="text-sm font-semibold text-[#17293e]">{room.number}</div>
+                    <div className="text-sm font-semibold text-[var(--cb-text)]">{room.number}</div>
                   </div>
 
                   {days.map((day, dayIndex) => (
@@ -1026,16 +1105,16 @@ export default function StaffCalendar() {
                           setSpotAnchor({ x: e.clientX, y: e.clientY });
                         }
                       }}
-                      className={`relative min-h-[34px] border-b border-l border-[#eef1f5] ${
+                      className={`relative min-h-[34px] border-b border-l border-[var(--cb-bg)] ${
                         assigningBooking &&
                         day >= assigningBooking.checkIn &&
                         day < assigningBooking.checkOut &&
                         roomFitsForType(assigningBooking, room, assignEffType ?? assigningBooking.roomTypeId)
-                          ? "cursor-pointer bg-[#dbeafe] ring-1 ring-inset ring-[#2563eb]"
+                          ? "cursor-pointer bg-[var(--cb-blue-soft)] ring-1 ring-inset ring-[var(--cb-blue)]"
                           : day === assignDate
                             ? "bg-[#fffde7]"
                             : day === todayStr
-                              ? "bg-[#f2f6fe]"
+                              ? "bg-[var(--cb-blue-soft)]"
                               : ""
                       }`}
                     >
@@ -1059,14 +1138,14 @@ export default function StaffCalendar() {
                               key={b.id}
                               onClick={(e) => { e.stopPropagation(); setSelectedBlockId(b.id); }}
                               title={`${b.kind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng"} · ${b.from} → ${b.to} · ${b.reason} (bấm để xem / xoá)`}
-                              className={`absolute inset-y-1 z-[5] flex cursor-pointer items-center overflow-hidden whitespace-nowrap px-3 text-[11px] font-medium text-white ${b.kind === "out_of_order" ? "bg-[#68707a]" : "bg-[#9aa7b4]"}`}
+                              className={`absolute inset-y-1 z-[5] flex cursor-pointer items-center overflow-hidden whitespace-nowrap px-3 text-[11px] font-medium text-white ${b.kind === "out_of_order" ? "bg-[var(--cb-muted)]" : "bg-[var(--cb-muted)]"}`}
                               style={{
                                 left: startsMid ? "calc(50% + 1px)" : "2px",
                                 width: `calc(${spanCells * 100}% - ${startsMid ? 3 : 4}px)`,
                                 clipPath: "polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%)",
                               }}
                             >
-                              {b.kind === "out_of_order" ? "🚫" : "🧹"} {b.reason}
+                              {b.kind === "out_of_order" ? <IconBan className="h-4 w-4" /> : <IconDroplet className="h-4 w-4" />} {b.reason}
                             </div>
                           );
                         })}
@@ -1093,6 +1172,7 @@ export default function StaffCalendar() {
                               span={spanCells}
                               startHalf={startsMid}
                               hasNotes={!!r.note || (notesCount[r.id] ?? 0) > 0}
+                              draggable={!["checked_out", "no_show"].includes(r.status)}
                               onDragStart={() =>
                                 setDragging({ reservationId: r.id, roomNumber: room.number, visibleStart })
                               }
@@ -1108,7 +1188,7 @@ export default function StaffCalendar() {
           ))}
 
           {/* day header lap lai o cuoi lich (kieu Cloudbeds) */}
-          <div className="sticky left-0 z-20 border-b border-[#eef1f5] bg-[#f7f9fb] px-3 py-2 text-xs font-semibold text-[#68707a]">Phòng</div>
+          <div className="sticky left-0 z-20 border-b border-[var(--cb-bg)] bg-[var(--cb-blue-soft)] px-3 py-2 text-xs font-semibold text-[var(--cb-muted)]">Phòng</div>
           {days.map((d, i) => dayHeaderCell(d, i, "b-"))}
         </div>
       </div>
@@ -1116,8 +1196,8 @@ export default function StaffCalendar() {
       </div>
 
       {/* Legend kieu Cloudbeds */}
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[#68707a]">
-        <span className="font-bold text-[#17293e]">Legend</span>
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[var(--cb-muted)]">
+        <span className="font-bold text-[var(--cb-text)]">Legend</span>
         {(["in_house", "confirmed", "pending", "checked_out"] as const).map((s) => (
           <span key={s} className="flex items-center gap-1.5">
             <span className={`inline-block h-3 w-3 rounded-sm ${STATUS_STYLES[s].split(" ")[0]}`} />
@@ -1125,7 +1205,7 @@ export default function StaffCalendar() {
           </span>
         ))}
         <span className="flex items-center gap-1.5">
-          <span className="inline-block h-3 w-3 rounded-sm bg-[#68707a]" />
+          <span className="inline-block h-3 w-3 rounded-sm bg-[var(--cb-muted)]" />
           Phòng bị chặn
         </span>
         <span className="flex items-center gap-1.5">
@@ -1141,13 +1221,13 @@ export default function StaffCalendar() {
 
       {/* selected room-block panel */}
       {selectedBlock && (
-        <div className="cb-card mt-3 flex flex-wrap items-center gap-3 p-4 text-sm text-[#17293e]">
-          <span className={`rounded-md px-2 py-1 text-xs font-bold text-white ${selectedBlock.kind === "out_of_order" ? "bg-[#68707a]" : "bg-[#9aa7b4]"}`}>
-            {selectedBlock.kind === "out_of_order" ? "🚫 PHÒNG HỎNG" : "🧹 TẠM ĐÓNG"}
+        <div className="cb-card mt-3 flex flex-wrap items-center gap-3 p-4 text-sm text-[var(--cb-text)]">
+          <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold text-white ${selectedBlock.kind === "out_of_order" ? "bg-[var(--cb-muted)]" : "bg-[var(--cb-muted)]"}`}>
+            {selectedBlock.kind === "out_of_order" ? (<><IconBan className="h-3.5 w-3.5" /> PHÒNG HỎNG</>) : (<><IconDroplet className="h-3.5 w-3.5" /> TẠM ĐÓNG</>)}
           </span>
           <span className="font-semibold">Phòng {selectedBlock.roomNumber}</span>
           <span>{selectedBlock.from} → {selectedBlock.to} (đến đêm {selectedBlock.to})</span>
-          <span className="text-[#68707a]">{selectedBlock.reason}</span>
+          <span className="text-[var(--cb-muted)]">{selectedBlock.reason}</span>
           <span className="ml-auto flex gap-2">
             <button onClick={() => removeBlock(selectedBlock.id)} className="rounded-lg border border-[#e5484d] px-3 py-1.5 text-sm font-semibold text-[#e5484d] hover:bg-red-50">
               Xoá chặn (mở phòng lại)

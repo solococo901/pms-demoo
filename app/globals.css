@@ -1,37 +1,36 @@
 @import "tailwindcss";
 
 /* ============================================================
-   FILE THEME1 — app/globals.css
-   CITYHOUSE MORE THEME — doi tu Cloudbeds (2026-11-10 theo
-   yeu cau cua Vos, mau lay mau tu cityhousemore.com):
-   nen kem, navy dam, nut dong. Màu lay mau truc tiep tu hinh
-   trang da hien thi (chua doc truc tiep stylesheet) nen la
-   mau xap xi rat gan.
-   - Nen trang: kem am #F4EFEA (trang web dung kem, khong
-     trang han); the trang giu nguyen.
-   - Chu chinh: navy #101C42; chu phu: #333C5B (chu thuong
-     cua trang web); link tren nen navy: #B7BAC6.
-   - Nut chinh / diem nhan: dong #B9887B (nut "Dat lich tu
-     van" cua trang web), chu tren nut mau kem #F4EFEA.
-   - Bien --cb-blue GIU TEN CU de khoi phai sua moi cho dung
-     no, nhung gia tri gio la mau dong (nut chinh), khong
-     con la xanh duong; --cb-blue-dark la dong dam hon khi
-     re chuot, --cb-blue-soft la dong nhat cho muc dang chon.
-   - Màu trang thai GIU NGUYEN (chi doi mau thuong hieu):
-     xanh la #1db584, vang #f59e0b, do #e5484d.
+   FILE CBLAYOUT1 — app/globals.css
+   CLOUDBEDS BRIGHT THEME (2026-11-17, theo ban chinh thuc
+   Cloudbeds ma Vos chot — thay cho THEME1 kem/navy/dong):
+   nen xam-xanh nhat, the trang, chu navy-xanh, nut xanh duong.
+   - Nen trang: #f5f7fb; the trang; vien #e5e9f0.
+   - Chu chinh #17293e, chu phu #68707a (mau goc Cloudbeds).
+   - Nut chinh: xanh duong #2563eb — bien --cb-blue GIO LA
+     MAU XANH DUONG THAT (THEME1 doi no thanh dong de giu ten;
+     gio ten va gia tri khop nhau tro lai). Hover #1d4ed8,
+     nen nhat #eef4ff cho muc dang chon.
+   - Màu trang thai GIU NGUYEN: xanh la #1db584, vang #f59e0b,
+     do #e5484d.
+   - Cac trang con hien dang viet ma mau Cloudbeds truc tiep
+     (#17293e, #68707a, #2563eb...) nen doi bang nay lam chung
+     khop mau ngay — khong can quet lai B1 nhu du kien cu
+     (B1 doi cac ma do sang bien dong cua THEME1, gio da loi
+     thoi).
    NOTE: Tailwind v4 — file phai mo dau bang 1 dong import
    o tren. Cu phap v3 lam mat toan bo CSS (dinh 2026-10-22).
    ============================================================ */
 
 :root {
-  --cb-bg: #f4efea; /* app background: warm cream */
+  --cb-bg: #f5f7fb; /* app background: pale blue-grey */
   --cb-card: #ffffff; /* card / panel background */
-  --cb-border: #e7ddd3; /* card border: warm, matches login inputs */
-  --cb-text: #101c42; /* main text: dark navy */
-  --cb-muted: #333c5b; /* secondary text */
-  --cb-blue: #b9887b; /* primary button copper (name kept for compatibility) */
-  --cb-blue-dark: #a3776c; /* primary button hover: darker copper */
-  --cb-blue-soft: #f3e7e0; /* soft copper background (selected item) */
+  --cb-border: #e5e9f0; /* card border */
+  --cb-text: #17293e; /* main text: Cloudbeds dark */
+  --cb-muted: #68707a; /* secondary text */
+  --cb-blue: #2563eb; /* primary button blue */
+  --cb-blue-dark: #1d4ed8; /* primary button hover: darker blue */
+  --cb-blue-soft: #eef4ff; /* soft blue background (selected item) */
   --cb-green: #1db584; /* occupancy / success green */
   --cb-amber: #f59e0b; /* warning */
   --cb-red: #e5484d; /* danger / notification dot */
@@ -45,20 +44,20 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ---- Shared pieces in CityHouse More style (used by many pages) ---- */
+/* ---- Shared pieces in Cloudbeds style (used by many pages) ---- */
 
 /* White rounded card with a soft border and shadow */
 .cb-card {
   background: var(--cb-card);
   border: 1px solid var(--cb-border);
   border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(16, 28, 66, 0.08);
+  box-shadow: 0 1px 3px rgba(23, 41, 62, 0.08);
 }
 
-/* Main copper button (rounded, like the site's "Book a consultation" CTA) */
+/* Main blue button (rounded) */
 .cb-btn-primary {
   background: var(--cb-blue);
-  color: #f4efea;
+  color: #fff;
   border-radius: 8px;
   font-weight: 600;
   transition: background 0.15s ease;
@@ -76,7 +75,7 @@ body {
   font-weight: 600;
 }
 .cb-btn-ghost:hover {
-  background: #faf5f0;
+  background: #f5f7fb;
 }
 
 /* Pill-shaped search box (top bar) */

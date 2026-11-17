@@ -24,7 +24,7 @@ export const STATUS_STYLES: Record<ReservationStatus, string> = {
   in_house: "bg-[#2aa76d] text-white",
   checked_out: "bg-[#757c85] text-white",
   cancelled: "bg-[#e5484d] text-white line-through opacity-80",
-  no_show: "bg-[#68707a] text-white",
+  no_show: "bg-[var(--cb-muted)] text-white",
 };
 
 // Status labels shown to users (Vietnamese UI text for now —
@@ -50,21 +50,23 @@ type Props = {
   startHalf?: boolean;
   /** true when the booking has any note (yellow dot, Cloudbeds legend) */
   hasNotes?: boolean;
+  /** false = thanh khong keo duoc (don da tra phong / khach khong den) */
+  draggable?: boolean;
   onDragStart: () => void;
   onClick: (e: { clientX: number; clientY: number }) => void;
 };
 
-export default function ReservationBar({ reservation, span, startHalf, hasNotes, onDragStart, onClick }: Props) {
+export default function ReservationBar({ reservation, span, startHalf, hasNotes, draggable = true, onDragStart, onClick }: Props) {
   const balance = reservation.totalAmount - reservation.paidAmount;
   const hasDots = balance > 0 || !!hasNotes;
 
   return (
     <div
-      draggable
-      onDragStart={onDragStart}
+      draggable={draggable}
+      onDragStart={draggable ? onDragStart : undefined}
       onClick={onClick}
       title={`${reservation.guestName} — ${STATUS_LABELS[reservation.status]} · ${getChannelName(reservation.channelCode)} · ${reservation.guests} khách${balance > 0 ? ` · còn nợ ${balance.toLocaleString("vi-VN")}₫` : ""}`}
-      className={`absolute bottom-1 top-1 z-10 flex cursor-grab items-center overflow-hidden whitespace-nowrap px-3 text-[11px] leading-tight active:cursor-grabbing ${STATUS_STYLES[reservation.status]}`}
+      className={`absolute bottom-1 top-1 z-10 flex items-center overflow-hidden whitespace-nowrap px-3 text-[11px] leading-tight ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${STATUS_STYLES[reservation.status]}`}
       style={{
         left: startHalf ? "calc(50% + 2px)" : "4px",
         width: `calc(${span * 100}% - ${startHalf ? 6 : 8}px)`,

@@ -1,17 +1,39 @@
 "use client";
 
 // ============================================================
-// FILE ASIDE1 — app/layout.tsx (CityHouse More-style shell)
-// The app FRAME: navy left menu + navy top bar, on every page.
-// MENU1 (2026-11-10): sap xep lai menu theo flow thiet lap
-// khach san moi — nhom "Thiet lap khach san" (7 buoc danh so)
-// len dau, roi Van hanh, Quan li. Chi doi thu tu + ten nhom +
-// danh so buoc, khong doi chuc nang trang nao; nhan vien van
-// chi thay nhom Van hanh. Mau navy/dong giu tu THEME1b.
-// ASIDE1 (2026-11-13): aside dinh theo khi cuon (sticky top-0,
-// cao bang man hinh) — truoc day aside cuon theo trang nen menu
-// troi len khoi man hinh khi trang dai; nav da co overflow-y-auto
-// nen menu dai tu cuon ben trong aside.
+// FILE CBLAYOUT5 — app/layout.tsx (Cloudbeds-style shell)
+// CBLAYOUT5 (2026-11-17): logo PMS Hotel van chi hien 1 lan,
+// nhung chuyen cho: mo menu thi logo nam o dau aside, dong
+// menu thi logo o thanh tren (thanh tren an logo khi menu mo).
+// Ban CBLAYOUT4 de dau aside chi co nut X, trong trong nen xau.
+// The app FRAME, rebuilt to Cloudbeds' official layout
+// (2026-11-17, Vos approved the demo): NO permanent sidebar.
+// Fixed white top bar: hamburger, logo, hotel switcher,
+// search pill, "+" new booking, bell, user menu.
+// CBLAYOUT3 (2026-11-17): the menu is a PUSH sidebar —
+// when it opens, the whole frame (top bar + content) slides
+// right instead of the menu covering the content; closing it
+// slides everything back. No backdrop/overlay anymore.
+// (Cloudbeds itself uses an overlay menu; Vos asked for
+// push instead.)
+// KEPT from the old shell (MENU1/ASIDE1) — only the frame
+// changed, no page lost a feature:
+//  - MENU order = Vos's own order (Thiet lap khach san 1-7,
+//    Van hanh, Quan li) — NOT Cloudbeds' menu order.
+//  - Role blocking (staff sees Operations only) + ADMIN_ROUTES.
+//  - Hotel from URL segment 1, mirrored to sessionStorage;
+//    bounce to "/" when no hotel is stored.
+//  - AuthGate, ChannexOutbox, login page bare, "/" list bare.
+// CHANGED vs CBLAYOUT2:
+//  - Aside is a flex sibling of the content column (its width
+//    animates 0 <-> 18rem); top bar + main live inside the
+//    content column, so they shift with it. Aside header height
+//    matches the top bar (py-2.5) so the two sit level.
+//  - Hamburger toggles (open/close); a menu item click still
+//    navigates + closes the menu; X button closes it.
+//  - "+" button opens the staff New Reservation wizard.
+//  - Calendar + Reservations shortcut buttons sit on the top bar (Cloudbeds style).
+//  - HotelSwitcher + UserBox restyled for the white top bar.
 // Next.js 16 notes (do NOT "simplify" these away):
 //  - usePathname() only runs inside <Shell>, BELOW the <Suspense>
 //    boundary in RootLayout. Calling it directly in RootLayout
@@ -30,13 +52,14 @@ import { Suspense, useEffect, useState, type ReactNode } from "react";
 import AuthGate from "@/components/AuthGate";
 import UserBox from "@/components/UserBox";
 import ChannexOutbox from "@/components/ChannexOutbox";
+import { IconBed, IconBell, IconCalendar, IconPlus } from "@/components/icons";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId, DEFAULT_HOTEL_ID, HOTEL_STORAGE_KEY } from "@/lib/current-hotel";
 import { useCurrentRole } from "@/lib/current-role";
 
 // Left menu items. To add/remove a menu item, edit only this list.
 // adminOnly = chi quan tri vien thay (nhan vien bi an + chan duong dan).
-// group = tieu de nhom hien tren aside; thu tu nhom theo MENU_GROUPS.
+// group = tieu de nhom hien tren menu; thu tu nhom theo MENU_GROUPS.
 // THU TU MENU = flow thiet lap khach san moi (MENU1, 2026-11-10):
 // nhom "Thiet lap khach san" (7 buoc danh so, chi admin) len dau —
 // vao khach san moi thi di tu buoc 1 xuong buoc 7 la xong phan dung;
@@ -56,6 +79,7 @@ const MENU = [
   { label: "Đặt phòng", href: "/reservations", icon: "reservations", group: "Vận hành" },
   { label: "Báo cáo", href: "/reports", icon: "reports", group: "Quản lí", adminOnly: true },
   { label: "Cài đặt", href: "/settings", icon: "settings", group: "Quản lí", adminOnly: true },
+  { label: "Người dùng", href: "/settings/users", icon: "user", group: "Quản lí", adminOnly: true },
 ];
 const MENU_GROUPS = ["Thiết lập khách sạn", "Vận hành", "Quản lí"];
 
@@ -76,6 +100,7 @@ const ICONS: Record<string, string> = {
   image: "M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zM8.5 10a1.5 1.5 0 1 0 0-0.01M21 15l-5-5L5 21",
   layers: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
   archive: "M21 8v13H3V8M1 3h22v5H1zM10 12h4",
+  user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
 };
 function MenuIcon({ name }: { name: string }) {
   return (
@@ -136,7 +161,7 @@ function HotelSwitcher() {
           window.location.reload();
         }
       }}
-      className="shrink-0 cursor-pointer rounded-lg border border-white/20 bg-[#0F1A41] px-2 py-1.5 text-sm font-semibold text-white"
+      className="shrink-0 cursor-pointer rounded-lg border border-[var(--cb-border)] bg-white px-2 py-1.5 text-sm font-semibold text-[var(--cb-text)]"
       title="Đổi khách sạn"
     >
       {hotels.length === 0 && <option value={pageHotel ?? current}>{pageHotel ?? current}</option>}
@@ -235,7 +260,7 @@ function Shell({ children }: { children: ReactNode }) {
       ? ["rates", "channels", "reports", "settings", "hotel-info", "hotel-config", "hotel-photos", "room-types", "rate-plans", "inventory"].includes(wsSub)
       : ADMIN_ROUTES.some((r) => (pathname ?? "").startsWith(r)));
 
-  // Dropdown aside: moi nhom tu dong/mo doc lap — an tieu de thi mo,
+  // Dropdown menu: moi nhom tu dong/mo doc lap — an tieu de thi mo,
   // an them lan nua thi dong, khong tu dong dong nhom khac, khong
   // reset khi chuyen trang. Mac dinh mo tat ca (nhu ban cu).
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set(MENU_GROUPS));
@@ -247,19 +272,24 @@ function Shell({ children }: { children: ReactNode }) {
       return next;
     });
 
+  // Menu day (push): nut ☰ mo/dong, nut X dong, bam 1 muc menu thi
+  // chuyen trang + dong menu. Menu la 1 cot flex nam canh cot noi
+  // dung — mo ra thi noi dung dich sang phai, dong thi dich ve.
+  const [menuOpen, setMenuOpen] = useState(false);
+
   // The login page stands alone — no shell, no gate.
   if (pathname === "/login") {
     return <>{children}</>;
   }
 
-  // Trang danh sach dung rieng, khong khung app (sidebar, thanh
-  // tren) — nhung van qua cong kiem tra dang nhap. Khong kem
+  // Trang danh sach dung rieng, khong khung app (thanh tren, menu
+  // day) — nhung van qua cong kiem tra dang nhap. Khong kem
   // ChannexOutbox: chip trang thai dong bo la phan cua khung app,
   // khong thuoc trang nay.
   if (pathname === "/") {
     return (
       <AuthGate>
-        <main className="mx-auto min-h-screen max-w-7xl bg-[var(--cb-bg)] p-6">{children}</main>
+        <main className="mx-auto min-h-screen w-[80%] bg-[var(--cb-bg)] p-6">{children}</main>
       </AuthGate>
     );
   }
@@ -267,114 +297,181 @@ function Shell({ children }: { children: ReactNode }) {
 
   return (
     <AuthGate>
-      <div className="flex min-h-screen">
-        {/* ============ LEFT MENU (navy) ============ */}
-        <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-white/10 bg-[#0F1A41]">
-          <Link href="/" title="Về danh sách khách sạn" className="flex items-center gap-2.5 border-b border-white/10 px-5 py-4">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#B9887B] text-base font-bold text-[#F4EFEA]">
-              P
-            </div>
-            <div>
-              <div className="text-[15px] font-bold leading-tight text-white">
-                PMS Hotel
-              </div>
-              <div className="text-[11px] leading-tight text-[#B7BAC6]">
-                Quản lí khách sạn
-              </div>
-            </div>
-          </Link>
-
-          <nav className="flex-1 overflow-y-auto px-3 py-3">
-            {role !== null && MENU_GROUPS.map((group) => {
-              const items = visibleMenu.filter((i) => i.group === group);
-              if (items.length === 0) return null;
-              const open = openGroups.has(group);
-              return (
-                <div key={group} className="mb-1">
-                  <button
-                    onClick={() => toggleGroup(group)}
-                    aria-expanded={open}
-                    className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#B7BAC6] hover:bg-white/10"
-                  >
-                    <span>{group}</span>
-                    <svg className={`h-4 w-4 shrink-0 transition-transform ${open ? "" : "rotate-180"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M6 15l6-6 6 6" />
-                    </svg>
-                  </button>
-                  {open && (
-                    <div className="space-y-1">
-                    {items.map((item) => {
-                      const active = isActive(item.href);
-                      return (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          aria-current={active ? "page" : undefined}
-                          className={
-                            active
-                              ? "relative flex items-center gap-3 rounded-lg bg-white/10 px-3 py-2 text-sm font-semibold text-[#F4EFEA] before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:bg-[#B9887B]"
-                              : "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-[#B7BAC6] hover:bg-white/10 hover:text-[#F4EFEA]"
-                          }
-                        >
-                          <MenuIcon name={item.icon} />
-                          {item.label}
-                        </Link>
-                      );
-                    })}
-                    </div>
-                  )}
+      <div className="flex min-h-screen bg-[var(--cb-bg)]">
+        {/* ============ ASIDE (push: mo thi day noi dung sang phai) ============ */}
+        <aside
+          className={`sticky top-0 flex h-screen shrink-0 flex-col overflow-hidden border-r border-[var(--cb-border)] bg-white transition-all duration-300 ease-in-out ${menuOpen ? "w-72" : "w-0 border-r-0"}`}
+        >
+          <div className="flex w-72 shrink-0 flex-1 flex-col">
+            <div className="flex items-center justify-between border-b border-[var(--cb-border)] px-5 py-2.5">
+              <Link
+                href="/"
+                onClick={() => setMenuOpen(false)}
+                title="Về danh sách khách sạn"
+                className="flex items-center gap-2.5"
+              >
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--cb-blue)] text-base font-bold text-white">
+                  P
                 </div>
-              );
-            })}
-          </nav>
+                <div className="text-[15px] font-bold leading-tight text-[var(--cb-text)]">
+                  PMS Hotel
+                </div>
+              </Link>
+              <button
+                onClick={() => setMenuOpen(false)}
+                title="Đóng menu"
+                aria-label="Đóng menu"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--cb-text)] hover:bg-[#f5f7fb]"
+              >
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            </div>
 
-          <UserBox />
+            <nav className="flex-1 overflow-y-auto px-3 py-3">
+              {role !== null && MENU_GROUPS.map((group) => {
+                const items = visibleMenu.filter((i) => i.group === group);
+                if (items.length === 0) return null;
+                const open = openGroups.has(group);
+                return (
+                  <div key={group} className="mb-1">
+                    <button
+                      onClick={() => toggleGroup(group)}
+                      aria-expanded={open}
+                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--cb-muted)] hover:bg-[#f5f7fb]"
+                    >
+                      <span>{group}</span>
+                      <svg className={`h-4 w-4 shrink-0 transition-transform ${open ? "" : "rotate-180"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M6 15l6-6 6 6" />
+                      </svg>
+                    </button>
+                    {open && (
+                      <div className="space-y-1">
+                      {items.map((item) => {
+                        const active = isActive(item.href);
+                        return (
+                          <Link
+                            key={item.href}
+                            href={item.href}
+                            onClick={() => setMenuOpen(false)}
+                            aria-current={active ? "page" : undefined}
+                            className={
+                              active
+                                ? "relative flex items-center gap-3 rounded-lg bg-[var(--cb-blue-soft)] px-3 py-2 text-sm font-semibold text-[var(--cb-blue)] before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:bg-[var(--cb-blue)]"
+                                : "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-[var(--cb-text)] hover:bg-[#f5f7fb]"
+                            }
+                          >
+                            <MenuIcon name={item.icon} />
+                            {item.label}
+                          </Link>
+                        );
+                      })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </nav>
+
+            <div className="border-t border-[var(--cb-border)] px-5 py-3 text-xs text-[var(--cb-muted)]">
+              cityhousePMS — {menuHotel || "Chưa chọn khách sạn"}
+            </div>
+          </div>
         </aside>
 
-        {/* ============ RIGHT COLUMN: top bar + page content ============ */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex items-center gap-4 border-b border-white/10 bg-[#0F1A41] px-6 py-3">
+        {/* ============ CONTENT COLUMN (dich theo aside) ============ */}
+        <div className="flex min-h-screen min-w-0 flex-1 flex-col">
+          {/* ============ TOP BAR (white, sticky) ============ */}
+          <header className="sticky top-0 z-40 flex items-center gap-3 border-b border-[var(--cb-border)] bg-white px-4 py-2.5">
+            <button
+              onClick={() => setMenuOpen((v) => !v)}
+              title="Mở/đóng menu"
+              aria-label="Mở/đóng menu"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--cb-text)] hover:bg-[#f5f7fb]"
+            >
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+            </button>
+
+            {!menuOpen && (
+            <Link href="/" title="Về danh sách khách sạn" className="flex shrink-0 items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--cb-blue)] text-base font-bold text-white">
+                P
+              </div>
+              <div className="hidden sm:block">
+                <div className="text-[15px] font-bold leading-tight text-[var(--cb-text)]">
+                  PMS Hotel
+                </div>
+                <div className="text-[11px] leading-tight text-[var(--cb-muted)]">
+                  Quản lí khách sạn
+                </div>
+              </div>
+            </Link>)}
+
             <HotelSwitcher />
 
-            {/* Pill search, centered like Cloudbeds */}
-            <div className="flex flex-1 justify-center">
+            {/* Pill search, centered like Cloudbeds (desktop only) */}
+            <div className="hidden flex-1 justify-center md:flex">
               <input
                 className="cb-input-pill w-full max-w-xl px-4 py-2 text-sm"
                 placeholder="Tìm đặt phòng, khách, và hơn nữa..."
               />
             </div>
 
-            {/* Round "+" create button */}
-            <button
-              className="cb-btn-primary flex h-9 w-9 shrink-0 items-center justify-center text-lg leading-none"
+            {/* Round "+" create button — opens the staff New Reservation wizard (Cloudbeds style) */}
+            <Link
+              href={menuHotel ? `/${menuHotel}/reservations/new` : "/"}
+              className="cb-btn-primary flex h-9 w-9 shrink-0 items-center justify-center"
               title="Tạo đặt phòng mới"
             >
-              +
-            </button>
+              <IconPlus className="h-5 w-5" />
+            </Link>
+
+            {/* Calendar + Reservations shortcuts on the top bar (Cloudbeds style) */}
+            <Link
+              href={menuHotel ? `/${menuHotel}/calendar` : "/"}
+              title="Lịch phòng"
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${pathname?.endsWith("/calendar") ? "bg-[var(--cb-blue-soft)] text-[var(--cb-blue)]" : "text-[var(--cb-text)] hover:bg-[var(--cb-bg)]"}`}
+            >
+              <IconCalendar className="h-5 w-5" />
+            </Link>
+            <Link
+              href={menuHotel ? `/${menuHotel}/reservations` : "/"}
+              title="Đặt phòng"
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${pathname?.endsWith("/reservations") ? "bg-[var(--cb-blue-soft)] text-[var(--cb-blue)]" : "text-[var(--cb-text)] hover:bg-[var(--cb-bg)]"}`}
+            >
+              <IconBed className="h-5 w-5" />
+            </Link>
 
             {/* Bell with red dot */}
-            <button className="relative shrink-0 text-xl" title="Thông báo">
-              🔔
-              <span className="cb-dot absolute right-0 top-0 h-2.5 w-2.5 border-2 border-[#0F1A41]" />
+            <button className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--cb-text)] hover:bg-[var(--cb-bg)]" title="Thông báo">
+              <IconBell className="h-5 w-5" />
+              <span className="cb-dot absolute right-1 top-1 h-2.5 w-2.5 border-2 border-white" />
             </button>
+
+            <UserBox />
           </header>
 
           <main className="flex-1 p-6">
-            {blockedForStaff ? (
-              <div className="cb-card mx-auto mt-10 max-w-md p-6 text-center">
-                <div className="text-base font-bold text-[var(--cb-text)]">Trang dành cho quản trị viên</div>
-                <p className="mt-2 text-sm text-[var(--cb-muted)]">
-                  Tài khoản nhân viên chỉ dùng được Tổng quan, Lịch phòng, Đặt phòng
-                  và danh sách Khách sạn.
-                  Nếu bạn cần quyền quản trị, hãy nhờ quản trị viên cấp lại vai trò.
-                </p>
-                <Link href={`/${menuHotel}/calendar`} className="cb-btn-primary mt-4 inline-block px-4 py-2 text-sm">
-                  Về Lịch phòng
-                </Link>
-              </div>
-            ) : (
-              children
-            )}
+            <div className="mx-auto w-[80%]">
+              {blockedForStaff ? (
+                <div className="cb-card mx-auto mt-10 max-w-md p-6 text-center">
+                  <div className="text-base font-bold text-[var(--cb-text)]">Trang dành cho quản trị viên</div>
+                  <p className="mt-2 text-sm text-[var(--cb-muted)]">
+                    Tài khoản nhân viên chỉ dùng được Tổng quan, Lịch phòng, Đặt phòng
+                    và danh sách Khách sạn.
+                    Nếu bạn cần quyền quản trị, hãy nhờ quản trị viên cấp lại vai trò.
+                  </p>
+                  <Link href={`/${menuHotel}/calendar`} className="cb-btn-primary mt-4 inline-block px-4 py-2 text-sm">
+                    Về Lịch phòng
+                  </Link>
+                </div>
+              ) : (
+                children
+              )}
+            </div>
           </main>
         </div>
       </div>

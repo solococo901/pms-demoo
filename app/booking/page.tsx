@@ -6,7 +6,8 @@
 //   Step 1 — pick dates + guests → see each room type with
 //            LIVE availability and its WEBSITE rate plans
 //   Step 2 — guest information form
-//   Step 3 — payment choice (pay at hotel / card form, UI only)
+//   Step 3 — payment (pay at hotel only for now; online card
+//            payment comes later with the Payment step)
 //   Step 4 — confirmation with a booking code
 //
 // Key design points it demonstrates:
@@ -36,7 +37,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { extraFeesPerNight, inventoryBlockOn, resolvePlanPrice, roomBlockOn, type InventoryBlock, type RatePlan, type Reservation, type Room, type RoomBlock, type RoomType } from "@/lib/mock-data";
+import { extraFeesPerNight, resolvePlanPrice, type InventoryBlock, type RatePlan, type Reservation, type Room, type RoomBlock, type RoomType } from "@/lib/mock-data";
+import { roomsLeftRange, validateCreate } from "@/lib/booking-rules";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
 import { queueChannexDates, stayDates } from "@/lib/channex-outbox";
@@ -56,36 +58,11 @@ const fmtDate = (d: string) => d.split("-").reverse().join("/");
 const newCode = () =>
   Array.from({ length: 10 }, () => "ABCDEFGHJKMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 31)]).join("");
 
-// rooms of this type still free on a given night (shared inventory, all channels)
-// Dated blocks drive availability (audit A3): an out-of-order
-// block covering this night removes the room from the sellable
-// total; a stop-sell block for the website channel (or for the
-// whole room type) closes the night completely.
-function roomsLeftOn(
-  rooms: Room[],
-  reservations: Reservation[],
-  roomBlocks: RoomBlock[],
-  inventoryBlocks: InventoryBlock[],
-  roomTypeId: string,
-  date: string
-) {
-  if (inventoryBlockOn(inventoryBlocks, "website", roomTypeId, date)) return 0;
-  const total = rooms.filter((r) => r.roomTypeId === roomTypeId && !roomBlockOn(roomBlocks, r.number, date, "out_of_order")).length;
-  const taken = reservations.filter(
-    (r) =>
-      r.roomTypeId === roomTypeId &&
-      !["cancelled", "no_show"].includes(r.status) &&
-      r.checkIn <= date &&
-      date < r.checkOut
-  ).reduce((sum, r) => sum + Math.max(1, r.roomNumbers.length), 0);
-  return Math.max(0, total - taken);
-}
-
 function priceFor(plan: RatePlan, date: string, allPlans: RatePlan[], overrides?: Record<string, number>) {
   return resolvePlanPrice(plan, date, allPlans, overrides) ?? 0;
 }
 
-const inputCls = "rounded-lg border border-[#dde3ea] px-3 py-2 text-[#17293e] outline-none focus:border-[#2563eb]";
+const inputCls = "rounded-lg border border-[var(--cb-border)] px-3 py-2 text-[var(--cb-text)] outline-none focus:border-[var(--cb-blue)]";
 
 export default function BookingPage() {
   // Khach san dang chon theo tab (giong moi trang khac); chua
@@ -101,7 +78,6 @@ export default function BookingPage() {
   const [guestPhone, setGuestPhone] = useState("");
   const [guestEmail, setGuestEmail] = useState("");
   const [note, setNote] = useState("");
-  const [payMethod, setPayMethod] = useState<"hotel" | "card">("hotel");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
 
@@ -259,14 +235,26 @@ export default function BookingPage() {
   const nightsList = useMemo(() => Array.from({ length: nights }, (_, i) => addDays(checkIn, i)), [checkIn, nights]);
 
   // availability + website plans per room type for the chosen range
+  // (bo kiem tra dung chung: don da tra phong khong giu phong nua,
+  // loai phong ngung ban thi khong ban online).
   const offers = useMemo(
     () =>
-      typesDb.map((t) => {
-        const left = nightsList.length ? Math.min(...nightsList.map((d) => roomsLeftOn(roomsDb, reservationsDb, roomBlocksDb, invBlocksDb, t.id, d))) : 0;
-        const plans = plansDb.filter((p) => p.channelCode === "website" && p.roomTypeId === t.id);
-        return { type: t, left, plans };
-      }),
-    [nightsList, roomsDb, reservationsDb, roomBlocksDb, invBlocksDb, plansDb, typesDb]
+      typesDb
+        .filter((t) => t.active !== false)
+        .map((t) => {
+          const left = nightsList.length
+            ? roomsLeftRange(
+                { rooms: roomsDb, reservations: reservationsDb, blocks: roomBlocksDb, invBlocks: invBlocksDb },
+                t.id,
+                checkIn,
+                checkOut,
+                "website",
+              ).minLeft
+            : 0;
+          const plans = plansDb.filter((p) => p.channelCode === "website" && p.roomTypeId === t.id);
+          return { type: t, left, plans };
+        }),
+    [nightsList, roomsDb, reservationsDb, roomBlocksDb, invBlocksDb, plansDb, typesDb, checkIn, checkOut]
   );
 
   const plan = plansDb.find((p) => p.id === planId);
@@ -283,9 +271,109 @@ export default function BookingPage() {
   async function confirm() {
     if (!guestName.trim()) return setError("Chưa nhập họ tên.");
     if (!guestPhone.trim()) return setError("Chưa nhập số điện thoại.");
-    if (!plan) return;
+    if (!plan || !planType) return;
     setError("");
     setSaving(true);
+    // Doc lai du lieu moi nhat truoc khi luu — tranh 2 khach cung
+    // dat phong cuoi cung 1 luc (Cloudbeds kiem tra lai o buoc cuoi):
+    // ton phong + chan phong + gia cua goi trong khoang ngay o.
+    const [resRes, rrRes, blocksRes, invRes] = await Promise.all([
+      supabase.from("reservations").select("*").eq("hotel_id", HOTEL_ID),
+      supabase.from("reservation_rooms").select("reservation_id, room_number"),
+      supabase.from("room_blocks").select("*").eq("hotel_id", HOTEL_ID),
+      supabase.from("inventory_blocks").select("*").eq("hotel_id", HOTEL_ID),
+    ]);
+    const freshErr = resRes.error ?? rrRes.error ?? blocksRes.error ?? invRes.error;
+    if (freshErr) {
+      setSaving(false);
+      return setError("Không kiểm tra lại được tình trạng phòng: " + freshErr.message);
+    }
+    const roomsMap = new Map<string, string[]>();
+    for (const row of rrRes.data ?? []) {
+      const list = roomsMap.get(row.reservation_id) ?? [];
+      list.push(row.room_number);
+      roomsMap.set(row.reservation_id, list);
+    }
+    const freshReservations: Reservation[] = (resRes.data ?? []).map((r) => ({
+      id: r.id,
+      guestName: r.guest_name,
+      guestPhone: r.guest_phone ?? "",
+      channelCode: r.channel_code,
+      paymentCollector: r.payment_collector,
+      roomNumbers: roomsMap.get(r.id) ?? [],
+      roomTypeId: r.room_type_id,
+      ratePlanId: r.rate_plan_id ?? "",
+      checkIn: r.check_in,
+      checkOut: r.check_out,
+      guests: (r.adults ?? 0) + (r.children ?? 0),
+      adults: r.adults,
+      children: r.children,
+      totalAmount: r.total_amount,
+      paidAmount: r.paid_amount,
+      status: r.status,
+      createdAt: String(r.booked_at).slice(0, 10),
+      note: r.note ?? undefined,
+    }));
+    const freshBlocks: RoomBlock[] = (blocksRes.data ?? []).map((b) => ({
+      id: b.id, roomNumber: b.room_number, from: b.from_date, to: b.to_date, kind: b.kind, reason: b.reason ?? "",
+    }));
+    const freshInv: InventoryBlock[] = (invRes.data ?? []).map((b) => ({
+      id: b.id, scope: b.scope, channelCode: b.channel_code ?? undefined,
+      roomTypeId: b.room_type_id, from: b.from_date, to: b.to_date, reason: b.reason ?? undefined,
+    }));
+    // Gia moi nhat cua goi + goi goc (neu goi ke thua) trong khoang ngay o.
+    const priceIds = plan.derivedFromId ? [plan.id, plan.derivedFromId] : [plan.id];
+    const { data: freshPriceRows, error: priceErr } = await supabase
+      .from("rate_prices")
+      .select("rate_plan_id, date, price")
+      .in("rate_plan_id", priceIds)
+      .gte("date", checkIn)
+      .lt("date", checkOut);
+    if (priceErr) {
+      setSaving(false);
+      return setError("Không kiểm tra lại được giá phòng: " + priceErr.message);
+    }
+    const freshPlans = plansDb.map((p) => {
+      if (!priceIds.includes(p.id)) return p;
+      const prices: Record<string, number> = {};
+      for (const row of freshPriceRows ?? []) if (row.rate_plan_id === p.id) prices[row.date] = Number(row.price);
+      return { ...p, prices };
+    });
+    const freshPlan = freshPlans.find((p) => p.id === plan.id);
+    if (!freshPlan) {
+      setSaving(false);
+      return setError("Không tìm thấy gói giá của phòng đã chọn.");
+    }
+    const freshOverrides: Record<string, number> = { ...priceOverrides };
+    for (const d of nightsList) for (const id of priceIds) delete freshOverrides[`${id}|${d}`];
+    for (const row of freshPriceRows ?? []) {
+      const p = freshPlans.find((x) => x.id === row.rate_plan_id);
+      if (p?.derivedFromId && resolvePlanPrice(p, row.date, freshPlans, {}) !== Number(row.price)) {
+        freshOverrides[`${row.rate_plan_id}|${row.date}`] = Number(row.price);
+      }
+    }
+    const check = validateCreate({
+      data: { rooms: roomsDb, reservations: freshReservations, blocks: freshBlocks, invBlocks: freshInv },
+      checkIn,
+      checkOut,
+      adults: guests,
+      children: 0,
+      maxOccupancy: planType.maxOccupancy,
+      roomTypeId: plan.roomTypeId,
+      plan: freshPlan,
+      allPlans: freshPlans,
+      overrides: freshOverrides,
+      channelCode: "website",
+      today: todayStr,
+    });
+    if (!check.ok) {
+      setSaving(false);
+      return setError(check.error ?? "Không đặt được phòng này.");
+    }
+    if (check.breakdown && check.breakdown.grandTotal !== grandTotal) {
+      setSaving(false);
+      return setError("Giá phòng vừa thay đổi — vui lòng tải lại trang để xem giá mới rồi đặt lại.");
+    }
     const bookingCode = newCode();
     const { error: dbErr } = await supabase.from("reservations").insert({
       id: bookingCode,
@@ -302,7 +390,7 @@ export default function BookingPage() {
       adults: guests,
       children: 0,
       total_amount: grandTotal,
-      paid_amount: payMethod === "card" ? grandTotal : 0,
+      paid_amount: 0,
       status: "confirmed",
       note: note || null,
       booked_at: todayStr,
@@ -328,7 +416,7 @@ export default function BookingPage() {
         adults: guests,
         children: 0,
         totalAmount: grandTotal,
-        paidAmount: payMethod === "card" ? grandTotal : 0,
+        paidAmount: 0,
         status: "confirmed",
         createdAt: todayStr,
         note: note || undefined,
@@ -339,7 +427,7 @@ export default function BookingPage() {
   }
 
   const stepCls = (n: number) =>
-    `flex items-center gap-2 rounded-full px-3 py-1.5 text-sm ${step === n ? "bg-[#2563eb] font-medium text-white" : step > n ? "bg-[#e6f7f1] text-[#0e7a56]" : "bg-[#eef1f5] text-[#68707a]"}`;
+    `flex items-center gap-2 rounded-full px-3 py-1.5 text-sm ${step === n ? "bg-[var(--cb-blue)] font-medium text-white" : step > n ? "bg-[#e6f7f1] text-[#0e7a56]" : "bg-[var(--cb-bg)] text-[var(--cb-muted)]"}`;
 
   // Chua chon khach san thi chan trang lai (khung app cung day ve
   // danh sach, day la lop chan thu hai cho trang nay).
@@ -347,8 +435,8 @@ export default function BookingPage() {
     return (
       <div className="mx-auto max-w-3xl">
         <div className="cb-card mt-10 p-6 text-center">
-          <h1 className="text-xl font-bold text-[#17293e]">Chưa chọn khách sạn</h1>
-          <p className="mt-2 text-sm text-[#68707a]">
+          <h1 className="text-xl font-bold text-[var(--cb-text)]">Chưa chọn khách sạn</h1>
+          <p className="mt-2 text-sm text-[var(--cb-muted)]">
             Trang đặt phòng cần biết khách sạn nào đang bán — hãy chọn khách sạn trong danh sách trước.
           </p>
           <Link href="/" className="cb-btn-primary mt-4 inline-block px-4 py-2 text-sm">
@@ -366,8 +454,8 @@ export default function BookingPage() {
         // eslint-disable-next-line @next/next/no-img-element
         <img src={coverPhoto.url} alt={coverPhoto.caption ?? "Ảnh khách sạn"} className="mb-4 h-48 w-full rounded-xl object-cover" />
       )}
-      <h1 className="text-2xl font-bold text-[#17293e]">Đặt phòng trực tuyến</h1>
-      <p className="mt-1 text-sm text-[#68707a]">{hotelName || "Khách sạn"} — đặt trực tiếp trên website, giá tốt nhất vì không qua trung gian.</p>
+      <h1 className="text-2xl font-bold text-[var(--cb-text)]">Đặt phòng trực tuyến</h1>
+      <p className="mt-1 text-sm text-[var(--cb-muted)]">{hotelName || "Khách sạn"} — đặt trực tiếp trên website, giá tốt nhất vì không qua trung gian.</p>
       {dbError && <p className="mt-3 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">Lỗi cơ sở dữ liệu: {dbError}</p>}
 
       {/* progress */}
@@ -382,18 +470,18 @@ export default function BookingPage() {
       {step === 1 && (
         <div className="mt-5">
           <div className="cb-card flex flex-wrap gap-3 p-4">
-            <label className="text-sm text-[#17293e]">Ngày đến<input type="date" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} className={`${inputCls} mt-1 block`} /></label>
-            <label className="text-sm text-[#17293e]">Ngày đi<input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} className={`${inputCls} mt-1 block`} /></label>
-            <label className="text-sm text-[#17293e]">Số khách<input type="number" min={1} value={guests} onChange={(e) => setGuests(Number(e.target.value))} className={`${inputCls} mt-1 block w-24`} /></label>
-            <div className="ml-auto self-end text-sm text-[#68707a]">{nights > 0 ? `${nights} đêm · ${fmtDate(checkIn)} → ${fmtDate(checkOut)}` : "Ngày đi phải sau ngày đến"}</div>
+            <label className="text-sm text-[var(--cb-text)]">Ngày đến<input type="date" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} className={`${inputCls} mt-1 block`} /></label>
+            <label className="text-sm text-[var(--cb-text)]">Ngày đi<input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} className={`${inputCls} mt-1 block`} /></label>
+            <label className="text-sm text-[var(--cb-text)]">Số khách<input type="number" min={1} value={guests} onChange={(e) => setGuests(Number(e.target.value))} className={`${inputCls} mt-1 block w-24`} /></label>
+            <div className="ml-auto self-end text-sm text-[var(--cb-muted)]">{nights > 0 ? `${nights} đêm · ${fmtDate(checkIn)} → ${fmtDate(checkOut)}` : "Ngày đi phải sau ngày đến"}</div>
           </div>
 
           {offers.map(({ type, left, plans }) => (
             <div key={type.id} className="cb-card mt-4 p-5">
               <div className="flex items-start justify-between">
                 <div>
-                  <div className="text-lg font-bold text-[#17293e]">{type.name}</div>
-                  <div className="text-sm text-[#68707a]">{type.bedConfig} · tối đa {type.maxOccupancy} khách</div>
+                  <div className="text-lg font-bold text-[var(--cb-text)]">{type.name}</div>
+                  <div className="text-sm text-[var(--cb-muted)]">{type.bedConfig} · tối đa {type.maxOccupancy} khách</div>
                 </div>
                 <span className={`rounded-full px-3 py-1 text-xs font-medium ${left > 0 ? "bg-[#e6f7f1] text-[#0e7a56]" : "bg-[#fdecec] text-[#e5484d]"}`}>
                   {left > 0 ? `Còn ${left} phòng` : "Hết phòng"}
@@ -409,19 +497,28 @@ export default function BookingPage() {
                   {plans.map((p) => {
                     const pFees = extraFeesPerNight(p, guests, 0);
                     const sum = nightsList.reduce((s, d) => s + priceFor(p, d, plansDb, priceOverrides), 0) + pFees.total * nightsList.length;
+                    const unpriced = nightsList.filter((d) => resolvePlanPrice(p, d, plansDb, priceOverrides) === undefined);
+                    const tooManyGuests = guests > type.maxOccupancy;
+                    const disabled = left <= 0 || nights === 0 || unpriced.length > 0 || tooManyGuests;
                     return (
-                      <div key={p.id} className="flex items-center justify-between rounded-lg border border-[#eef1f5] px-4 py-3">
+                      <div key={p.id} className="flex items-center justify-between rounded-lg border border-[var(--cb-bg)] px-4 py-3">
                         <div>
-                          <div className="font-medium text-[#17293e]">{p.name.replace("WEB - ", "")}</div>
-                          <div className="text-xs text-[#68707a]">{p.cancellationPolicy === "flexible" ? "Huỷ miễn phí trước ngày đến" : "Không hoàn tiền — rẻ hơn"}</div>
+                          <div className="font-medium text-[var(--cb-text)]">{p.name.replace("WEB - ", "")}</div>
+                          <div className="text-xs text-[var(--cb-muted)]">{p.cancellationPolicy === "flexible" ? "Huỷ miễn phí trước ngày đến" : "Không hoàn tiền — rẻ hơn"}</div>
+                          {unpriced.length > 0 && (
+                            <div className="mt-1 text-xs font-medium text-[#e5484d]">Chưa có giá đêm {unpriced.map((d) => fmtDate(d)).join(", ")} — chưa đặt online được.</div>
+                          )}
+                          {tooManyGuests && (
+                            <div className="mt-1 text-xs font-medium text-[#e5484d]">Quá sức chứa — loại phòng này ở tối đa {type.maxOccupancy} khách.</div>
+                          )}
                         </div>
                         <div className="flex items-center gap-3">
                           <div className="text-right">
-                            <div className="font-bold text-[#17293e]">{fmt(sum)}₫</div>
-                            <div className="text-xs text-[#68707a]">{nights} đêm{pFees.total > 0 ? ` · đã gồm phụ thu +${pFees.extraAdults} khách` : ""}</div>
+                            <div className="font-bold text-[var(--cb-text)]">{unpriced.length > 0 ? "—" : `${fmt(sum)}₫`}</div>
+                            <div className="text-xs text-[var(--cb-muted)]">{nights} đêm{pFees.total > 0 ? ` · đã gồm phụ thu +${pFees.extraAdults} khách` : ""}</div>
                           </div>
                           <button
-                            disabled={left === 0 || nights === 0}
+                            disabled={disabled}
                             onClick={() => { setPlanId(p.id); setStep(2); }}
                             className="cb-btn-primary px-4 py-2 text-sm disabled:opacity-40"
                           >
@@ -441,13 +538,13 @@ export default function BookingPage() {
       {/* ============ STEP 2 — guest info ============ */}
       {step === 2 && plan && (
         <div className="cb-card mt-5 p-5">
-          <h2 className="font-bold text-[#17293e]">Thông tin khách</h2>
-          <p className="mt-1 text-sm text-[#68707a]">{planType?.name} · {plan.name.replace("WEB - ", "")} · {fmtDate(checkIn)} → {fmtDate(checkOut)} · {nights} đêm · {guests} khách</p>
+          <h2 className="font-bold text-[var(--cb-text)]">Thông tin khách</h2>
+          <p className="mt-1 text-sm text-[var(--cb-muted)]">{planType?.name} · {plan.name.replace("WEB - ", "")} · {fmtDate(checkIn)} → {fmtDate(checkOut)} · {nights} đêm · {guests} khách</p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <label className="text-sm text-[#17293e]">Họ tên *<input value={guestName} onChange={(e) => setGuestName(e.target.value)} className={`${inputCls} mt-1 w-full`} placeholder="VD: Nguyễn Văn A" /></label>
-            <label className="text-sm text-[#17293e]">Số điện thoại *<input value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} className={`${inputCls} mt-1 w-full`} /></label>
-            <label className="text-sm text-[#17293e] sm:col-span-2">Email (nhận xác nhận)<input value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} className={`${inputCls} mt-1 w-full`} /></label>
-            <label className="text-sm text-[#17293e] sm:col-span-2">Yêu cầu đặc biệt<input value={note} onChange={(e) => setNote(e.target.value)} className={`${inputCls} mt-1 w-full`} placeholder="Tầng cao, phòng yên tĩnh..." /></label>
+            <label className="text-sm text-[var(--cb-text)]">Họ tên *<input value={guestName} onChange={(e) => setGuestName(e.target.value)} className={`${inputCls} mt-1 w-full`} placeholder="VD: Nguyễn Văn A" /></label>
+            <label className="text-sm text-[var(--cb-text)]">Số điện thoại *<input value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} className={`${inputCls} mt-1 w-full`} /></label>
+            <label className="text-sm text-[var(--cb-text)] sm:col-span-2">Email<input value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} className={`${inputCls} mt-1 w-full`} /></label>
+            <label className="text-sm text-[var(--cb-text)] sm:col-span-2">Yêu cầu đặc biệt<input value={note} onChange={(e) => setNote(e.target.value)} className={`${inputCls} mt-1 w-full`} placeholder="Tầng cao, phòng yên tĩnh..." /></label>
           </div>
           {error && <p className="mt-3 text-sm text-[#e5484d]">{error}</p>}
           <div className="mt-5 flex gap-2">
@@ -463,24 +560,11 @@ export default function BookingPage() {
       {step === 3 && plan && (
         <div className="mt-5 grid gap-4 md:grid-cols-[1fr_320px]">
           <div className="cb-card p-5">
-            <h2 className="font-bold text-[#17293e]">Thanh toán</h2>
-            <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-[#eef1f5] p-3">
-              <input type="radio" checked={payMethod === "hotel"} onChange={() => setPayMethod("hotel")} className="mt-1 accent-[#2563eb]" />
-              <span className="text-sm text-[#17293e]"><b>Trả tại khách sạn</b><br /><span className="text-[#68707a]">Thanh toán khi nhận phòng. Đơn được giữ đến 18:00 ngày đến.</span></span>
-            </label>
-            <label className="mt-2 flex cursor-pointer items-start gap-3 rounded-lg border border-[#eef1f5] p-3">
-              <input type="radio" checked={payMethod === "card"} onChange={() => setPayMethod("card")} className="mt-1 accent-[#2563eb]" />
-              <span className="text-sm text-[#17293e]"><b>Trả ngay bằng thẻ</b><br /><span className="text-[#68707a]">Cổng thanh toán thật (VNPay/MoMo/Stripe) sẽ nối ở Vòng B — ở đây chỉ là giao diện.</span></span>
-            </label>
-            {payMethod === "card" && (
-              <div className="mt-3 grid gap-3">
-                <input placeholder="Số thẻ  •••• •••• •••• ••••" className={`${inputCls} text-sm`} />
-                <div className="grid grid-cols-2 gap-3">
-                  <input placeholder="Hết hạn MM/YY" className={`${inputCls} text-sm`} />
-                  <input placeholder="CVC" className={`${inputCls} text-sm`} />
-                </div>
-              </div>
-            )}
+            <h2 className="font-bold text-[var(--cb-text)]">Thanh toán</h2>
+            <div className="mt-3 flex items-start gap-3 rounded-lg border border-[var(--cb-bg)] p-3">
+              <span className="text-sm text-[var(--cb-text)]"><b>Trả tại khách sạn</b><br /><span className="text-[var(--cb-muted)]">Thanh toán khi nhận phòng (tiền mặt hoặc thẻ).</span></span>
+            </div>
+            <p className="mt-3 text-xs text-[var(--cb-muted)]">Thanh toán online bằng thẻ sẽ mở sau — hiện tại bạn chưa cần trả gì khi đặt phòng.</p>
             {error && <p className="mt-3 text-sm text-[#e5484d]">{error}</p>}
             <div className="mt-5 flex gap-2">
               <button onClick={() => setStep(2)} className="cb-btn-ghost px-4 py-2.5 text-sm">← Quay lại</button>
@@ -489,21 +573,21 @@ export default function BookingPage() {
           </div>
 
           <div className="cb-card h-fit p-5">
-            <h3 className="font-bold text-[#17293e]">Tóm tắt</h3>
-            <div className="mt-2 space-y-1 text-sm text-[#68707a]">
+            <h3 className="font-bold text-[var(--cb-text)]">Tóm tắt</h3>
+            <div className="mt-2 space-y-1 text-sm text-[var(--cb-muted)]">
               <div>{planType?.name} — {plan.name.replace("WEB - ", "")}</div>
               <div>{fmtDate(checkIn)} → {fmtDate(checkOut)} · {guests} khách</div>
               <div>Khách: {guestName}</div>
             </div>
-            <div className="mt-3 space-y-1 border-t border-[#eef1f5] pt-3 text-sm text-[#17293e]">
+            <div className="mt-3 space-y-1 border-t border-[var(--cb-bg)] pt-3 text-sm text-[var(--cb-text)]">
               {perNight.map((n) => (
                 <div key={n.date} className="flex justify-between"><span>{fmtDate(n.date)}</span><span>{fmt(n.price)}₫</span></div>
               ))}
               {feesTotal > 0 && (
                 <div className="flex justify-between"><span>Phụ thu thêm {fees.extraAdults} khách × {nights} đêm</span><span>{fmt(feesTotal)}₫</span></div>
               )}
-              <div className="flex justify-between border-t border-[#eef1f5] pt-2 text-base font-bold"><span>Tổng</span><span>{fmt(grandTotal)}₫</span></div>
-              <div className="text-xs text-[#68707a]">{payMethod === "hotel" ? "Trả tại khách sạn" : "Trả ngay bằng thẻ"} · {plan.cancellationPolicy === "flexible" ? "Huỷ miễn phí trước ngày đến" : "Không hoàn tiền"}</div>
+              <div className="flex justify-between border-t border-[var(--cb-bg)] pt-2 text-base font-bold"><span>Tổng</span><span>{fmt(grandTotal)}₫</span></div>
+              <div className="text-xs text-[var(--cb-muted)]">Trả tại khách sạn · {plan.cancellationPolicy === "flexible" ? "Huỷ miễn phí trước ngày đến" : "Không hoàn tiền"}</div>
             </div>
           </div>
         </div>
@@ -513,19 +597,19 @@ export default function BookingPage() {
       {step === 4 && plan && (
         <div className="mt-5 rounded-xl border border-[#bfe9d9] bg-[#eafaf3] p-6 text-center">
           <div className="text-4xl">✅</div>
-          <h2 className="mt-2 text-xl font-bold text-[#17293e]">Đặt phòng thành công!</h2>
-          <p className="mt-1 text-sm text-[#68707a]">Mã đặt phòng của bạn</p>
-          <div className="mt-1 text-2xl font-bold tracking-widest text-[#17293e]">{code}</div>
-          <div className="mx-auto mt-4 max-w-md space-y-1 rounded-xl border border-[#dde3ea] bg-white p-4 text-left text-sm">
-            <div className="flex justify-between"><span className="text-[#68707a]">Khách</span><b className="text-[#17293e]">{guestName}</b></div>
-            <div className="flex justify-between"><span className="text-[#68707a]">Phòng</span><b className="text-[#17293e]">{planType?.name} — {plan.name.replace("WEB - ", "")}</b></div>
-            <div className="flex justify-between"><span className="text-[#68707a]">Thời gian</span><b className="text-[#17293e]">{fmtDate(checkIn)} → {fmtDate(checkOut)} ({nights} đêm)</b></div>
-            <div className="flex justify-between"><span className="text-[#68707a]">Tổng tiền</span><b className="text-[#17293e]">{fmt(grandTotal)}₫</b></div>
-            <div className="flex justify-between"><span className="text-[#68707a]">Thanh toán</span><b className="text-[#17293e]">{payMethod === "hotel" ? "Tại khách sạn" : "Đã trả bằng thẻ (mô phỏng)"}</b></div>
+          <h2 className="mt-2 text-xl font-bold text-[var(--cb-text)]">Đặt phòng thành công!</h2>
+          <p className="mt-1 text-sm text-[var(--cb-muted)]">Mã đặt phòng của bạn</p>
+          <div className="mt-1 text-2xl font-bold tracking-widest text-[var(--cb-text)]">{code}</div>
+          <div className="mx-auto mt-4 max-w-md space-y-1 rounded-xl border border-[var(--cb-border)] bg-white p-4 text-left text-sm">
+            <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Khách</span><b className="text-[var(--cb-text)]">{guestName}</b></div>
+            <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Phòng</span><b className="text-[var(--cb-text)]">{planType?.name} — {plan.name.replace("WEB - ", "")}</b></div>
+            <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Thời gian</span><b className="text-[var(--cb-text)]">{fmtDate(checkIn)} → {fmtDate(checkOut)} ({nights} đêm)</b></div>
+            <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Tổng tiền</span><b className="text-[var(--cb-text)]">{fmt(grandTotal)}₫</b></div>
+            <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Thanh toán</span><b className="text-[var(--cb-text)]">Tại khách sạn (chưa thu tiền)</b></div>
           </div>
-          <p className="mx-auto mt-4 max-w-md text-xs text-[#68707a]">
-            Ở hệ thống thật, đơn này lập tức xuất hiện trong PMS với nguồn <b className="text-[#17293e]">Website (Booking Engine)</b>, quỹ phòng chung trừ đi 1 phòng — các OTA cũng thấy ít đi 1 phòng ngay, nên không bao giờ bán trùng.
-            {guestEmail && <> Email xác nhận sẽ gửi tới {guestEmail}.</>}
+          <p className="mx-auto mt-4 max-w-md text-xs text-[var(--cb-muted)]">
+            Đơn này đã xuất hiện trong hệ thống của khách sạn với nguồn <b className="text-[var(--cb-text)]">Website (Booking Engine)</b>, quỹ phòng chung trừ đi 1 phòng — các kênh khác cũng thấy ít đi 1 phòng ngay, nên không bao giờ bán trùng.
+            Khách sạn sẽ liên hệ xác nhận qua số điện thoại bạn đã nhập.
           </p>
           <button onClick={() => { setStep(1); setPlanId(""); setGuestName(""); setGuestPhone(""); setGuestEmail(""); setNote(""); }} className="cb-btn-ghost mt-4 px-4 py-2 text-sm">
             Đặt thêm phòng khác

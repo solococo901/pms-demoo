@@ -62,6 +62,8 @@ import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
 import { useParams } from "next/navigation";
 import { queueChannexDates, rangeDates } from "@/lib/channex-outbox";
+import { DatePicker, DateRangePicker } from "@/components/DatePicker";
+import { IconZap } from "@/components/icons";
 
 // Round B (Buoc 4.3): rate plans + daily prices/restrictions are
 // loaded from Supabase and every edit is saved back to the
@@ -87,7 +89,7 @@ type Restriction = { stopSell?: boolean; minStay?: number; maxStay?: number; cta
 type CellKey = string; // `${planId}|${date}`
 const keyOf = (planId: string, date: string): CellKey => `${planId}|${date}`;
 
-const inputCls = "rounded-lg border border-[#dde3ea] px-2 py-2 text-[#17293e] outline-none focus:border-[#2563eb]";
+const inputCls = "rounded-lg border border-[var(--cb-border)] px-2 py-2 text-[var(--cb-text)] outline-none focus:border-[var(--cb-blue)]";
 const WEEKEND_DAYS: number[] = getHotelData("cityhouse-mark").config?.weekendDays ?? [0, 6];
 
 export default function RatesCalendar() {
@@ -521,14 +523,14 @@ export default function RatesCalendar() {
   function DateHeader() {
     return (
       <div className="contents">
-        <div className="sticky left-0 z-10 border-b border-[#eef1f5] bg-[#f7f9fb] px-3 py-2 text-xs font-semibold text-[#68707a]">Ngày →</div>
+        <div className="sticky left-0 z-10 border-b border-[var(--cb-bg)] bg-[var(--cb-blue-soft)] px-3 py-2 text-xs font-semibold text-[var(--cb-muted)]">Ngày →</div>
         {days.map((d) => {
           const p = dayParts(d);
           const weekend = WEEKEND_DAYS.includes(p.dow);
           return (
-            <div key={d} className={`border-b border-l border-[#eef1f5] px-2 py-2 text-center text-xs font-semibold ${weekend ? "bg-[#fdf0f0] text-[#e5484d]" : "bg-[#f7f9fb] text-[#68707a]"}`}>
+            <div key={d} className={`border-b border-l border-[var(--cb-bg)] px-2 py-2 text-center text-xs font-semibold ${weekend ? "bg-[#fdf0f0] text-[#e5484d]" : "bg-[var(--cb-blue-soft)] text-[var(--cb-muted)]"}`}>
               {p.wd} · {p.label}
-              {d === todayStr && <div className="text-[10px] font-bold text-[#2563eb]">HÔM NAY</div>}
+              {d === todayStr && <div className="text-[10px] font-bold text-[var(--cb-blue)]">HÔM NAY</div>}
             </div>
           );
         })}
@@ -546,13 +548,13 @@ export default function RatesCalendar() {
     return (
       <div className="contents">
         {/* price row */}
-        <div className="sticky left-0 z-10 border-b border-[#eef1f5] bg-white px-3 py-2">
-          <div className="flex items-center gap-1.5 text-sm font-medium text-[#17293e]">
+        <div className="sticky left-0 z-10 border-b border-[var(--cb-bg)] bg-white px-3 py-2">
+          <div className="flex items-center gap-1.5 text-sm font-medium text-[var(--cb-text)]">
             {ch?.name ?? channelCode}
             {dirtyChannels.has(channelCode) && <span className="text-[#f59e0b]" title="Có thay đổi chưa đẩy lên Channex">●</span>}
           </div>
           {!plan && (
-            <div className="mt-0.5 text-[11px] text-[#68707a]">Chưa có giá — bấm vào ô để nhập giá đầu tiên</div>
+            <div className="mt-0.5 text-[11px] text-[var(--cb-muted)]">Chưa có giá — bấm vào ô để nhập giá đầu tiên</div>
           )}
         </div>
         {days.map((date) => {
@@ -571,10 +573,10 @@ export default function RatesCalendar() {
             <div
               key={date}
               onClick={() => void pickCell(channelCode, typeId, date)}
-              className={`cursor-pointer border-b border-l border-[#eef1f5] px-2 py-2 text-center ${r?.stopSell || ib ? "bg-red-50" : ""} ${isSelected ? "outline outline-2 -outline-offset-2 outline-[#2563eb]" : ""}`}
+              className={`cursor-pointer border-b border-l border-[var(--cb-bg)] px-2 py-2 text-center ${r?.stopSell || ib ? "bg-red-50" : ""} ${isSelected ? "outline outline-2 -outline-offset-2 outline-[var(--cb-blue)]" : ""}`}
             >
               {ib ? (
-                <div className="text-xs font-semibold text-[#68707a]">
+                <div className="text-xs font-semibold text-[var(--cb-muted)]">
                   ĐÓNG BÁN
                   <div className="text-[10px] font-medium">{ib.scope === "channel" ? "(đóng theo kênh)" : "(đóng cả loại phòng)"}</div>
                 </div>
@@ -582,7 +584,7 @@ export default function RatesCalendar() {
                 <div className="text-xs font-semibold text-[#e5484d]">ĐÓNG BÁN</div>
               ) : (
                 <div
-                  className={`text-sm font-semibold ${cheaperThanWebsite ? "text-[#e5484d]" : "text-[#17293e]"}`}
+                  className={`text-sm font-semibold ${cheaperThanWebsite ? "text-[#e5484d]" : "text-[var(--cb-text)]"}`}
                   title={cheaperThanWebsite ? "Giá kênh này đang thấp hơn giá Website cùng ngày — ngược chiến lược kéo khách đặt trực tiếp, cần kiểm tra lại." : undefined}
                 >
                   {price !== undefined ? fmt(price) : "—"}
@@ -594,13 +596,13 @@ export default function RatesCalendar() {
 
         {/* stop-sell toggle row — luon hien */}
         <>
-          <div className="sticky left-0 z-10 border-b border-[#eef1f5] bg-white px-3 py-1.5 pl-9 text-xs text-[#68707a]">Ngừng bán</div>
+          <div className="sticky left-0 z-10 border-b border-[var(--cb-bg)] bg-white px-3 py-1.5 pl-9 text-xs text-[var(--cb-muted)]">Ngừng bán</div>
           {days.map((date) => {
             const stopped = !!plan && !!restrictions[keyOf(plan.id, date)]?.stopSell;
             const ib = inventoryBlockOn(invBlocks, channelCode, typeId, date);
             if (ib) {
               return (
-                <div key={date} className="border-b border-l border-[#eef1f5] bg-[#f0f3f7] px-2 py-1.5 text-center text-xs font-medium text-[#68707a]" title="Đang bị đóng bán ở cấp kênh/loại phòng — cấp trên thắng, sửa ở panel Đóng bán">
+                <div key={date} className="border-b border-l border-[var(--cb-bg)] bg-[var(--cb-blue-soft)] px-2 py-1.5 text-center text-xs font-medium text-[var(--cb-muted)]" title="Đang bị đóng bán ở cấp kênh/loại phòng — cấp trên thắng, sửa ở panel Đóng bán">
                   bị khoá ↑
                 </div>
               );
@@ -609,7 +611,7 @@ export default function RatesCalendar() {
               <button
                 key={date}
                 onClick={() => void toggleStopSell(channelCode, typeId, date)}
-                className={`border-b border-l border-[#eef1f5] px-2 py-1.5 text-center text-xs font-semibold ${stopped ? "bg-red-50 text-[#e5484d]" : "text-[#1db584]"}`}
+                className={`border-b border-l border-[var(--cb-bg)] px-2 py-1.5 text-center text-xs font-semibold ${stopped ? "bg-red-50 text-[#e5484d]" : "text-[#1db584]"}`}
                 title={stopped ? "Đang ngừng bán — bấm để mở bán" : "Đang bán — bấm để ngừng bán ngày này"}
               >
                 {stopped ? "✕ ngừng" : "✓ bán"}
@@ -639,12 +641,12 @@ export default function RatesCalendar() {
           <button
             key={mode}
             onClick={() => setTab(mode)}
-            className={`rounded-full px-4 py-2 text-sm font-medium ${tab === mode ? "bg-[#2563eb] text-white" : "border border-[#dde3ea] bg-white text-[#17293e] hover:bg-[#f4f7fb]"}`}
+            className={`rounded-full px-4 py-2 text-sm font-medium ${tab === mode ? "bg-[var(--cb-blue)] text-white" : "border border-[var(--cb-border)] bg-white text-[var(--cb-text)] hover:bg-[var(--cb-blue-soft)]"}`}
           >
             {label}
           </button>
         ))}
-        <span className="ml-2 text-xs text-[#68707a]">
+        <span className="ml-2 text-xs text-[var(--cb-muted)]">
           {tab === "inventory"
             ? "Số phòng trống chung cho mọi kênh — tồn không chia theo kênh."
             : "Giá bán theo từng kênh. Bấm vào ô giá để sửa giá ngày đó. PMS chỉ đưa giá và tồn cho kênh, còn lại kênh tự lo."}
@@ -654,7 +656,7 @@ export default function RatesCalendar() {
       {/* ===== TAB 1: TON PHONG — luoi phong trong ===== */}
       {tab === "inventory" && (
         <>
-          <div className="mt-3 flex flex-wrap items-end gap-3 text-sm text-[#17293e]">
+          <div className="mt-3 flex flex-wrap items-end gap-3 text-sm text-[var(--cb-text)]">
             <label>
               Kênh bán
               <select value={invChannel} onChange={(e) => setInvChannel(e.target.value)} className={`${inputCls} ml-2`}>
@@ -666,22 +668,22 @@ export default function RatesCalendar() {
             </label>
             <span className="ml-auto flex items-center gap-2">
               <button onClick={() => setStartDate(addDays(startDate, -WINDOW))} className="cb-btn-ghost px-3 py-2" title="Lùi 14 ngày">‹</button>
-              <input type="date" value={startDate} onChange={(e) => e.target.value && setStartDate(e.target.value)} className={inputCls} />
+              <DatePicker value={startDate} onChange={(v) => v && setStartDate(v)} />
               <button onClick={() => setStartDate(addDays(startDate, WINDOW))} className="cb-btn-ghost px-3 py-2" title="Tiến 14 ngày">›</button>
             </span>
           </div>
-          <div className="mt-4 overflow-x-auto rounded-xl border border-[#dde3ea] bg-white shadow-[0_1px_3px_rgba(23,41,62,0.06)]">
+          <div className="mt-4 overflow-x-auto rounded-xl border border-[var(--cb-border)] bg-white shadow-[0_1px_3px_rgba(16,28,66,0.06)]">
             <div className="grid min-w-[1500px]" style={gridCols}>
               <DateHeader />
               {roomTypesDb.map((t) => {
                 const left = roomsLeftByType[t.id] ?? [];
                 return (
                   <div key={t.id} className="contents">
-                    <div className="sticky left-0 z-10 border-b border-[#eef1f5] bg-white px-3 py-2">
-                      <div className="text-sm font-bold text-[#17293e]">
-                        {t.name} {t.code ? <span className="text-xs font-medium text-[#68707a]">(Mã: {t.code})</span> : null}
+                    <div className="sticky left-0 z-10 border-b border-[var(--cb-bg)] bg-white px-3 py-2">
+                      <div className="text-sm font-bold text-[var(--cb-text)]">
+                        {t.name} {t.code ? <span className="text-xs font-medium text-[var(--cb-muted)]">(Mã: {t.code})</span> : null}
                       </div>
-                      <div className="text-xs text-[#68707a]">Phòng trống</div>
+                      <div className="text-xs text-[var(--cb-muted)]">Phòng trống</div>
                     </div>
                     {days.map((date, i) => {
                       const n = left[i] ?? 0;
@@ -689,28 +691,28 @@ export default function RatesCalendar() {
                         const typePlans = plans.filter((p) => p.channelCode === invChannel && p.roomTypeId === t.id);
                         if (typePlans.length === 0) {
                           return (
-                            <div key={date} className="border-b border-l border-[#eef1f5] bg-[#f0f3f7] px-2 py-2 text-center text-xs text-[#9aa7b4]" title="Kênh này chưa có gói cho loại phòng này">
+                            <div key={date} className="border-b border-l border-[var(--cb-bg)] bg-[var(--cb-blue-soft)] px-2 py-2 text-center text-xs text-[var(--cb-muted)]" title="Kênh này chưa có gói cho loại phòng này">
                               —
                             </div>
                           );
                         }
                         if (inventoryBlockOn(invBlocks, invChannel, t.id, date)) {
                           return (
-                            <div key={date} className="border-b border-l border-[#eef1f5] bg-[#f0f3f7] px-2 py-2 text-center text-xs font-semibold text-[#68707a]" title="Đang bị đóng bán cấp kênh hoặc cấp loại phòng">
+                            <div key={date} className="border-b border-l border-[var(--cb-bg)] bg-[var(--cb-blue-soft)] px-2 py-2 text-center text-xs font-semibold text-[var(--cb-muted)]" title="Đang bị đóng bán cấp kênh hoặc cấp loại phòng">
                               Đóng
                             </div>
                           );
                         }
                         if (typePlans.every((p) => restrictions[keyOf(p.id, date)]?.stopSell)) {
                           return (
-                            <div key={date} className="border-b border-l border-[#eef1f5] bg-[#f0f3f7] px-2 py-2 text-center text-xs font-semibold text-[#68707a]" title="Mọi gói của kênh này đều đang ngừng bán ngày này">
+                            <div key={date} className="border-b border-l border-[var(--cb-bg)] bg-[var(--cb-blue-soft)] px-2 py-2 text-center text-xs font-semibold text-[var(--cb-muted)]" title="Mọi gói của kênh này đều đang ngừng bán ngày này">
                               Đóng
                             </div>
                           );
                         }
                       }
                       return (
-                        <div key={date} className={`border-b border-l border-[#eef1f5] px-2 py-2 text-center text-sm font-bold ${n <= 0 ? "bg-[#fde9c8] text-[#e5484d]" : n === 1 ? "text-[#e5484d]" : "text-[#17293e]"}`}>
+                        <div key={date} className={`border-b border-l border-[var(--cb-bg)] px-2 py-2 text-center text-sm font-bold ${n <= 0 ? "bg-[#fde9c8] text-[#e5484d]" : n === 1 ? "text-[#e5484d]" : "text-[var(--cb-text)]"}`}>
                           {n}
                         </div>
                       );
@@ -720,7 +722,7 @@ export default function RatesCalendar() {
               })}
             </div>
           </div>
-          <p className="mt-2 text-xs text-[#68707a]">
+          <p className="mt-2 text-xs text-[var(--cb-muted)]">
             Chú thích: ô vàng = hết phòng (0 phòng trống). Quỹ phòng là chung cho mọi kênh nên chọn 1 kênh không làm số tồn thay đổi — nó chỉ cho thấy kênh đó có bán được ngày đó không: ô “Đóng” = bị đóng cấp kênh/loại hoặc mọi gói của kênh đều ngừng bán; ô “—” = kênh chưa có gói cho loại phòng này. Muốn chặn phòng hỏng hay đóng bán thì sang trang “Chặn phòng &amp; Đóng bán”:
           </p>
           <div className="mt-3">
@@ -735,7 +737,7 @@ export default function RatesCalendar() {
       {tab === "prices" && (
       <>
       {/* thanh cong cu: loc kenh + loc loai phong + ngay + dong ban + cap nhat hang loat */}
-      <div className="mt-3 flex flex-wrap items-end gap-3 text-sm text-[#17293e]">
+      <div className="mt-3 flex flex-wrap items-end gap-3 text-sm text-[var(--cb-text)]">
         <label>
           Kênh bán
           <select value={priceChannel} onChange={(e) => setPriceChannel(e.target.value)} className={`${inputCls} ml-2`}>
@@ -759,7 +761,7 @@ export default function RatesCalendar() {
         </label>
         <span className="ml-auto flex items-center gap-2">
           <button onClick={() => setStartDate(addDays(startDate, -WINDOW))} className="cb-btn-ghost px-3 py-2" title="Lùi 14 ngày">‹</button>
-          <input type="date" value={startDate} onChange={(e) => e.target.value && setStartDate(e.target.value)} className={inputCls} />
+          <DatePicker value={startDate} onChange={(v) => v && setStartDate(v)} />
           <button onClick={() => setStartDate(addDays(startDate, WINDOW))} className="cb-btn-ghost px-3 py-2" title="Tiến 14 ngày">›</button>
         </span>
         <button
@@ -784,15 +786,15 @@ export default function RatesCalendar() {
             setBulkTo(addDays(startDate, 13));
             setShowBulk((v) => !v);
           }}
-          className="cb-btn-primary px-3 py-2 text-sm"
+          className="cb-btn-primary inline-flex items-center gap-1.5 px-3 py-2 text-sm"
         >
-          ⚡ Cập nhật hàng loạt
+          <IconZap className="h-4 w-4" /> Cập nhật hàng loạt
         </button>
       </div>
 
       {/* sync status bar */}
       {priceChannel !== "all" && focusChannelObj && (
-        <div className="cb-card mt-4 flex items-center gap-3 px-4 py-3 text-sm text-[#17293e]">
+        <div className="cb-card mt-4 flex items-center gap-3 px-4 py-3 text-sm text-[var(--cb-text)]">
           {focusChannelObj.type === "ota" ? (
             dirtyChannels.has(priceChannel) ? (
               <>
@@ -805,18 +807,18 @@ export default function RatesCalendar() {
               <><span className="text-[#1db584]">●</span> Channex: đã đồng bộ</>
             )
           ) : (
-            <><span className="text-[#9aa7b4]">●</span> Kênh này bán trực tiếp trong PMS, không qua Channex</>
+            <><span className="text-[var(--cb-muted)]">●</span> Kênh này bán trực tiếp trong PMS, không qua Channex</>
           )}
         </div>
       )}
 
       {/* grid */}
-      <div className="mt-4 overflow-x-auto rounded-xl border border-[#dde3ea] bg-white shadow-[0_1px_3px_rgba(23,41,62,0.06)]">
+      <div className="mt-4 overflow-x-auto rounded-xl border border-[var(--cb-border)] bg-white shadow-[0_1px_3px_rgba(16,28,66,0.06)]">
         <div className="grid min-w-[1500px]" style={gridCols}>
           <DateHeader />
           {visibleTypes.map((t) => (
             <div key={t.id} className="contents">
-              <div className="sticky left-0 z-10 border-b border-[#eef1f5] bg-[#f7f9fb] px-3 py-2 text-sm font-bold text-[#17293e]">
+              <div className="sticky left-0 z-10 border-b border-[var(--cb-bg)] bg-[var(--cb-blue-soft)] px-3 py-2 text-sm font-bold text-[var(--cb-text)]">
                 <button
                   onClick={() =>
                     setCollapsedTypes((prev) => {
@@ -826,15 +828,15 @@ export default function RatesCalendar() {
                       return next;
                     })
                   }
-                  className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded border border-[#dde3ea] bg-white text-xs font-bold text-[#68707a]"
+                  className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded border border-[var(--cb-border)] bg-white text-xs font-bold text-[var(--cb-muted)]"
                   title={collapsedTypes.has(t.id) ? "Mở ra xem giá" : "Thu gọn loại phòng này"}
                 >
                   {collapsedTypes.has(t.id) ? "+" : "-"}
                 </button>
-                {t.name} {t.code ? <span className="text-xs font-medium text-[#68707a]">(Mã: {t.code})</span> : null}
+                {t.name} {t.code ? <span className="text-xs font-medium text-[var(--cb-muted)]">(Mã: {t.code})</span> : null}
               </div>
               {days.map((d) => (
-                <div key={d} className="border-b border-l border-[#eef1f5] bg-[#f7f9fb]" />
+                <div key={d} className="border-b border-l border-[var(--cb-bg)] bg-[var(--cb-blue-soft)]" />
               ))}
               {!collapsedTypes.has(t.id) &&
                 visibleChannels.map((c) => (
@@ -845,21 +847,21 @@ export default function RatesCalendar() {
         </div>
       </div>
 
-      <p className="mt-2 text-xs text-[#68707a]">
+      <p className="mt-2 text-xs text-[var(--cb-muted)]">
         Bấm ô giá để sửa. Giá trống hiện dấu —. Tồn phòng xem ở tab Tồn phòng. Đóng bán theo kênh hoặc cả loại phòng dùng nút Đóng bán.
       </p>
 
       {/* inventory blocks panel (stop-sell cap kenh & cap loai phong) */}
       {showInvPanel && (
         <div className="cb-card mt-4 p-4">
-          <div className="text-sm font-semibold text-[#17293e]">Đóng bán cấp kênh & cấp loại phòng</div>
-          <p className="mt-1 text-xs text-[#68707a]">
+          <div className="text-sm font-semibold text-[var(--cb-text)]">Đóng bán cấp kênh & cấp loại phòng</div>
+          <p className="mt-1 text-xs text-[var(--cb-muted)]">
             Đóng bán theo kênh chỉ ảnh hưởng kênh đó; đóng cả loại phòng ảnh hưởng mọi kênh. Khi bị đóng ở đây, lưới giá hiện “ĐÓNG BÁN” và dòng Ngừng bán hiện “bị khoá”.
           </p>
           {invBlocks.length > 0 && (
-            <table className="mt-3 w-full text-sm text-[#17293e]">
+            <table className="mt-3 w-full text-sm text-[var(--cb-text)]">
               <thead>
-                <tr className="text-left text-xs text-[#68707a]">
+                <tr className="text-left text-xs text-[var(--cb-muted)]">
                   <th className="py-1 pr-3">Cấp đóng</th>
                   <th className="py-1 pr-3">Loại phòng</th>
                   <th className="py-1 pr-3">Khoảng ngày</th>
@@ -869,7 +871,7 @@ export default function RatesCalendar() {
               </thead>
               <tbody>
                 {invBlocks.map((b) => (
-                  <tr key={b.id} className="border-t border-[#eef1f5]">
+                  <tr key={b.id} className="border-t border-[var(--cb-bg)]">
                     <td className="py-2 pr-3 font-medium">{b.scope === "channel" ? `Kênh ${CHANNELS.find((c) => c.code === b.channelCode)?.name ?? b.channelCode}` : "Cả loại phòng (mọi kênh)"}</td>
                     <td className="py-2 pr-3">{roomTypesDb.find((t) => t.id === b.roomTypeId)?.name ?? b.roomTypeId}</td>
                     <td className="py-2 pr-3">{b.from} → {b.to}</td>
@@ -882,7 +884,7 @@ export default function RatesCalendar() {
               </tbody>
             </table>
           )}
-          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#eef1f5] pt-3 text-sm text-[#17293e]">
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--cb-bg)] pt-3 text-sm text-[var(--cb-text)]">
             <select value={ibScope} onChange={(e) => setIbScope(e.target.value as typeof ibScope)} className={inputCls}>
               <option value="channel">Đóng theo kênh</option>
               <option value="room_type">Đóng cả loại phòng</option>
@@ -899,10 +901,7 @@ export default function RatesCalendar() {
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
-            <span>từ</span>
-            <input type="date" value={ibFrom} onChange={(e) => setIbFrom(e.target.value)} className={inputCls} />
-            <span>đến</span>
-            <input type="date" value={ibTo} onChange={(e) => setIbTo(e.target.value)} className={inputCls} />
+            <DateRangePicker from={ibFrom} to={ibTo} onChange={(f, t) => { setIbFrom(f); setIbTo(t); }} />
             <input value={ibReason} onChange={(e) => setIbReason(e.target.value)} className={`${inputCls} w-52`} placeholder="Lý do (không bắt buộc)" />
             <button onClick={addInvBlock} className="cb-btn-primary px-4 py-2 text-sm">Thêm đóng bán</button>
           </div>
@@ -912,8 +911,8 @@ export default function RatesCalendar() {
       {/* bulk update panel */}
       {showBulk && (
         <div className="cb-card mt-4 p-4">
-          <div className="text-sm font-semibold text-[#17293e]">⚡ Cập nhật hàng loạt — đặt giá theo khoảng ngày + thứ trong tuần</div>
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-[#17293e]">
+          <div className="flex items-center gap-1.5 text-sm font-semibold text-[var(--cb-text)]"><IconZap className="h-4 w-4" /> Cập nhật hàng loạt — đặt giá theo khoảng ngày + thứ trong tuần</div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-[var(--cb-text)]">
             <select value={bulkChannel} onChange={(e) => setBulkChannel(e.target.value)} className={inputCls}>
               {CHANNELS.map((c) => (
                 <option key={c.code} value={c.code}>{c.name}</option>
@@ -924,10 +923,7 @@ export default function RatesCalendar() {
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
-            <span>từ</span>
-            <input type="date" value={bulkFrom} onChange={(e) => setBulkFrom(e.target.value)} className={inputCls} />
-            <span>đến</span>
-            <input type="date" value={bulkTo} onChange={(e) => setBulkTo(e.target.value)} className={inputCls} />
+            <DateRangePicker from={bulkFrom} to={bulkTo} onChange={(f, t) => { setBulkFrom(f); setBulkTo(t); }} />
             <select value={bulkMode} onChange={(e) => setBulkMode(e.target.value as typeof bulkMode)} className={inputCls}>
               <option value="percent">thay đổi %</option>
               <option value="amount">cộng/trừ tiền</option>
@@ -936,8 +932,8 @@ export default function RatesCalendar() {
             <input type="number" value={bulkValue} onChange={(e) => setBulkValue(Number(e.target.value))} className={`${inputCls} w-28`} />
             <button onClick={() => void applyBulk()} className="cb-btn-primary px-4 py-2 text-sm">Áp dụng cho {bulkDates.length} ngày</button>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-[#17293e]">
-            <span className="text-[#68707a]">Chỉ áp dụng vào:</span>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-[var(--cb-text)]">
+            <span className="text-[var(--cb-muted)]">Chỉ áp dụng vào:</span>
             {WEEKDAYS.map((label, dow) => (
               <label key={dow} className="flex items-center gap-1">
                 <input
@@ -948,7 +944,7 @@ export default function RatesCalendar() {
                 {label}
               </label>
             ))}
-            <span className="text-xs text-[#68707a]">(VD: chỉ tích T7 + CN để tăng giá cuối tuần cả mùa)</span>
+            <span className="text-xs text-[var(--cb-muted)]">(VD: chỉ tích T7 + CN để tăng giá cuối tuần cả mùa)</span>
           </div>
         </div>
       )}
@@ -958,12 +954,12 @@ export default function RatesCalendar() {
         <div className="cb-card mt-4 p-4">
           <div className="flex flex-wrap items-end gap-4">
             <div>
-              <div className="text-xs text-[#68707a]">Đang sửa ô giá</div>
-              <div className="text-sm font-semibold text-[#17293e]">
+              <div className="text-xs text-[var(--cb-muted)]">Đang sửa ô giá</div>
+              <div className="text-sm font-semibold text-[var(--cb-text)]">
                 {CHANNELS.find((c) => c.code === selectedPlan.channelCode)?.name ?? selectedPlan.channelCode} · {roomTypesDb.find((t) => t.id === selectedPlan.roomTypeId)?.name ?? selectedPlan.roomTypeId} · {dayParts(selected.date).wd} {selected.date}
               </div>
             </div>
-            <label className="text-sm text-[#17293e]">
+            <label className="text-sm text-[var(--cb-text)]">
               Giá ({currency === "USD" ? "USD" : "VNĐ"})
               <input
                 type="number"
@@ -980,7 +976,7 @@ export default function RatesCalendar() {
             {selectedPlan.prices[selected.date] !== undefined && (
               <button
                 onClick={() => clearPrice(selected.planId, selected.date)}
-                className="rounded-lg border border-[#dde3ea] bg-white px-4 py-2 text-sm font-semibold text-[#e5484d] hover:bg-[#f4f7fb]"
+                className="rounded-lg border border-[var(--cb-border)] bg-white px-4 py-2 text-sm font-semibold text-[#e5484d] hover:bg-[var(--cb-blue-soft)]"
               >
                 Xoá giá ngày này
               </button>
@@ -992,8 +988,8 @@ export default function RatesCalendar() {
               {selectedRestriction?.stopSell ? "Mở bán ngày này" : "Đóng bán ngày này"}
             </button>
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-[#17293e]">
-            <span className="font-medium text-[#68707a]">Hạn chế ngày này:</span>
+          <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-[var(--cb-text)]">
+            <span className="font-medium text-[var(--cb-muted)]">Hạn chế ngày này:</span>
             <label>
               Ở tối thiểu
               <input type="number" min={1} placeholder="—" value={selectedRestriction?.minStay ?? ""} onChange={(e) => setRestriction(selected.planId, selected.date, { minStay: e.target.value ? Number(e.target.value) : undefined })} className={`${inputCls} ml-2 w-20`} /> đêm

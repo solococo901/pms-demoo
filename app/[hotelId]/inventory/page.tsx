@@ -14,10 +14,12 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { CHANNELS, getChannelName, type InventoryBlock, type Room, type RoomBlock, type RoomType } from "@/lib/mock-data";
+import { CHANNELS, getChannelName, type InventoryBlock, type Reservation, type Room, type RoomBlock, type RoomType } from "@/lib/mock-data";
+import { validateBlock } from "@/lib/booking-rules";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
 import { queueChannexDates, rangeDates } from "@/lib/channex-outbox";
+import { DateRangePicker } from "@/components/DatePicker";
 
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 const fmtDate = (s: string) => {
@@ -25,7 +27,7 @@ const fmtDate = (s: string) => {
   return `${d}/${m}/${y}`;
 };
 const inputSm =
-  "rounded-lg border border-[#dde3ea] bg-white px-3 py-2 text-sm outline-none focus:border-[#2563eb]";
+  "rounded-lg border border-[var(--cb-border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--cb-blue)]";
 
 export default function InventoryPage() {
   const params = useParams();
@@ -34,6 +36,8 @@ export default function InventoryPage() {
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [roomBlocks, setRoomBlocks] = useState<RoomBlock[]>([]);
   const [invBlocks, setInvBlocks] = useState<InventoryBlock[]>([]);
+  // Don dang hoat dong — chi de kiem tra phong co khach truoc khi chan.
+  const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
 
@@ -53,14 +57,16 @@ export default function InventoryPage() {
 
   useEffect(() => {
     (async () => {
-      const [roomsRes, typesRes, rbRes, ibRes] = await Promise.all([
+      const [roomsRes, typesRes, rbRes, ibRes, resRes, rrRes] = await Promise.all([
         supabase.from("rooms").select("*").eq("hotel_id", HOTEL_ID).order("number"),
         supabase.from("room_types").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("room_blocks").select("*").eq("hotel_id", HOTEL_ID).order("from_date"),
         supabase.from("inventory_blocks").select("*").eq("hotel_id", HOTEL_ID).order("from_date"),
+        supabase.from("reservations").select("*").eq("hotel_id", HOTEL_ID),
+        supabase.from("reservation_rooms").select("reservation_id, room_number"),
       ]);
-      if (roomsRes.error || typesRes.error || rbRes.error || ibRes.error) {
-        setLoadError((roomsRes.error ?? typesRes.error ?? rbRes.error ?? ibRes.error)?.message ?? "Không đọc được dữ liệu");
+      if (roomsRes.error || typesRes.error || rbRes.error || ibRes.error || resRes.error || rrRes.error) {
+        setLoadError((roomsRes.error ?? typesRes.error ?? rbRes.error ?? ibRes.error ?? resRes.error ?? rrRes.error)?.message ?? "Không đọc được dữ liệu");
         setLoading(false);
         return;
       }
@@ -90,6 +96,32 @@ export default function InventoryPage() {
         channelCode: b.channel_code ?? undefined, roomTypeId: b.room_type_id,
         from: b.from_date, to: b.to_date, reason: b.reason ?? undefined,
       })));
+      const roomsMap = new Map<string, string[]>();
+      for (const row of rrRes.data ?? []) {
+        const list = roomsMap.get(row.reservation_id) ?? [];
+        list.push(row.room_number);
+        roomsMap.set(row.reservation_id, list);
+      }
+      setReservations((resRes.data ?? []).map((r) => ({
+        id: r.id,
+        guestName: r.guest_name,
+        guestPhone: r.guest_phone ?? "",
+        channelCode: r.channel_code,
+        paymentCollector: r.payment_collector,
+        roomNumbers: roomsMap.get(r.id) ?? [],
+        roomTypeId: r.room_type_id,
+        ratePlanId: r.rate_plan_id ?? "",
+        checkIn: r.check_in,
+        checkOut: r.check_out,
+        guests: (r.adults ?? 0) + (r.children ?? 0),
+        adults: r.adults,
+        children: r.children,
+        totalAmount: r.total_amount,
+        paidAmount: r.paid_amount,
+        status: r.status,
+        createdAt: String(r.booked_at).slice(0, 10),
+        note: r.note ?? undefined,
+      })));
       // Ngay mac dinh = hom nay theo gio dia phuong (tinh o client, sau
       // khi mount, de khong lech ngay khi render phia may chu).
       const d = new Date();
@@ -103,6 +135,9 @@ export default function InventoryPage() {
   async function addRoomBlock() {
     if (!rbRoom || !rbFrom || !rbTo) return alert("Chọn phòng và khoảng ngày.");
     if (rbTo < rbFrom) return alert("Ngày đến phải từ ngày đi trở đi.");
+    // Khong chan duoc phong dang co khach o trong khoang nay.
+    const check = validateBlock(reservations, rbRoom, rbFrom, rbTo);
+    if (!check.ok) return alert(check.error);
     const nb: RoomBlock = {
       id: `blk-${Date.now()}`,
       roomNumber: rbRoom,
@@ -162,23 +197,23 @@ export default function InventoryPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-[#17293e]">Chặn phòng & Đóng bán</h1>
-      <p className="mt-1 text-sm text-[#68707a]">
+      <h1 className="text-2xl font-bold text-[var(--cb-text)]">Chặn phòng & Đóng bán</h1>
+      <p className="mt-1 text-sm text-[var(--cb-muted)]">
         Chặn phòng và đóng bán của khách sạn này. Chặn phòng cũng tạo được từ Lịch phòng, đóng bán cũng sửa được từ trang Lịch giá (nút Đóng bán). Muốn xem số phòng trống theo ngày thì sang trang Lịch giá, tab Tồn phòng.
       </p>
 
-      {loading && <p className="mt-4 text-sm text-[#68707a]">Đang tải dữ liệu từ Supabase...</p>}
+      {loading && <p className="mt-4 text-sm text-[var(--cb-muted)]">Đang tải dữ liệu từ Supabase...</p>}
       {loadError && <p className="mt-4 text-sm text-[#e5484d]">Không đọc được dữ liệu từ Supabase: {loadError}</p>}
 
       {/* ---------- 1. Chan phong theo phong vat ly ---------- */}
       <div className="cb-card mt-5 p-5">
-        <h2 className="text-base font-bold text-[#17293e]">Chặn phòng</h2>
-        <p className="mt-0.5 text-sm text-[#68707a]">
+        <h2 className="text-base font-bold text-[var(--cb-text)]">Chặn phòng</h2>
+        <p className="mt-0.5 text-sm text-[var(--cb-muted)]">
           Chặn từng phòng vật lý. Phòng hỏng trừ khỏi số phòng bán được và đẩy sang Channex; tạm đóng chỉ chặn xếp phòng trong PMS, không trừ tồn.
         </p>
         <table className="mt-3 w-full text-sm">
           <thead>
-            <tr className="border-b border-[#eef1f5] text-left text-xs uppercase tracking-wide text-[#68707a]">
+            <tr className="border-b border-[var(--cb-bg)] text-left text-xs uppercase tracking-wide text-[var(--cb-muted)]">
               <th className="py-2 pr-3 font-semibold">Phòng</th>
               <th className="py-2 pr-3 font-semibold">Từ đêm</th>
               <th className="py-2 pr-3 font-semibold">Đến đêm</th>
@@ -189,8 +224,8 @@ export default function InventoryPage() {
           </thead>
           <tbody>
             {roomBlocks.map((b) => (
-              <tr key={b.id} className="border-b border-[#eef1f5]">
-                <td className="py-2.5 pr-3 font-medium text-[#17293e]">{b.roomNumber}</td>
+              <tr key={b.id} className="border-b border-[var(--cb-bg)]">
+                <td className="py-2.5 pr-3 font-medium text-[var(--cb-text)]">{b.roomNumber}</td>
                 <td className="py-2.5 pr-3">{fmtDate(b.from)}</td>
                 <td className="py-2.5 pr-3">{fmtDate(b.to)}</td>
                 <td className="py-2.5 pr-3">{b.kind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng"}</td>
@@ -201,7 +236,7 @@ export default function InventoryPage() {
               </tr>
             ))}
             {roomBlocks.length === 0 && (
-              <tr><td colSpan={6} className="py-6 text-center text-[#68707a]">Chưa có phòng nào bị chặn.</td></tr>
+              <tr><td colSpan={6} className="py-6 text-center text-[var(--cb-muted)]">Chưa có phòng nào bị chặn.</td></tr>
             )}
           </tbody>
         </table>
@@ -209,8 +244,10 @@ export default function InventoryPage() {
           <select className={inputSm} value={rbRoom} onChange={(e) => setRbRoom(e.target.value)}>
             {rooms.map((r) => (<option key={r.number} value={r.number}>{r.number}</option>))}
           </select>
-          <label className="text-xs text-[#68707a]">Từ đêm<input type="date" className={`${inputSm} mt-0.5`} value={rbFrom} onChange={(e) => setRbFrom(e.target.value)} /></label>
-          <label className="text-xs text-[#68707a]">Đến đêm<input type="date" className={`${inputSm} mt-0.5`} value={rbTo} onChange={(e) => setRbTo(e.target.value)} /></label>
+          <div>
+            <span className="text-xs text-[var(--cb-muted)]">Từ đêm → đến đêm</span>
+            <div className="mt-0.5"><DateRangePicker from={rbFrom} to={rbTo} onChange={(f, t) => { setRbFrom(f); setRbTo(t); }} /></div>
+          </div>
           <select className={inputSm} value={rbKind} onChange={(e) => setRbKind(e.target.value as RoomBlock["kind"])}>
             <option value="out_of_order">Phòng hỏng</option>
             <option value="out_of_service">Tạm đóng</option>
@@ -222,13 +259,13 @@ export default function InventoryPage() {
 
       {/* ---------- 2. Dong ban cap kenh / cap loai phong ---------- */}
       <div className="cb-card mt-5 p-5">
-        <h2 className="text-base font-bold text-[#17293e]">Đóng bán</h2>
-        <p className="mt-0.5 text-sm text-[#68707a]">
+        <h2 className="text-base font-bold text-[var(--cb-text)]">Đóng bán</h2>
+        <p className="mt-0.5 text-sm text-[var(--cb-muted)]">
           Đóng bán trên lịch giá. Theo kênh: chỉ kênh đó không bán được loại phòng này. Theo loại phòng: không kênh nào bán được. Mức đóng này thắng mức ngừng bán từng gói giá.
         </p>
         <table className="mt-3 w-full text-sm">
           <thead>
-            <tr className="border-b border-[#eef1f5] text-left text-xs uppercase tracking-wide text-[#68707a]">
+            <tr className="border-b border-[var(--cb-bg)] text-left text-xs uppercase tracking-wide text-[var(--cb-muted)]">
               <th className="py-2 pr-3 font-semibold">Phạm vi</th>
               <th className="py-2 pr-3 font-semibold">Loại phòng</th>
               <th className="py-2 pr-3 font-semibold">Từ ngày</th>
@@ -239,15 +276,15 @@ export default function InventoryPage() {
           </thead>
           <tbody>
             {invBlocks.map((b) => (
-              <tr key={b.id} className="border-b border-[#eef1f5]">
+              <tr key={b.id} className="border-b border-[var(--cb-bg)]">
                 <td className="py-2.5 pr-3">{b.scope === "channel" ? getChannelName(b.channelCode ?? "") : "Tất cả kênh"}</td>
-                <td className="py-2.5 pr-3 font-medium text-[#17293e]">{roomTypes.find((t) => t.id === b.roomTypeId)?.name ?? b.roomTypeId}</td>
+                <td className="py-2.5 pr-3 font-medium text-[var(--cb-text)]">{roomTypes.find((t) => t.id === b.roomTypeId)?.name ?? b.roomTypeId}</td>
                 <td className="py-2.5 pr-3">{fmtDate(b.from)}</td>
                 <td className="py-2.5 pr-3">{fmtDate(b.to)}</td>
                 <td className="py-2.5 pr-3">{b.reason ?? "—"}</td>
                 <td className="py-2.5 text-right">
                   {b.reason === "Tắt bán trên kênh" ? (
-                    <span className="text-xs text-[#68707a]" title="Tắt bằng công tắc ở trang Kênh bán — bật lại công tắc ở đó để mở bán">Quản lý ở Kênh bán</span>
+                    <span className="text-xs text-[var(--cb-muted)]" title="Tắt bằng công tắc ở trang Kênh bán — bật lại công tắc ở đó để mở bán">Quản lý ở Kênh bán</span>
                   ) : (
                     <button onClick={() => removeInvBlock(b.id)} className="font-medium text-[#e5484d] hover:underline">Xoá</button>
                   )}
@@ -255,11 +292,11 @@ export default function InventoryPage() {
               </tr>
             ))}
             {invBlocks.length === 0 && (
-              <tr><td colSpan={6} className="py-6 text-center text-[#68707a]">Chưa có khoảng đóng bán nào.</td></tr>
+              <tr><td colSpan={6} className="py-6 text-center text-[var(--cb-muted)]">Chưa có khoảng đóng bán nào.</td></tr>
             )}
           </tbody>
         </table>
-        <p className="mt-3 text-xs text-[#68707a]">
+        <p className="mt-3 text-xs text-[var(--cb-muted)]">
           Các dòng “Tắt bán trên kênh” do công tắc ở trang Kênh bán tạo ra — muốn mở bán lại thì bật công tắc ở đó, không xoá ở đây.
         </p>
         <div className="mt-4 flex flex-wrap items-end gap-2">
@@ -275,8 +312,10 @@ export default function InventoryPage() {
           <select className={inputSm} value={ibType} onChange={(e) => setIbType(e.target.value)}>
             {roomTypes.map((t) => (<option key={t.id} value={t.id}>{t.name}</option>))}
           </select>
-          <label className="text-xs text-[#68707a]">Từ ngày<input type="date" className={`${inputSm} mt-0.5`} value={ibFrom} onChange={(e) => setIbFrom(e.target.value)} /></label>
-          <label className="text-xs text-[#68707a]">Đến ngày<input type="date" className={`${inputSm} mt-0.5`} value={ibTo} onChange={(e) => setIbTo(e.target.value)} /></label>
+          <div>
+            <span className="text-xs text-[var(--cb-muted)]">Từ ngày → đến ngày</span>
+            <div className="mt-0.5"><DateRangePicker from={ibFrom} to={ibTo} onChange={(f, t) => { setIbFrom(f); setIbTo(t); }} /></div>
+          </div>
           <input className={inputSm} placeholder="Lý do" value={ibReason} onChange={(e) => setIbReason(e.target.value)} />
           <button className="cb-btn-primary px-4 py-2 text-sm" onClick={addInvBlock}>+ Đóng bán</button>
         </div>

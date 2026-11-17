@@ -3,13 +3,14 @@
 // ============================================================
 // components/BookingPopup.tsx — Popup thong tin booking kieu
 // Cloudbeds cho Lich phong: bam vao thanh booking thi bat len
-// ngay canh thanh (khong phai panel phai, khong can mo trang
-// chi tiet don).
+// ngay canh thanh (khong phai panel phai).
 //  - Header xanh: ten khach – trang thai, ma don – kenh.
 //  - Cot trai: ngay den/di, so khach, tong tien, con no
 //    (do neu > 0).
 //  - Tab Reservation: chi tiet don + nut Nhan phong /
-//    Tra phong / Huy don (goi ve ham setStatus cua lich).
+//    Tra phong / Huy don (goi ve ham setStatus cua lich) +
+//    link "Mo trang chi tiet" sang trang day du (RESFLOW1,
+//    giong Cloudbeds: panel -> "View reservation" -> trang day du).
 //  - Tab Notes (n): danh sach ghi chu + O CHAT ben duoi —
 //    go xong bam Gui (hoac Enter) la luu ngay vao bang
 //    reservation_notes. Ghi chu cu o cot note cua don (neu co)
@@ -17,6 +18,7 @@
 // ============================================================
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import {
   getChannelName,
@@ -49,7 +51,7 @@ const HEADER_STYLES: Record<Reservation["status"], string> = {
   in_house: "bg-[#2aa76d] text-white",
   checked_out: "bg-[#757c85] text-white",
   cancelled: "bg-[#e5484d] text-white",
-  no_show: "bg-[#68707a] text-white",
+  no_show: "bg-[var(--cb-muted)] text-white",
 };
 
 export default function BookingPopup({
@@ -169,34 +171,34 @@ export default function BookingPopup({
 
         <div className="grid grid-cols-[170px_1fr]">
           {/* cot trai: tom tat */}
-          <div className="space-y-3 border-r border-[#eef1f5] p-4 text-sm">
+          <div className="space-y-3 border-r border-[var(--cb-bg)] p-4 text-sm">
             <div>
-              <div className="text-xs text-[#68707a]">Check-in / Out</div>
-              <div className="font-medium text-[#17293e]">{fmtDate(r.checkIn)} – {fmtDate(r.checkOut)}</div>
+              <div className="text-xs text-[var(--cb-muted)]">Check-in / Out</div>
+              <div className="font-medium text-[var(--cb-text)]">{fmtDate(r.checkIn)} – {fmtDate(r.checkOut)}</div>
             </div>
             <div>
-              <div className="text-xs text-[#68707a]">Khách</div>
-              <div className="font-medium text-[#17293e]">{r.guests || 1}</div>
+              <div className="text-xs text-[var(--cb-muted)]">Khách</div>
+              <div className="font-medium text-[var(--cb-text)]">{r.guests || 1}</div>
             </div>
             <div>
-              <div className="text-xs text-[#68707a]">Tổng tiền</div>
-              <div className="font-medium text-[#17293e]">{money(r.totalAmount)}</div>
+              <div className="text-xs text-[var(--cb-muted)]">Tổng tiền</div>
+              <div className="font-medium text-[var(--cb-text)]">{money(r.totalAmount)}</div>
             </div>
             <div>
-              <div className="text-xs text-[#68707a]">Còn nợ</div>
-              <div className={`font-bold ${balance > 0 ? "text-[#e5484d]" : "text-[#17293e]"}`}>{money(balance)}</div>
+              <div className="text-xs text-[var(--cb-muted)]">Còn nợ</div>
+              <div className={`font-bold ${balance > 0 ? "text-[#e5484d]" : "text-[var(--cb-text)]"}`}>{money(balance)}</div>
             </div>
           </div>
 
           {/* cot phai: tabs */}
           <div className="flex min-h-[300px] flex-col">
-            <div className="flex gap-4 border-b border-[#eef1f5] px-4 pt-3 text-sm">
+            <div className="flex gap-4 border-b border-[var(--cb-bg)] px-4 pt-3 text-sm">
               <button
-                className={`pb-2 font-semibold ${tab === "info" ? "border-b-2 border-[#2563eb] text-[#2563eb]" : "text-[#68707a]"}`}
+                className={`pb-2 font-semibold ${tab === "info" ? "border-b-2 border-[var(--cb-blue)] text-[var(--cb-blue)]" : "text-[var(--cb-muted)]"}`}
                 onClick={() => setTab("info")}
               >Reservation</button>
               <button
-                className={`pb-2 font-semibold ${tab === "notes" ? "border-b-2 border-[#2563eb] text-[#2563eb]" : "text-[#68707a]"}`}
+                className={`pb-2 font-semibold ${tab === "notes" ? "border-b-2 border-[var(--cb-blue)] text-[var(--cb-blue)]" : "text-[var(--cb-muted)]"}`}
                 onClick={() => setTab("notes")}
               >
                 Notes ({allNotes.length})
@@ -214,8 +216,8 @@ export default function BookingPopup({
                 <InfoRow label="Tổng tiền" value={money(r.totalAmount)} />
                 <InfoRow label="Đã trả" value={money(r.paidAmount)} />
                 <div className="flex justify-between gap-4">
-                  <span className="text-[#68707a]">Còn nợ</span>
-                  <span className={`font-medium ${balance > 0 ? "text-[#e5484d]" : "text-[#17293e]"}`}>{money(balance)}</span>
+                  <span className="text-[var(--cb-muted)]">Còn nợ</span>
+                  <span className={`font-medium ${balance > 0 ? "text-[#e5484d]" : "text-[var(--cb-text)]"}`}>{money(balance)}</span>
                 </div>
                 <div className="flex gap-2 pt-3">
                   {r.roomNumbers.length === 0 && onEnterAssignMode && (
@@ -231,25 +233,28 @@ export default function BookingPopup({
                     <button onClick={() => onSetStatus(r.id, "cancelled")} className="rounded-lg border border-[#e5484d] px-4 py-2 text-sm font-semibold text-[#e5484d] hover:bg-red-50">Huỷ đơn</button>
                   )}
                 </div>
+                <div className="border-t border-[var(--cb-bg)] pt-3">
+                  <Link href={`/${hotelId}/reservations/${r.id}`} className="text-sm font-medium text-[var(--cb-blue)] hover:underline">Mở trang chi tiết ↗</Link>
+                </div>
               </div>
             ) : (
               <div className="flex flex-1 flex-col overflow-hidden">
                 <div ref={listRef} className="max-h-[320px] flex-1 space-y-3 overflow-y-auto p-4">
                   {allNotes.length === 0 && (
-                    <p className="text-sm text-[#68707a]">Chưa có ghi chú nào cho đơn này. Gõ vào ô bên dưới để ghi chú ngay.</p>
+                    <p className="text-sm text-[var(--cb-muted)]">Chưa có ghi chú nào cho đơn này. Gõ vào ô bên dưới để ghi chú ngay.</p>
                   )}
                   {allNotes.map((n) => (
                     <div key={n.id} className="rounded-lg bg-[#f4f6f9] px-3 py-2">
-                      <div className="text-xs font-semibold text-[#17293e]">
+                      <div className="text-xs font-semibold text-[var(--cb-text)]">
                         {n.author}
-                        {n.createdAt && <span className="ml-2 font-normal text-[#68707a]">{fmtTime(n.createdAt)}</span>}
+                        {n.createdAt && <span className="ml-2 font-normal text-[var(--cb-muted)]">{fmtTime(n.createdAt)}</span>}
                       </div>
-                      <div className="mt-0.5 whitespace-pre-wrap text-sm text-[#17293e]">{n.body}</div>
+                      <div className="mt-0.5 whitespace-pre-wrap text-sm text-[var(--cb-text)]">{n.body}</div>
                     </div>
                   ))}
                   {notesError && <p className="text-sm text-[#e5484d]">{notesError}</p>}
                 </div>
-                <div className="flex gap-2 border-t border-[#eef1f5] p-3">
+                <div className="flex gap-2 border-t border-[var(--cb-bg)] p-3">
                   <input
                     className="cb-input-pill flex-1 px-3 py-2 text-sm"
                     placeholder="Ghi chú gì đó cho đơn này… (Enter để gửi)"
@@ -273,8 +278,8 @@ export default function BookingPopup({
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-4">
-      <span className="text-[#68707a]">{label}</span>
-      <span className="text-right font-medium text-[#17293e]">{value}</span>
+      <span className="text-[var(--cb-muted)]">{label}</span>
+      <span className="text-right font-medium text-[var(--cb-text)]">{value}</span>
     </div>
   );
 }
