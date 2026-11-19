@@ -148,14 +148,12 @@ function HotelSwitcher() {
         const next = e.target.value;
         window.sessionStorage.setItem(HOTEL_STORAGE_KEY, next);
         setCurrent(next);
-        // Dang o khu lam viec cua 1 khach san thi sang cung trang do cua
-        // khach san moi (nap lai toan bo de moi module doc lai khach san).
-        if (urlHotel) {
-          const rest = (pathname ?? "").split("/").slice(2).join("/");
-          window.location.href = `/${next}${rest ? `/${rest}` : "/dashboard"}`;
-        } else if (detailHotel) {
-          // Trang cu /hotels/[id]... khong thuoc khu lam viec — doi khach
-          // san thi ve tong quan cua khach san moi.
+        // Doi khach san thi luon ve trang Tong quan cua khach san moi
+        // truoc (nap lai toan bo de moi module doc lai khach san).
+        // (Truoc day giu nguyen trang dang mo — vd dang o Lich phong
+        // thi sang Lich phong cua khach san moi — anh muon ve Tong
+        // quan truoc.)
+        if (urlHotel || detailHotel) {
           window.location.href = `/${next}/dashboard`;
         } else {
           window.location.reload();
@@ -224,12 +222,13 @@ function Shell({ children }: { children: ReactNode }) {
   const menuHotel = urlHotel ?? detailHotel ?? storedHotel;
 
   // Chua chon khach san nao thi day ve danh sach (trang danh sach
-  // va login duoc mien). Chi chay sau khi mount nen khong anh
-  // huong lan ve dau; chon xong thi sessionStorage da co gia tri
-  // nen khong bi day lai.
+  // /hotels va login duoc mien). Chi chay sau khi mount nen khong
+  // anh huong lan ve dau; chon xong thi sessionStorage da co gia
+  // tri nen khong bi day lai.
   useEffect(() => {
     if (
       pathname !== "/" &&
+      pathname !== "/hotels" &&
       pathname !== "/login" &&
       !window.sessionStorage.getItem(HOTEL_STORAGE_KEY)
     ) {
@@ -282,11 +281,11 @@ function Shell({ children }: { children: ReactNode }) {
     return <>{children}</>;
   }
 
-  // Trang danh sach dung rieng, khong khung app (thanh tren, menu
-  // day) — nhung van qua cong kiem tra dang nhap. Khong kem
-  // ChannexOutbox: chip trang thai dong bo la phan cua khung app,
-  // khong thuoc trang nay.
-  if (pathname === "/") {
+  // Trang danh sach /hotels (va cua vao /) dung rieng, khong khung
+  // app (thanh tren, menu day) — nhung van qua cong kiem tra dang
+  // nhap. Khong kem ChannexOutbox: chip trang thai dong bo la phan
+  // cua khung app, khong thuoc trang nay.
+  if (pathname === "/" || pathname === "/hotels") {
     return (
       <AuthGate>
         <main className="mx-auto min-h-screen w-[80%] bg-[var(--cb-bg)] p-6">{children}</main>
@@ -305,7 +304,7 @@ function Shell({ children }: { children: ReactNode }) {
           <div className="flex w-72 shrink-0 flex-1 flex-col">
             <div className="flex items-center justify-between border-b border-[var(--cb-border)] px-5 py-2.5">
               <Link
-                href="/"
+                href="/hotels"
                 onClick={() => setMenuOpen(false)}
                 title="Về danh sách khách sạn"
                 className="flex items-center gap-2.5"
@@ -396,7 +395,7 @@ function Shell({ children }: { children: ReactNode }) {
             </button>
 
             {!menuOpen && (
-            <Link href="/" title="Về danh sách khách sạn" className="flex shrink-0 items-center gap-2.5">
+            <Link href="/hotels" title="Về danh sách khách sạn" className="flex shrink-0 items-center gap-2.5">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--cb-blue)] text-base font-bold text-white">
                 P
               </div>

@@ -1,33 +1,28 @@
 "use client";
 
 // ============================================================
-// FILE HOTELROOMTYPES3 — app/[hotelId]/room-types/page.tsx
-// Trang THONG TIN LOAI PHONG rieng biet (theo yeu cau 2026-10-27):
-// khong con thanh tab lon (Thong tin chung / Cau hinh / Loai
-// phong & Phong chung 1 trang) nua. Noi dung chinh la bang
-// loai phong kieu ezCloud: o tim kiem, loc Trang thai (Tat ca /
-// Dang hoat dong / Ngung hoat dong), nut Them moi, cong tac
-// trang thai va nut xoa tung dong. Bam ten loai phong thi sang
-// trang chi tiet rieng nhu cu.
-// Khoi Phong vat ly giu lai ben duoi (can 1 cho de quan ly
-// phong that — lich phong cua le tan chay tren cac phong nay).
+// FILE HOTELROOMTYPES4 — app/[hotelId]/room-types/page.tsx
+// Lam lai theo huong toi uu rut tu so sanh 8 PMS (nghien cuu
+// 2026-11-19, trang "So sanh PMS — Quan ly loai phong"):
+//   - Kieu ChatBeds: 1 man hinh, moi loai phong la 1 dong mo
+//     rong duoc — phong vat ly nam TRONG the loai phong cua
+//     no, khong con bang phong rieng dai le the o duoi nua.
+//   - Them nhieu phong 1 lan kieu ChatBeds + Mews: go danh
+//     sach / khoang so ("101, 102, 105-110") hoac danh so tu
+//     dong ("tu so 301, tao 10 phong"), co xem truoc + bao
+//     trung truoc khi them.
+//   - Kieu Little Hotelier: dong mo rong, tao loai phong xong
+//     tu mo phan phong ra de them phong ngay.
+//   - Tim 1 o duy nhat: khop ca ten loai, ma loai VA so phong
+//     (go "201" thi tu mo loai chua phong 201 ra).
+//   - Ngung ban thay cho Xoa: cong tac tat ban giu nguyen
+//     (da co tac dung that tren Channex); nut Xoa chi la
+//     hanh dong phu, van chan khi loai con phong / con goi gia.
 // Gia ban KHONG nam o day: gia theo tung kenh nhap o trang
-// Lich gia, tab Gia theo kenh — tranh 2 noi cung giu 1 gia.
-// Trang nay TU CHUA moi thu, khong dung chung component
-// HotelDetailPage nua — dan 1 file nay la chay ngay.
-// HOTELROOMTYPES3 (2026-11-13, chuot lai tu tren xuong duoi):
-//   - Hien trang thai tu dong luu (Dang luu... / Da luu) —
-//     truoc day luu am tham, khong biet da luu hay chua.
-//   - Ma loai phong moi tao tu ten tieng Viet dung (Phong Doi
-//     -> phong-doi, thay vi ph-ng-i) nho bo dau tieng Viet.
-//   - Nut them doi ten cho dung ("+ Them loai phong").
-//   - Ghi chu ve gia sua theo ten trang/tab moi.
-//   - Cong tac tat ban + phong Ngung ban gio co tac dung
-//     that tren Channex (xem lib/channex-compute.ts) — truoc
-//     day chi doi hien thi, OTA van ban nhu thuong.
+// Lich gia — tranh 2 noi cung giu 1 gia.
 // ============================================================
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -35,7 +30,7 @@ import { currentHotelId } from "@/lib/current-hotel";
 import type { Room, RoomType } from "@/lib/mock-data";
 
 const inputSm =
-  "rounded-lg border border-[#dde3ea] bg-white px-3 py-2 text-sm outline-none focus:border-[#2563eb]";
+  "rounded-lg border border-[var(--cb-border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--cb-blue)]";
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 
 const HK_LABELS: Record<Room["housekeepingStatus"], string> = {
@@ -59,6 +54,245 @@ function slugifyTypeName(name: string): string {
   return slug || "loai-phong";
 }
 
+// Ma ngan tu dong tu ten: lay chu cai dau moi tu cua slug
+// ("phong-doi" -> "PD", "deluxe-king" -> "DK"). Chi dung khi
+// anh de trong o Ma luc tao loai phong.
+function autoCodeFromName(name: string): string {
+  const slug = slugifyTypeName(name);
+  const code = slug
+    .split("-")
+    .filter(Boolean)
+    .map((w) => w.charAt(0))
+    .join("")
+    .toUpperCase()
+    .slice(0, 4);
+  return code || "PHG";
+}
+
+// Sap xep so phong: so truoc (101 < 102 < 201), chu sau.
+function sortRoomNumbers(a: string, b: string): number {
+  const na = Number(a);
+  const nb = Number(b);
+  if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+  return a.localeCompare(b);
+}
+
+// Doc o "them nhieu phong": danh sach cach nhau bang dau
+// phay ("101, 102") va khoang so ("105-110"). So phong le
+// co chu cai ("101A") van chap nhan; khoang chi nhan so.
+function parseRoomSpec(text: string): { numbers: string[]; invalid: string[] } {
+  const numbers: string[] = [];
+  const invalid: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of text.split(/[,;\s]+/)) {
+    const tok = raw.trim();
+    if (!tok) continue;
+    const range = tok.match(/^(\d+)-(\d+)$/);
+    if (range) {
+      const a = parseInt(range[1], 10);
+      const b = parseInt(range[2], 10);
+      if (b < a || b - a > 500) {
+        invalid.push(tok);
+        continue;
+      }
+      for (let n = a; n <= b; n++) {
+        const s = String(n);
+        if (!seen.has(s)) {
+          seen.add(s);
+          numbers.push(s);
+        }
+      }
+    } else if (/^[A-Za-z0-9]+$/.test(tok)) {
+      if (!seen.has(tok)) {
+        seen.add(tok);
+        numbers.push(tok);
+      }
+    } else {
+      invalid.push(tok);
+    }
+  }
+  return { numbers, invalid };
+}
+
+// Danh so tu dong kieu Mews: tu so bat dau, tao N phong lien
+// tiep ("301" + 10 phong -> 301..310). So co so 0 o dau
+// ("001") thi giu du do dai ("001".."010").
+function autoNumbers(start: string, count: number): { numbers: string[]; invalid: string[] } {
+  const s = start.trim();
+  if (!/^\d+$/.test(s) || !Number.isFinite(count) || count < 1 || count > 500) {
+    return { numbers: [], invalid: s || count < 1 ? [s || "số lượng"] : [] };
+  }
+  const width = s.startsWith("0") ? s.length : 0;
+  const first = parseInt(s, 10);
+  const numbers: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const n = String(first + i);
+    numbers.push(width > 0 ? n.padStart(width, "0") : n);
+  }
+  return { numbers, invalid: [] };
+}
+
+// ----- Panel phong vat ly nam trong dong loai phong -----
+// Dat o cap module (khong dat trong component chinh) de
+// React khong tao lai component moi lan ve lai — neu khong
+// o nhap "101, 102..." se mat chu moi khi go 1 ky tu.
+function TypeRoomsPanel(props: {
+  hotelId: string;
+  typeId: string;
+  rooms: Room[]; // phong cua loai nay (da loc + da sap xep)
+  totalRooms: number; // tong phong cua loai nay (chua loc)
+  allRoomNumbers: Set<string>;
+  roomTypes: RoomType[];
+  activeRoomNumbers: Set<string>;
+  onAddRooms: (typeId: string, numbers: string[]) => void;
+  onDeleteRoom: (number: string) => void;
+  onSetHK: (number: string, status: Room["housekeepingStatus"]) => void;
+  onMoveRoom: (number: string, newTypeId: string) => void;
+}) {
+  const [mode, setMode] = useState<"list" | "auto">("list");
+  const [listText, setListText] = useState("");
+  const [autoStart, setAutoStart] = useState("");
+  const [autoCount, setAutoCount] = useState(10);
+
+  const parsed = mode === "list" ? parseRoomSpec(listText) : autoNumbers(autoStart, autoCount);
+  const fresh = parsed.numbers.filter((n) => !props.allRoomNumbers.has(n));
+  const dups = parsed.numbers.filter((n) => props.allRoomNumbers.has(n));
+  const preview = fresh.slice(0, 8).join(", ") + (fresh.length > 8 ? ` … và ${fresh.length - 8} phòng nữa` : "");
+
+  function addRooms() {
+    if (fresh.length === 0) return;
+    props.onAddRooms(props.typeId, fresh);
+    setListText("");
+    setAutoStart("");
+  }
+
+  return (
+    <div className="rounded-lg bg-[var(--cb-bg)] px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-sm font-semibold text-[var(--cb-text)]">
+          Phòng của loại này ({props.totalRooms} phòng)
+        </span>
+        <Link
+          href={`/hotels/${props.hotelId}/room-types/${props.typeId}`}
+          className="text-[13px] font-medium text-[var(--cb-blue)] hover:underline"
+        >
+          Sửa chi tiết loại phòng →
+        </Link>
+      </div>
+
+      {/* danh sach phong cua loai nay */}
+      {props.rooms.length === 0 ? (
+        <p className="mt-2 text-[13px] text-[var(--cb-muted)]">
+          {props.totalRooms === 0
+            ? "Chưa có phòng nào — thêm phòng ở ô dưới."
+            : "Không có phòng nào khớp với bộ lọc."}
+        </p>
+      ) : (
+        <div className="mt-2">
+          {props.rooms.map((r) => (
+            <div key={r.number} className="flex flex-wrap items-center gap-2 border-b border-[var(--cb-border)] py-1.5 last:border-b-0">
+              <span className="w-16 font-bold text-[var(--cb-text)]">{r.number}</span>
+              <select
+                className="rounded-lg border border-[var(--cb-border)] bg-white px-2 py-1 text-[13px] outline-none focus:border-[var(--cb-blue)]"
+                value={r.housekeepingStatus}
+                onChange={(e) => props.onSetHK(r.number, e.target.value as Room["housekeepingStatus"])}
+                title="Trạng thái dọn phòng"
+              >
+                {(Object.keys(HK_LABELS) as Room["housekeepingStatus"][]).map((s) => (
+                  <option key={s} value={s}>{HK_LABELS[s]}</option>
+                ))}
+              </select>
+              <select
+                className="max-w-56 rounded-lg border border-[var(--cb-border)] bg-white px-2 py-1 text-[13px] outline-none focus:border-[var(--cb-blue)]"
+                value={r.roomTypeId}
+                onChange={(e) => props.onMoveRoom(r.number, e.target.value)}
+                title="Chuyển phòng sang loại khác"
+              >
+                {props.roomTypes.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => props.onDeleteRoom(r.number)}
+                className="ml-auto text-[13px] font-medium text-[#e5484d] hover:underline"
+                title={props.activeRoomNumbers.has(r.number) ? "Phòng đang có đơn đang hiệu lực — không xoá được" : "Xoá phòng này"}
+              >
+                Xoá
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* them nhieu phong 1 lan */}
+      <div className="mt-3 border-t border-[var(--cb-border)] pt-3">
+        <div className="flex gap-1">
+          <button
+            onClick={() => setMode("list")}
+            className={`rounded-full px-3 py-1 text-[13px] font-medium ${mode === "list" ? "bg-[var(--cb-blue)] text-white" : "bg-white text-[var(--cb-text)]"}`}
+          >
+            Danh sách / khoảng số
+          </button>
+          <button
+            onClick={() => setMode("auto")}
+            className={`rounded-full px-3 py-1 text-[13px] font-medium ${mode === "auto" ? "bg-[var(--cb-blue)] text-white" : "bg-white text-[var(--cb-text)]"}`}
+          >
+            Đánh số tự động
+          </button>
+        </div>
+        {mode === "list" ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            <input
+              className={`${inputSm} min-w-64 flex-1`}
+              placeholder="Số phòng — VD: 101, 102, 105-110"
+              value={listText}
+              onChange={(e) => setListText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addRooms();
+              }}
+            />
+            <button className="cb-btn-primary px-4 py-2 text-sm disabled:opacity-50" onClick={addRooms} disabled={fresh.length === 0}>
+              + Thêm phòng
+            </button>
+          </div>
+        ) : (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-[var(--cb-text)]">
+            <span>Từ số</span>
+            <input
+              className={`${inputSm} w-24`}
+              placeholder="VD: 301"
+              value={autoStart}
+              onChange={(e) => setAutoStart(e.target.value)}
+            />
+            <span>tạo</span>
+            <input
+              type="number"
+              min={1}
+              max={500}
+              className={`${inputSm} w-20`}
+              value={autoCount}
+              onChange={(e) => setAutoCount(Number(e.target.value))}
+            />
+            <span>phòng</span>
+            <button className="cb-btn-primary px-4 py-2 text-sm disabled:opacity-50" onClick={addRooms} disabled={fresh.length === 0}>
+              + Thêm phòng
+            </button>
+          </div>
+        )}
+        {fresh.length > 0 && (
+          <p className="mt-1.5 text-[13px] text-[#1db584]">Sẽ tạo {fresh.length} phòng: {preview}</p>
+        )}
+        {dups.length > 0 && (
+          <p className="mt-1 text-[13px] text-[#f59e0b]">Đã có rồi, sẽ bỏ qua: {dups.slice(0, 8).join(", ")}{dups.length > 8 ? ` … và ${dups.length - 8} số nữa` : ""}</p>
+        )}
+        {parsed.invalid.length > 0 && (
+          <p className="mt-1 text-[13px] text-[#e5484d]">Không hiểu: {parsed.invalid.slice(0, 8).join(", ")} — chỉ nhận số, dấu phẩy và khoảng (VD: 105-110).</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function HotelRoomTypesPage() {
   const params = useParams();
   const id = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
@@ -78,19 +312,22 @@ export default function HotelRoomTypesPage() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const loadedRef = useRef(false);
 
-  // ----- ezCloud-style toolbar state -----
+  // ----- toolbar state -----
   const [typeSearch, setTypeSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [hkFilter, setHkFilter] = useState<"all" | Room["housekeepingStatus"]>("all");
   const [showAddType, setShowAddType] = useState(false);
+  // Loai phong nao dang mo rong (xem phong ben trong).
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
-  // ----- room type / room forms -----
+  // ----- form tao loai phong -----
   const [typeName, setTypeName] = useState("");
   const [typeCode, setTypeCode] = useState("");
   const [typeAdults, setTypeAdults] = useState(2);
   const [typeChildren, setTypeChildren] = useState(0);
   const [typeBed, setTypeBed] = useState("");
-  const [roomNumber, setRoomNumber] = useState("");
-  const [roomTypeId, setRoomTypeId] = useState("");
+  const [typeSize, setTypeSize] = useState("");
+  const [typeDesc, setTypeDesc] = useState("");
 
   // ----- LOAD everything of this hotel from Supabase -----
   useEffect(() => {
@@ -125,7 +362,6 @@ export default function HotelRoomTypesPage() {
         };
       });
       setRoomTypes(types);
-      if (types[0]) setRoomTypeId(types[0].id);
       setRooms((roomsRes.data ?? []).map((r) => ({
         number: r.number, roomTypeId: r.room_type_id,
         housekeepingStatus: (r.housekeeping_status ?? "clean") as Room["housekeepingStatus"],
@@ -192,34 +428,48 @@ export default function HotelRoomTypesPage() {
     if (!typeName.trim()) return alert("Chưa nhập tên loại phòng.");
     const newId = slugifyTypeName(typeName);
     if (roomTypes.some((t) => t.id === newId)) return alert("Loại phòng này đã tồn tại ở khách sạn này.");
+    const code = typeCode.trim().toUpperCase() || autoCodeFromName(typeName);
+    if (roomTypes.some((t) => (t.code ?? "").toUpperCase() === code)) return alert(`Mã "${code}" đã có — đổi mã khác.`);
+    const size = typeSize.trim() === "" ? undefined : Number(typeSize);
+    if (size !== undefined && (!Number.isFinite(size) || size <= 0)) return alert("Diện tích phải là số lớn hơn 0.");
     setRoomTypes((p) => [
       ...p,
       {
         id: newId,
-        code: typeCode.trim().toUpperCase() || undefined,
+        code,
         name: typeName.trim(),
         maxOccupancy: typeAdults + typeChildren,
         maxAdults: typeAdults,
         maxChildren: typeChildren,
-        bedConfig: typeBed || "—",
+        bedConfig: typeBed.trim() || "—",
+        sizeM2: size,
+        descriptionVi: typeDesc.trim() || undefined,
         active: true,
       },
     ]);
-    setTypeName(""); setTypeCode(""); setTypeBed(""); setShowAddType(false);
+    // Mo luon phan phong cua loai moi de them phong ngay.
+    setExpandedIds((p) => new Set(p).add(newId));
+    setTypeName(""); setTypeCode(""); setTypeBed(""); setTypeSize(""); setTypeDesc("");
+    setTypeAdults(2); setTypeChildren(0);
+    setShowAddType(false);
   }
 
   function deleteRoomType(typeId: string) {
-    if (rooms.some((r) => r.roomTypeId === typeId)) return alert("Không xoá được: khách sạn này vẫn còn phòng thuộc loại đó.");
+    if (rooms.some((r) => r.roomTypeId === typeId)) return alert("Không xoá được: khách sạn này vẫn còn phòng thuộc loại đó — chuyển hoặc xoá hết phòng của loại này trước.");
     if (planTypeIds.has(typeId)) return alert("Không xoá được: vẫn còn gói giá thuộc loại này.");
     setRoomTypes((p) => p.filter((t) => t.id !== typeId));
+    setExpandedIds((p) => {
+      const s = new Set(p);
+      s.delete(typeId);
+      return s;
+    });
   }
 
-  function addRoom() {
-    if (!roomNumber.trim()) return alert("Chưa nhập số phòng.");
-    if (rooms.some((r) => r.number === roomNumber.trim())) return alert("Số phòng này đã có ở khách sạn này.");
-    if (!roomTypeId) return alert("Tạo loại phòng trước, rồi mới thêm phòng.");
-    setRooms((p) => [...p, { number: roomNumber.trim(), roomTypeId, housekeepingStatus: "clean" }]);
-    setRoomNumber("");
+  function addRoomsBulk(typeId: string, numbers: string[]) {
+    setRooms((p) => [
+      ...p,
+      ...numbers.map((n) => ({ number: n, roomTypeId: typeId, housekeepingStatus: "clean" as Room["housekeepingStatus"] })),
+    ]);
   }
 
   function deleteRoom(number: string) {
@@ -228,87 +478,185 @@ export default function HotelRoomTypesPage() {
     setRooms((p) => p.filter((r) => r.number !== number));
   }
 
-  // ----- ezCloud-style filtering for the types table -----
+  function toggleExpand(typeId: string) {
+    setExpandedIds((p) => {
+      const s = new Set(p);
+      if (s.has(typeId)) s.delete(typeId);
+      else s.add(typeId);
+      return s;
+    });
+  }
+
+  // ----- filtering: tim khop ca ten loai, ma loai VA so phong -----
+  const q = typeSearch.trim().toLowerCase();
+  const allRoomNumbers = new Set(rooms.map((r) => r.number));
+
+  function roomsOfType(t: RoomType): Room[] {
+    return rooms.filter((r) => r.roomTypeId === t.id);
+  }
+
   const shownTypes = roomTypes.filter((t) => {
-    const q = typeSearch.trim().toLowerCase();
-    if (q && !(t.name.toLowerCase().includes(q) || (t.code ?? "").toLowerCase().includes(q))) return false;
+    const nameMatch = !q || t.name.toLowerCase().includes(q) || (t.code ?? "").toLowerCase().includes(q);
+    const roomMatch = !!q && roomsOfType(t).some((r) => r.number.toLowerCase().includes(q));
+    if (q && !nameMatch && !roomMatch) return false;
     if (statusFilter === "active" && !(t.active ?? true)) return false;
     if (statusFilter === "inactive" && (t.active ?? true)) return false;
+    if (hkFilter !== "all" && !roomsOfType(t).some((r) => r.housekeepingStatus === hkFilter)) return false;
     return true;
   });
 
+  // Phong hien trong panel cua 1 loai: khi tim theo so phong thi
+  // chi hien cac phong khop; khi tim theo ten loai thi hien het.
+  function shownRoomsOfType(t: RoomType): Room[] {
+    const nameMatch = !q || t.name.toLowerCase().includes(q) || (t.code ?? "").toLowerCase().includes(q);
+    let list = roomsOfType(t);
+    if (q && !nameMatch) list = list.filter((r) => r.number.toLowerCase().includes(q));
+    if (hkFilter !== "all") list = list.filter((r) => r.housekeepingStatus === hkFilter);
+    return [...list].sort((a, b) => sortRoomNumbers(a.number, b.number));
+  }
+
+  // Go so phong thi tu mo loai chua phong do ra (du nguoi dung
+  // chua bam mui ten mo rong).
+  function isExpanded(t: RoomType): boolean {
+    if (expandedIds.has(t.id)) return true;
+    if (q) return roomsOfType(t).some((r) => r.number.toLowerCase().includes(q));
+    return false;
+  }
+
   return (
     <div>
-      <Link href="/" className="text-sm font-medium text-[#2563eb] hover:underline">
+      <Link href="/hotels" className="text-sm font-medium text-[var(--cb-blue)] hover:underline">
         ← Tất cả khách sạn
       </Link>
       <div className="mt-2 flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-bold text-[#17293e]">{hotelName}</h1>
+        <h1 className="text-2xl font-bold text-[var(--cb-text)]">{hotelName}</h1>
         {hotelCode && (
-          <span className="rounded-md bg-[#f0f3f7] px-2 py-0.5 text-xs font-semibold text-[#68707a]">{hotelCode}</span>
+          <span className="rounded-md bg-[var(--cb-blue-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--cb-muted)]">{hotelCode}</span>
         )}
         {hotelStars && <span className="text-amber-500">{"★".repeat(hotelStars)}</span>}
       </div>
-      <p className="mt-1 text-sm text-[#68707a]">
+      <p className="mt-1 text-sm text-[var(--cb-muted)]">
         Trang quản lí riêng của khách sạn này — không ảnh hưởng khách sạn khác.
       </p>
       {saveState !== "idle" && (
-        <p className={`mt-1 text-[13px] ${saveState === "error" ? "text-[#e5484d]" : saveState === "saving" ? "text-[#68707a]" : "text-[#1db584]"}`}>
+        <p className={`mt-1 text-[13px] ${saveState === "error" ? "text-[#e5484d]" : saveState === "saving" ? "text-[var(--cb-muted)]" : "text-[#1db584]"}`}>
           {saveState === "saving" ? "Đang lưu..." : saveState === "saved" ? "✓ Đã lưu tự động." : "Lỗi khi lưu — xem thông báo đỏ phía trên."}
         </p>
       )}
-      {loading && <p className="mt-3 text-sm text-[#68707a]">Đang tải dữ liệu từ Supabase...</p>}
+      {loading && <p className="mt-3 text-sm text-[var(--cb-muted)]">Đang tải dữ liệu từ Supabase...</p>}
       {dbError && <p className="mt-3 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">Lỗi cơ sở dữ liệu: {dbError}</p>}
 
-      {/* ===== LOAI PHONG (bang kieu ezCloud) ===== */}
+      {/* ===== LOAI PHONG + PHONG VAT LY (1 man hinh) ===== */}
       <div className="cb-card mt-5 p-5">
         <div className="flex flex-wrap items-center gap-3">
-          <h2 className="text-base font-bold text-[#17293e]">Loại phòng</h2>
-          <button onClick={() => setShowAddType((v) => !v)} className="cb-btn-primary ml-auto px-4 py-2 text-sm">
-            + Thêm loại phòng
-          </button>
+          <h2 className="text-base font-bold text-[var(--cb-text)]">Loại phòng</h2>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setExpandedIds(new Set(shownTypes.map((t) => t.id)))}
+              className="rounded-lg border border-[var(--cb-border)] bg-white px-3 py-2 text-[13px] font-medium text-[var(--cb-text)] hover:bg-[var(--cb-bg)]"
+            >
+              Mở tất cả
+            </button>
+            <button
+              onClick={() => setExpandedIds(new Set())}
+              className="rounded-lg border border-[var(--cb-border)] bg-white px-3 py-2 text-[13px] font-medium text-[var(--cb-text)] hover:bg-[var(--cb-bg)]"
+            >
+              Thu tất cả
+            </button>
+            <button onClick={() => setShowAddType((v) => !v)} className="cb-btn-primary px-4 py-2 text-sm">
+              + Thêm loại phòng
+            </button>
+          </div>
         </div>
-        <p className="mt-0.5 text-sm text-[#68707a]">Mỗi loại phòng có mã ngắn để khớp nối với các kênh bán. Tắt công tắc = ngừng bán mà không xoá dữ liệu.</p>
+        <p className="mt-0.5 text-sm text-[var(--cb-muted)]">Mỗi loại phòng có mã ngắn để khớp nối với các kênh bán. Tắt công tắc = ngừng bán mà không xoá dữ liệu. Bấm mũi tên ▸ ở đầu dòng để xem phòng vật lý của loại đó.</p>
 
-        {/* toolbar: tim kiem + loc trang thai */}
+        {/* toolbar: tim kiem + loc trang thai + loc don phong */}
         <div className="mt-4 flex flex-wrap items-center gap-4">
           <input
             className={`${inputSm} min-w-64 flex-1`}
-            placeholder="Nhập mã / tên phòng"
+            placeholder="Tìm mã / tên loại phòng / số phòng"
             value={typeSearch}
             onChange={(e) => setTypeSearch(e.target.value)}
           />
-          <div className="flex items-center gap-4 text-sm text-[#17293e]">
+          <div className="flex items-center gap-4 text-sm text-[var(--cb-text)]">
             <label className="flex items-center gap-1.5">
-              <input type="radio" name="typeStatus" checked={statusFilter === "all"} onChange={() => setStatusFilter("all")} className="h-4 w-4 accent-[#2563eb]" />
+              <input type="radio" name="typeStatus" checked={statusFilter === "all"} onChange={() => setStatusFilter("all")} className="h-4 w-4 accent-[var(--cb-blue)]" />
               Tất cả
             </label>
             <label className="flex items-center gap-1.5">
-              <input type="radio" name="typeStatus" checked={statusFilter === "active"} onChange={() => setStatusFilter("active")} className="h-4 w-4 accent-[#2563eb]" />
+              <input type="radio" name="typeStatus" checked={statusFilter === "active"} onChange={() => setStatusFilter("active")} className="h-4 w-4 accent-[var(--cb-blue)]" />
               Đang hoạt động
             </label>
             <label className="flex items-center gap-1.5">
-              <input type="radio" name="typeStatus" checked={statusFilter === "inactive"} onChange={() => setStatusFilter("inactive")} className="h-4 w-4 accent-[#2563eb]" />
+              <input type="radio" name="typeStatus" checked={statusFilter === "inactive"} onChange={() => setStatusFilter("inactive")} className="h-4 w-4 accent-[var(--cb-blue)]" />
               Ngừng hoạt động
             </label>
           </div>
+          <select
+            className={inputSm}
+            value={hkFilter}
+            onChange={(e) => setHkFilter(e.target.value as "all" | Room["housekeepingStatus"])}
+            title="Lọc theo trạng thái dọn phòng"
+          >
+            <option value="all">Mọi trạng thái dọn phòng</option>
+            {(Object.keys(HK_LABELS) as Room["housekeepingStatus"][]).map((s) => (
+              <option key={s} value={s}>{HK_LABELS[s]}</option>
+            ))}
+          </select>
         </div>
 
-        {/* add form (an/hien bang nut tren) */}
+        {/* form tao loai phong (co nhan ro rang, khong chen chuc) */}
         {showAddType && (
-          <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-[#eef1f5] pt-4">
-            <input className={inputSm} placeholder="Tên loại phòng mới" value={typeName} onChange={(e) => setTypeName(e.target.value)} />
-            <input className={`${inputSm} w-24`} placeholder="Mã, VD: DLX" value={typeCode} onChange={(e) => setTypeCode(e.target.value)} />
-            <label className="text-xs text-[#68707a]">Người lớn<input type="number" min={1} className={`${inputSm} mt-0.5 w-20`} value={typeAdults} onChange={(e) => setTypeAdults(Number(e.target.value))} /></label>
-            <label className="text-xs text-[#68707a]">Trẻ em<input type="number" min={0} className={`${inputSm} mt-0.5 w-20`} value={typeChildren} onChange={(e) => setTypeChildren(Number(e.target.value))} /></label>
-            <input className={inputSm} placeholder="Kiểu giường" value={typeBed} onChange={(e) => setTypeBed(e.target.value)} />
-            <button className="cb-btn-primary px-4 py-2 text-sm" onClick={addRoomType}>+ Thêm loại phòng</button>
+          <div className="mt-4 rounded-lg border border-[var(--cb-border)] bg-[var(--cb-bg)] p-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <label className="text-xs font-medium text-[var(--cb-muted)]">
+                Tên loại phòng *
+                <input className={`${inputSm} mt-1 w-full`} placeholder="VD: Phòng Đôi" value={typeName} onChange={(e) => setTypeName(e.target.value)} />
+              </label>
+              <label className="text-xs font-medium text-[var(--cb-muted)]">
+                Mã ngắn
+                <input className={`${inputSm} mt-1 w-full`} placeholder="VD: DLX — để trống: tự lấy từ tên (Phòng Đôi → PD)" value={typeCode} onChange={(e) => setTypeCode(e.target.value.toUpperCase())} />
+              </label>
+              <label className="text-xs font-medium text-[var(--cb-muted)]">
+                Người lớn tối đa
+                <input type="number" min={1} className={`${inputSm} mt-1 w-full`} value={typeAdults} onChange={(e) => setTypeAdults(Number(e.target.value))} />
+              </label>
+              <label className="text-xs font-medium text-[var(--cb-muted)]">
+                Trẻ em tối đa
+                <input type="number" min={0} className={`${inputSm} mt-1 w-full`} value={typeChildren} onChange={(e) => setTypeChildren(Number(e.target.value))} />
+              </label>
+              <label className="text-xs font-medium text-[var(--cb-muted)]">
+                Kiểu giường
+                <input className={`${inputSm} mt-1 w-full`} placeholder="VD: King / 2 giường đơn" value={typeBed} onChange={(e) => setTypeBed(e.target.value)} />
+              </label>
+              <label className="text-xs font-medium text-[var(--cb-muted)]">
+                Diện tích (m²)
+                <input className={`${inputSm} mt-1 w-full`} placeholder="VD: 28" value={typeSize} onChange={(e) => setTypeSize(e.target.value)} />
+              </label>
+              <label className="text-xs font-medium text-[var(--cb-muted)] md:col-span-2">
+                Mô tả ngắn (hiện cho khách xem)
+                <input className={`${inputSm} mt-1 w-full`} placeholder="VD: Phòng view sông, ban công riêng" value={typeDesc} onChange={(e) => setTypeDesc(e.target.value)} />
+              </label>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button className="cb-btn-primary px-4 py-2 text-sm" onClick={addRoomType}>+ Thêm loại phòng</button>
+              <button
+                className="rounded-lg border border-[var(--cb-border)] bg-white px-4 py-2 text-sm font-medium text-[var(--cb-text)]"
+                onClick={() => setShowAddType(false)}
+              >
+                Huỷ
+              </button>
+              <span className="text-xs text-[var(--cb-muted)]">
+                Giá bán nhập ở <Link href={`/${id}/rates`} className="font-medium text-[var(--cb-blue)] hover:underline">Lịch giá</Link> sau khi tạo loại phòng.
+              </span>
+            </div>
           </div>
         )}
 
         <table className="mt-4 w-full text-sm">
           <thead>
-            <tr className="border-b border-[#eef1f5] text-left text-xs uppercase tracking-wide text-[#68707a]">
+            <tr className="border-b border-[var(--cb-bg)] text-left text-xs uppercase tracking-wide text-[var(--cb-muted)]">
+              <th className="w-8 py-2 pr-1 font-semibold"></th>
               <th className="py-2 pr-3 font-semibold">STT</th>
               <th className="py-2 pr-3 font-semibold">Mã phòng</th>
               <th className="py-2 pr-3 font-semibold">Tên phòng</th>
@@ -320,96 +668,86 @@ export default function HotelRoomTypesPage() {
             </tr>
           </thead>
           <tbody>
-            {shownTypes.map((t, i) => (
-              <tr key={t.id} className="border-b border-[#eef1f5]">
-                <td className="py-2.5 pr-3 text-[#68707a]">{i + 1}</td>
-                <td className="py-2.5 pr-3">
-                  <span className="rounded-md bg-[#f0f3f7] px-2 py-0.5 text-xs font-semibold text-[#68707a]">{t.code ?? "—"}</span>
-                </td>
-                <td className="py-2.5 pr-3 font-medium">
-                  <Link href={`/hotels/${id}/room-types/${t.id}`} className="text-[#2563eb] hover:underline" title="Mở trang quản lí loại phòng này">
-                    {t.name}
-                  </Link>
-                </td>
-                <td className="py-2.5 pr-3">
-                  {t.maxAdults !== undefined ? `${t.maxAdults} người lớn, ${t.maxChildren ?? 0} trẻ em` : `${t.maxOccupancy} khách`}
-                </td>
-                <td className="py-2.5 pr-3">{t.bedConfig}</td>
-                <td className="py-2.5 pr-3">{rooms.filter((r) => r.roomTypeId === t.id).length}</td>
-                <td className="py-2.5 pr-3">
-                  <button
-                    onClick={() => setRoomTypes((p) => p.map((x) => (x.id === t.id ? { ...x, active: !(x.active ?? true) } : x)))}
-                    className={`relative h-5 w-9 rounded-full transition ${t.active ?? true ? "bg-[#2563eb]" : "bg-gray-300"}`}
-                    title="Đang bán / ngừng bán"
-                  >
-                    <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${t.active ?? true ? "left-[18px]" : "left-0.5"}`} />
-                  </button>
-                </td>
-                <td className="py-2.5 text-right">
-                  <button onClick={() => deleteRoomType(t.id)} className="font-medium text-[#e5484d] hover:underline">Xoá</button>
-                </td>
-              </tr>
-            ))}
+            {shownTypes.map((t, i) => {
+              const open = isExpanded(t);
+              const typeRooms = roomsOfType(t);
+              return (
+                <Fragment key={t.id}>
+                  <tr className="border-b border-[var(--cb-bg)] align-top">
+                    <td className="py-2.5 pr-1">
+                      <button
+                        onClick={() => toggleExpand(t.id)}
+                        className="rounded px-1 text-base leading-none text-[var(--cb-muted)] hover:text-[var(--cb-blue)]"
+                        title={open ? "Thu lại" : "Mở ra xem phòng vật lý"}
+                      >
+                        {open ? "▾" : "▸"}
+                      </button>
+                    </td>
+                    <td className="py-2.5 pr-3 text-[var(--cb-muted)]">{i + 1}</td>
+                    <td className="py-2.5 pr-3">
+                      <span className="rounded-md bg-[var(--cb-blue-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--cb-muted)]">{t.code ?? "—"}</span>
+                    </td>
+                    <td className="py-2.5 pr-3 font-medium">
+                      <Link href={`/hotels/${id}/room-types/${t.id}`} className="text-[var(--cb-blue)] hover:underline" title="Mở trang quản lí loại phòng này">
+                        {t.name}
+                      </Link>
+                    </td>
+                    <td className="py-2.5 pr-3">
+                      {t.maxAdults !== undefined ? `${t.maxAdults} người lớn, ${t.maxChildren ?? 0} trẻ em` : `${t.maxOccupancy} khách`}
+                    </td>
+                    <td className="py-2.5 pr-3">{t.bedConfig}</td>
+                    <td className="py-2.5 pr-3">{typeRooms.length}</td>
+                    <td className="py-2.5 pr-3">
+                      <button
+                        onClick={() => setRoomTypes((p) => p.map((x) => (x.id === t.id ? { ...x, active: !(x.active ?? true) } : x)))}
+                        className={`relative h-5 w-9 rounded-full transition ${t.active ?? true ? "bg-[var(--cb-blue)]" : "bg-gray-300"}`}
+                        title="Đang bán / ngừng bán"
+                      >
+                        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${t.active ?? true ? "left-[18px]" : "left-0.5"}`} />
+                      </button>
+                    </td>
+                    <td className="py-2.5 text-right">
+                      <button onClick={() => deleteRoomType(t.id)} className="font-medium text-[#e5484d] hover:underline">Xoá</button>
+                    </td>
+                  </tr>
+                  {open && (
+                    <tr className="border-b border-[var(--cb-bg)]">
+                      <td colSpan={9} className="py-3 pl-8 pr-2">
+                        <TypeRoomsPanel
+                          hotelId={id}
+                          typeId={t.id}
+                          rooms={shownRoomsOfType(t)}
+                          totalRooms={typeRooms.length}
+                          allRoomNumbers={allRoomNumbers}
+                          roomTypes={roomTypes}
+                          activeRoomNumbers={activeRoomNumbers}
+                          onAddRooms={addRoomsBulk}
+                          onDeleteRoom={deleteRoom}
+                          onSetHK={(number, status) =>
+                            setRooms((p) =>
+                              p.map((x) => (x.number === number ? { ...x, housekeepingStatus: status } : x))
+                            )
+                          }
+                          onMoveRoom={(number, newTypeId) =>
+                            setRooms((p) =>
+                              p.map((x) => (x.number === number ? { ...x, roomTypeId: newTypeId } : x))
+                            )
+                          }
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
             {shownTypes.length === 0 && (
-              <tr><td colSpan={8} className="py-6 text-center text-[#68707a]">{roomTypes.length === 0 ? "Chưa có loại phòng nào — bấm \"+ Thêm loại phòng\" để tạo." : "Không tìm thấy loại phòng nào khớp."}</td></tr>
+              <tr><td colSpan={9} className="py-6 text-center text-[var(--cb-muted)]">{roomTypes.length === 0 ? "Chưa có loại phòng nào — bấm \"+ Thêm loại phòng\" để tạo." : "Không tìm thấy loại phòng nào khớp."}</td></tr>
             )}
           </tbody>
         </table>
-        <p className="mt-3 text-xs text-[#68707a]">
+        <p className="mt-3 text-xs text-[var(--cb-muted)]">
           Giá bán không nằm ở đây: giá theo từng kênh nhập ở trang Lịch giá (tab Giá theo kênh) — để khỏi có 2 nơi cùng giữ 1 giá.
         </p>
-      </div>
-
-      {/* ===== PHONG VAT LY ===== */}
-      <div className="cb-card mt-5 p-5">
-        <h2 className="text-base font-bold text-[#17293e]">Phòng vật lý của khách sạn này</h2>
-        <p className="mt-0.5 text-sm text-[#68707a]">Từng số phòng cụ thể — đây là các hàng trong Lịch phòng của lễ tân.</p>
-        <table className="mt-4 w-full text-sm">
-          <thead>
-            <tr className="border-b border-[#eef1f5] text-left text-xs uppercase tracking-wide text-[#68707a]">
-              <th className="py-2 pr-3 font-semibold">Số phòng</th>
-              <th className="py-2 pr-3 font-semibold">Loại phòng</th>
-              <th className="py-2 pr-3 font-semibold">Trạng thái dọn phòng</th>
-              <th className="py-2 text-right font-semibold"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rooms.map((r) => (
-              <tr key={r.number} className="border-b border-[#eef1f5]">
-                <td className="py-2.5 pr-3 font-bold text-[#17293e]">{r.number}</td>
-                <td className="py-2.5 pr-3">{roomTypes.find((t) => t.id === r.roomTypeId)?.name ?? "—"}</td>
-                <td className="py-2.5 pr-3">
-                  <select
-                    className="rounded-lg border border-[#dde3ea] px-2 py-1 text-[13px] outline-none focus:border-[#2563eb]"
-                    value={r.housekeepingStatus}
-                    onChange={(e) =>
-                      setRooms((p) =>
-                        p.map((x) => (x.number === r.number ? { ...x, housekeepingStatus: e.target.value as Room["housekeepingStatus"] } : x))
-                      )
-                    }
-                  >
-                    {(Object.keys(HK_LABELS) as Room["housekeepingStatus"][]).map((s) => (
-                      <option key={s} value={s}>{HK_LABELS[s]}</option>
-                    ))}
-                  </select>
-                </td>
-                <td className="py-2.5 text-right">
-                  <button onClick={() => deleteRoom(r.number)} className="font-medium text-[#e5484d] hover:underline">Xoá</button>
-                </td>
-              </tr>
-            ))}
-            {rooms.length === 0 && (
-              <tr><td colSpan={4} className="py-6 text-center text-[#68707a]">Chưa có phòng nào.</td></tr>
-            )}
-          </tbody>
-        </table>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <input className={`${inputSm} w-36`} placeholder="Số phòng, VD: 105" value={roomNumber} onChange={(e) => setRoomNumber(e.target.value)} />
-          <select className={inputSm} value={roomTypeId} onChange={(e) => setRoomTypeId(e.target.value)}>
-            {roomTypes.map((t) => (<option key={t.id} value={t.id}>{t.name}</option>))}
-          </select>
-          <button className="cb-btn-primary px-4 py-2 text-sm" onClick={addRoom}>+ Thêm phòng</button>
-        </div>
       </div>
     </div>
   );
