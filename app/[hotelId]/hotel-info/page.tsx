@@ -1,23 +1,8 @@
 "use client";
 
-// ============================================================
-// FILE HOTELINFO3 — app/[hotelId]/hotel-info/page.tsx
-// Trang THONG TIN CHUNG rieng biet (theo yeu cau 2026-10-27):
-// khong con thanh tab lon (Thong tin chung / Cau hinh / Loai
-// phong & Phong chung 1 trang) nua. Trang nay co 4 tab con:
-//   Thong tin dang ky | Tien ich | Hinh anh | Dia diem lan can
-// (dung nhu anh Vos gui, them tab Dia diem lan can).
-// HOTELINFO3 (2026-11-13, chuot lai tu tren xuong duoi):
-//   - Ma khach san nhap duoc khi con trong, luu that vao DB.
-//   - Logo + anh them bang link (co xem truoc, sua chu thich,
-//     dat anh bia); tai file truc tiep can kho anh (buoc sau).
-//   - Them tab Dia diem lan can (truc day khong co cho sua).
-//   - Mui gio mo rong quoc te; sao co muc "Chua xep hang";
-//     vi do/kinh do trong thi de trong thay vi 0; mo ta gioi
-//     han that 3000 ky tu.
-// Trang nay TU CHUA moi thu, khong dung chung component
-// HotelDetailPage nua — dan 1 file nay la chay ngay.
-// ============================================================
+// NATEUI13 — app/[hotelId]/hotel-info/page.tsx (Thong tin chung)
+// Trang rieng 4 tab con: Thong tin dang ky | Tien ich | Hinh anh | Dia diem lan can; luu ca profile de khong mat phan chua sua.
+// Doi sang token toi gian 2026-11-21.
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -37,16 +22,16 @@ import {
 } from "@/lib/mock-data";
 
 const inputCls =
-  "w-full rounded-lg border border-[#dde3ea] bg-white px-3 py-2 text-sm outline-none focus:border-[#2563eb]";
+  "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
 // Ban input khong w-full, dung cho cac dong form nhieu o nam ngang.
 const rowInputCls =
-  "rounded-lg border border-[#dde3ea] bg-white px-3 py-2 text-sm outline-none focus:border-[#2563eb]";
+  "rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block text-sm">
-      <span className="text-[#68707a]">{label}</span>
+      <span className="text-muted">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
   );
@@ -54,18 +39,18 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function SaveRow({ msg, onSave }: { msg: string; onSave: () => void }) {
   return (
-    <div className="mt-5 flex items-center gap-3 border-t border-[#eef1f5] pt-4">
+    <div className="mt-5 flex items-center gap-3 border-t border-[var(--nui-bg)] pt-4">
       <button onClick={onSave} className="cb-btn-primary px-5 py-2 text-sm">
         Lưu
       </button>
-      {msg && <span className="text-sm text-[#1db584]">{msg}</span>}
+      {msg && <span className="text-sm text-success">{msg}</span>}
     </div>
   );
 }
 
 function GroupTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="mt-6 text-[13px] font-bold uppercase tracking-wide text-[#2563eb] first:mt-0">
+    <h3 className="mt-6 text-[13px] font-bold uppercase tracking-wide text-primary first:mt-0">
       {children}
     </h3>
   );
@@ -79,9 +64,7 @@ const NEARBY_LABELS: Record<NearbyCategory, string> = {
   food: "Nhà hàng & chợ địa phương",
 };
 
-// ---------- defaults for a hotel that has not filled these in ----------
-// (kept so SAVE writes the whole profile back untouched — the parts
-// this page does not edit, like config, are never lost)
+// Mac dinh cho khach san chua dien — SAVE ghi ca profile ve nen phan trang nay khong sua (vd config) khong bi mat.
 const DEFAULT_CONFIG: HotelConfig = {
   notifyEmail: "", ccEmail: "", bccEmail: "", cardEmail: "",
   autoCancelUnconfirmed: false, autoCancelFailedPaymentMinutes: 0,
@@ -192,29 +175,29 @@ export default function HotelInfoPage() {
 
   const subBtn = (active: boolean) =>
     active
-      ? "border-b-2 border-[#2563eb] px-4 py-2.5 text-sm font-semibold text-[#2563eb]"
-      : "border-b-2 border-transparent px-4 py-2.5 text-sm text-[#68707a] hover:text-[#17293e]";
+      ? "border-b-2 border-primary px-4 py-2.5 text-sm font-semibold text-primary"
+      : "border-b-2 border-transparent px-4 py-2.5 text-sm text-muted hover:text-ink";
 
   return (
     <div>
-      <Link href="/" className="text-sm font-medium text-[#2563eb] hover:underline">
+      <Link href="/" className="text-sm font-medium text-primary hover:underline">
         ← Tất cả khách sạn
       </Link>
       <div className="mt-2 flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-bold text-[#17293e]">{hotel.name}</h1>
+        <h1 className="text-2xl font-bold text-ink">{hotel.name}</h1>
         {hotel.code && (
-          <span className="rounded-md bg-[#f0f3f7] px-2 py-0.5 text-xs font-semibold text-[#68707a]">{hotel.code}</span>
+          <span className="rounded-md bg-primary-soft px-2 py-0.5 text-xs font-semibold text-muted">{hotel.code}</span>
         )}
         {hotel.starRating && <span className="text-amber-500">{"★".repeat(hotel.starRating)}</span>}
       </div>
-      <p className="mt-1 text-sm text-[#68707a]">
+      <p className="mt-1 text-sm text-muted">
         Trang quản lí riêng của khách sạn này — không ảnh hưởng khách sạn khác.
       </p>
-      {loading && <p className="mt-3 text-sm text-[#68707a]">Đang tải dữ liệu từ Supabase...</p>}
-      {dbError && <p className="mt-3 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">Lỗi cơ sở dữ liệu: {dbError}</p>}
+      {loading && <p className="mt-3 text-sm text-muted">Đang tải dữ liệu từ Supabase...</p>}
+      {dbError && <p className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">Lỗi cơ sở dữ liệu: {dbError}</p>}
 
       {/* ===== 4 tab con cua Thong tin chung ===== */}
-      <div className="mt-5 flex flex-wrap border-b border-[#dde3ea]">
+      <div className="mt-5 flex flex-wrap border-b border-line">
         <button className={subBtn(sub === "info")} onClick={() => setSub("info")}>Thông tin đăng ký</button>
         <button className={subBtn(sub === "amenities")} onClick={() => setSub("amenities")}>Tiện ích</button>
         <button className={subBtn(sub === "photos")} onClick={() => setSub("photos")}>Hình ảnh</button>
@@ -225,7 +208,7 @@ export default function HotelInfoPage() {
         {/* ----- registration info ----- */}
         {sub === "info" && (
           <div>
-            <h2 className="text-[13px] font-bold uppercase tracking-wide text-[#68707a]">
+            <h2 className="text-[13px] font-bold uppercase tracking-wide text-muted">
               Thông tin đăng ký khách sạn
             </h2>
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -286,7 +269,7 @@ export default function HotelInfoPage() {
               <Field label="Logo khách sạn">
                 {hotel.logoUrl && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={hotel.logoUrl} alt="Logo khách sạn" className="mb-2 h-12 w-auto rounded-lg border border-[#dde3ea] bg-white object-contain" />
+                  <img src={hotel.logoUrl} alt="Logo khách sạn" className="mb-2 h-12 w-auto rounded-lg border border-line bg-surface object-contain" />
                 )}
                 <input
                   className={inputCls}
@@ -295,7 +278,7 @@ export default function HotelInfoPage() {
                   onChange={(e) => setHotel({ ...hotel, logoUrl: e.target.value || undefined })}
                 />
                 {hotel.logoUrl && (
-                  <button onClick={() => setHotel({ ...hotel, logoUrl: undefined })} className="mt-1 text-xs font-medium text-[#e5484d] hover:underline">
+                  <button onClick={() => setHotel({ ...hotel, logoUrl: undefined })} className="mt-1 text-xs font-medium text-danger hover:underline">
                     Xoá logo
                   </button>
                 )}
@@ -352,19 +335,19 @@ export default function HotelInfoPage() {
         {/* ----- amenities ----- */}
         {sub === "amenities" && (
           <div>
-            <p className="text-sm text-[#68707a]">
+            <p className="text-sm text-muted">
               Tick chọn tiện ích khách sạn có — phần này hiện trên trang đặt phòng của khách sạn.
-              Đã chọn <b className="text-[#17293e]">{amenities.length}</b> tiện ích.
+              Đã chọn <b className="text-ink">{amenities.length}</b> tiện ích.
             </p>
             {AMENITY_GROUPS.map((g) => (
               <div key={g.id} className="mt-5">
-                <h3 className="text-sm font-bold text-[#17293e]">{g.name}</h3>
+                <h3 className="text-sm font-bold text-ink">{g.name}</h3>
                 <div className="mt-2 grid gap-x-4 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
                   {g.items.map((item) => (
                     <label key={item.id} className="flex cursor-pointer items-center gap-2.5 text-sm">
                       <input
                         type="checkbox"
-                        className="h-4 w-4 accent-[#2563eb]"
+                        className="h-4 w-4 accent-primary"
                         checked={amenities.includes(item.id)}
                         onChange={(e) =>
                           setAmenities((prev) =>
@@ -385,9 +368,9 @@ export default function HotelInfoPage() {
         {/* ----- photos ----- */}
         {sub === "photos" && (
           <div>
-            <div className="rounded-xl border border-[#dde3ea] bg-[#f7f9fb] px-4 py-4">
-              <div className="font-medium text-[#17293e]">Thêm ảnh bằng link</div>
-              <div className="mt-1 text-sm text-[#68707a]">
+            <div className="rounded-xl border border-line bg-primary-soft px-4 py-4">
+              <div className="font-medium text-ink">Thêm ảnh bằng link</div>
+              <div className="mt-1 text-sm text-muted">
                 Dán link ảnh (https://...) — ảnh lưu vào hồ sơ khách sạn khi bấm Lưu bên dưới. Tải file ảnh trực tiếp từ máy lên sẽ có ở bước kho ảnh sau.
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
@@ -408,24 +391,24 @@ export default function HotelInfoPage() {
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {photos.map((ph, i) => (
-                <div key={ph.id} className="group relative overflow-hidden rounded-xl border border-[#dde3ea]">
+                <div key={ph.id} className="group relative overflow-hidden rounded-xl border border-line">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={ph.url} alt={ph.caption} className="h-40 w-full object-cover" />
                   {i === 0 && (
-                    <span className="absolute left-2 top-2 rounded-full bg-[#2563eb] px-2.5 py-0.5 text-[11px] font-semibold text-white">
+                    <span className="absolute left-2 top-2 rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-semibold text-white">
                       Ảnh bìa
                     </span>
                   )}
                   <button
                     onClick={() => setPhotos((p) => p.filter((x) => x.id !== ph.id))}
-                    className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-sm text-[#e5484d] opacity-0 shadow transition group-hover:opacity-100"
+                    className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-surface/90 text-sm text-danger opacity-0 shadow transition group-hover:opacity-100"
                     title="Xoá ảnh"
                   >
                     ✕
                   </button>
                   <div className="px-3 py-2">
                     <input
-                      className="w-full rounded-md border border-transparent px-1 py-0.5 text-[13px] text-[#17293e] outline-none focus:border-[#2563eb]"
+                      className="w-full rounded-md border border-transparent px-1 py-0.5 text-[13px] text-ink outline-none focus:border-primary"
                       value={ph.caption}
                       placeholder="Chú thích ảnh"
                       onChange={(e) => setPhotos((p) => p.map((x) => (x.id === ph.id ? { ...x, caption: e.target.value } : x)))}
@@ -433,7 +416,7 @@ export default function HotelInfoPage() {
                     {i > 0 && (
                       <button
                         onClick={() => setPhotos((p) => [ph, ...p.filter((x) => x.id !== ph.id)])}
-                        className="mt-0.5 text-xs font-medium text-[#2563eb] hover:underline"
+                        className="mt-0.5 text-xs font-medium text-primary hover:underline"
                       >
                         Đặt làm ảnh bìa
                       </button>
@@ -442,13 +425,13 @@ export default function HotelInfoPage() {
                 </div>
               ))}
               {photos.length === 0 && (
-                <div className="py-6 text-sm text-[#68707a] sm:col-span-2 lg:col-span-3">
+                <div className="py-6 text-sm text-muted sm:col-span-2 lg:col-span-3">
                   Chưa có ảnh nào — thêm ảnh đầu tiên bằng link ở trên.
                 </div>
               )}
             </div>
-            <div className="mt-4 text-[13px] text-[#68707a]">
-              Kênh bán áp dụng: <b className="text-[#17293e]">Website (Booking Engine)</b> — ảnh chỉ phục vụ
+            <div className="mt-4 text-[13px] text-muted">
+              Kênh bán áp dụng: <b className="text-ink">Website (Booking Engine)</b> — ảnh chỉ phục vụ
               trang đặt phòng của khách sạn, không đẩy lên các OTA.
             </div>
             <SaveRow msg={savedMsg} onSave={save} />
@@ -458,7 +441,7 @@ export default function HotelInfoPage() {
         {/* ----- nearby places ----- */}
         {sub === "nearby" && (
           <div>
-            <p className="text-sm text-[#68707a]">
+            <p className="text-sm text-muted">
               Địa điểm xung quanh khách sạn — hiện trên trang đặt phòng để khách hình dung vị trí.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
@@ -469,7 +452,7 @@ export default function HotelInfoPage() {
               </select>
               <input className={`${rowInputCls} min-w-56 flex-1`} placeholder="Tên địa điểm, VD: Hồ Xuân Hương" value={nbName} onChange={(e) => setNbName(e.target.value)} />
               <input type="number" step="0.1" min={0} className={`${rowInputCls} w-28`} value={nbDistance} onChange={(e) => setNbDistance(Number(e.target.value))} title="Khoảng cách (km)" />
-              <span className="self-center text-sm text-[#68707a]">km</span>
+              <span className="self-center text-sm text-muted">km</span>
               <button
                 onClick={() => {
                   if (!nbName.trim()) return alert("Chưa nhập tên địa điểm.");
@@ -486,16 +469,16 @@ export default function HotelInfoPage() {
               if (items.length === 0) return null;
               return (
                 <div key={cat} className="mt-5">
-                  <h3 className="text-sm font-bold text-[#17293e]">{NEARBY_LABELS[cat]}</h3>
-                  <div className="mt-2 divide-y divide-[#eef1f5]">
+                  <h3 className="text-sm font-bold text-ink">{NEARBY_LABELS[cat]}</h3>
+                  <div className="mt-2 divide-y divide-[var(--nui-bg)]">
                     {items.map((n) => (
                       <div key={n.name} className="flex items-center justify-between py-2 text-sm">
                         <span>{n.name}</span>
                         <span className="flex items-center gap-4">
-                          <span className="text-[#68707a]">{n.distanceKm} km</span>
+                          <span className="text-muted">{n.distanceKm} km</span>
                           <button
                             onClick={() => setNearby((p) => p.filter((x) => x !== n))}
-                            className="font-medium text-[#e5484d] hover:underline"
+                            className="font-medium text-danger hover:underline"
                           >
                             Xoá
                           </button>
@@ -507,10 +490,10 @@ export default function HotelInfoPage() {
               );
             })}
             {nearby.length === 0 && (
-              <p className="mt-4 text-sm text-[#68707a]">Chưa có địa điểm nào — thêm địa điểm đầu tiên ở trên.</p>
+              <p className="mt-4 text-sm text-muted">Chưa có địa điểm nào — thêm địa điểm đầu tiên ở trên.</p>
             )}
-            <div className="mt-4 text-[13px] text-[#68707a]">
-              Kênh bán áp dụng: <b className="text-[#17293e]">Website (Booking Engine)</b>.
+            <div className="mt-4 text-[13px] text-muted">
+              Kênh bán áp dụng: <b className="text-ink">Website (Booking Engine)</b>.
             </div>
             <SaveRow msg={savedMsg} onSave={save} />
           </div>

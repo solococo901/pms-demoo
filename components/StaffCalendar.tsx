@@ -1,18 +1,6 @@
 "use client";
-// ============================================================
-// components/StaffCalendar.tsx — LICH PHONG kieu Cloudbeds
-// CALDATE1 (2026-11-13): lich + form chan phong mo dung ngay
-// hom nay that theo gio dia phuong, khong ket o ngay mau
-// 21/10/2026 cua mock-data nua (cach lam giong RatesCalendar).
-// Tape chart: truc thoi gian DAI (28 ngay), nhom theo loai
-// phong, moi cot ngay co % cong suat + so phong trong, moi
-// nhom loai phong co dong tom tat (trong + gia quay).
-// Logic giu nguyen: keo-tha doi phong/ngay, chan phong,
-// check-in/out, du lieu doc/ghi Supabase, day Channex qua
-// hang doi khi ton phong thay doi.
-// CBCAL1 (2026-11-17): huy hieu "0 don chua gan" doi mau kem
-// #e7ddd3 sang vien --cb-border theo bang mau Cloudbeds moi.
-// ============================================================
+// CALTIDY23 — components/StaffCalendar.tsx (Lich phong, y het Cloudbeds)
+// Ghi log (AUDIT): doi trang thai don (huy/nhan/tra/khong den) + chan/mo lai phong thi ghi vao audit_logs.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -40,11 +28,13 @@ import {
 } from "@/lib/booking-rules";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
+import { markRoomsDirtyAfterCheckout } from "@/lib/checkout-housekeeping";
+import { writeAuditLog } from "@/lib/audit-log";
 import { useParams } from "next/navigation";
 import { queueChannexDates, rangeDates, stayDates } from "@/lib/channex-outbox";
 import ReservationBar, { STATUS_STYLES, STATUS_LABELS } from "./ReservationBar";
-import { DateRangePicker } from "@/components/DatePicker";
-import { IconBan, IconCalendar, IconDroplet } from "@/components/icons";
+import { DatePicker, DateRangePicker } from "@/components/DatePicker";
+import { IconBan, IconCalendar, IconDroplet, IconMenu, IconPlus, IconSearch } from "@/components/icons";
 import BookingPopup from "./BookingPopup";
 
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
@@ -74,10 +64,10 @@ const overlaps = (aIn: string, aOut: string, bIn: string, bOut: string) => aIn <
 const WINDOW = 28; // so ngay hien tren truc (Cloudbeds ~4 tuan)
 
 const HK_DOT: Record<string, string> = {
-  clean: "bg-[#1db584]",
-  dirty: "bg-[#e5484d]",
-  in_progress: "bg-[#f59e0b]",
-  out_of_order: "bg-[var(--cb-muted)]",
+  clean: "bg-success",
+  dirty: "bg-danger",
+  in_progress: "bg-warning",
+  out_of_order: "bg-muted",
 };
 const HK_LABEL: Record<string, string> = {
   clean: "Đã dọn",
@@ -85,6 +75,9 @@ const HK_LABEL: Record<string, string> = {
   in_progress: "Đang dọn",
   out_of_order: "Đang sửa",
 };
+
+// Ten ngan kenh de hien trong o Ngung ban (o lich chi rong ~64px).
+const CH_SHORT: Record<string, string> = { website: "Web", frontdesk: "Lễ tân", booking_com: "B.com", expedia: "Expedia", airbnb: "Airbnb", agoda: "Agoda" };
 
 /** what is being dragged right now */
 type DragItem = { reservationId: string; roomNumber: string | null; visibleStart: number };
@@ -333,6 +326,17 @@ export default function StaffCalendar() {
     });
     if (error) return alert("Lưu chặn phòng không thành công: " + error.message);
     setBlocks((prev) => [...prev, nb]);
+    // Ghi log chan phong (AUDIT).
+    const dShort = (d: string) => d.split("-").reverse().join("/");
+    writeAuditLog({
+      hotelId: HOTEL_ID,
+      accountId: ACCOUNT_ID,
+      action: "room_blocked",
+      entityType: "room_block",
+      entityId: nb.id,
+      summary: `Chặn phòng ${nb.roomNumber} · ${dShort(nb.from)} → ${dShort(nb.to)} (${nb.kind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng"}: ${nb.reason})`,
+      details: { blockId: nb.id, roomNumber: nb.roomNumber, from: nb.from, to: nb.to, kind: nb.kind, reason: nb.reason },
+    });
     if (nb.kind === "out_of_order") queueChannexDates(rangeDates(nb.from, nb.to));
     setBfReason("");
     setShowBlockForm(false);
@@ -344,6 +348,19 @@ export default function StaffCalendar() {
     if (error) return alert("Xoá chặn phòng không thành công: " + error.message);
     setBlocks((prev) => prev.filter((b) => b.id !== id));
     setSelectedBlockId(null);
+    // Ghi log mo lai phong (AUDIT).
+    if (blk) {
+      const dShort = (d: string) => d.split("-").reverse().join("/");
+      writeAuditLog({
+        hotelId: HOTEL_ID,
+        accountId: ACCOUNT_ID,
+        action: "room_unblocked",
+        entityType: "room_block",
+        entityId: id,
+        summary: `Mở lại phòng ${blk.roomNumber} · ${dShort(blk.from)} → ${dShort(blk.to)} (${blk.reason})`,
+        details: { blockId: id, roomNumber: blk.roomNumber, from: blk.from, to: blk.to, kind: blk.kind, reason: blk.reason },
+      });
+    }
     if (blk?.kind === "out_of_order") queueChannexDates(rangeDates(blk.from, blk.to));
   }
 
@@ -370,12 +387,14 @@ export default function StaffCalendar() {
   // Ngay dang loc o panel Assignments (bam cot ngay tren lich de chon;
   // null = hien tat ca). Panel chi hien don chua gan DEN vao ngay do.
   const [assignDate, setAssignDate] = useState<string | null>(null);
-  const [assignQuery, setAssignQuery] = useState("");
   // So ghi chu theo don (cham vang tren thanh) + loc loai phong tren
   // lich + dong/mo panel Assignments (kieu Cloudbeds thu duoc panel)
   const [notesCount, setNotesCount] = useState<Record<string, number>>({});
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [collapsedTypes, setCollapsedTypes] = useState<Record<string, boolean>>({});
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
   // Lich mini chon ngay o panel (kieu Cloudbeds): thang dang xem
   // + cac o ngay cua thang do (null = o trong, thu 2 dau tuan)
   const [calOpen, setCalOpen] = useState(false);
@@ -413,14 +432,10 @@ export default function StaffCalendar() {
     for (const r of unassigned) m[r.checkIn] = (m[r.checkIn] ?? 0) + 1;
     return m;
   }, [unassigned]);
-  // Danh sach hien trong panel: loc theo ngay den + tim kiem + sap theo ngay den
+  // Danh sach hien trong panel: loc theo ngay den + sap theo ngay den
   const panelUnassigned = useMemo(() => {
-    const q = assignQuery.trim().toLowerCase();
-    const list = q
-      ? visibleUnassigned.filter((r) => r.guestName.toLowerCase().includes(q) || r.id.toLowerCase().includes(q))
-      : [...visibleUnassigned];
-    return list.sort((a, b) => (a.checkIn < b.checkIn ? -1 : a.checkIn > b.checkIn ? 1 : a.guestName.localeCompare(b.guestName)));
-  }, [visibleUnassigned, assignQuery]);
+    return [...visibleUnassigned].sort((a, b) => (a.checkIn < b.checkIn ? -1 : a.checkIn > b.checkIn ? 1 : a.guestName.localeCompare(b.guestName)));
+  }, [visibleUnassigned]);
   // Nhom don chua gan theo loai phong (kieu panel Cloudbeds)
   const unassignedGroups = useMemo(() => {
     const order: string[] = [];
@@ -655,9 +670,24 @@ export default function StaffCalendar() {
     const { error } = await supabase.from("reservations").update({ status }).eq("id", id);
     if (error) return alert("Lưu trạng thái không thành công: " + error.message);
     setReservations((prev) => prev.map((x) => (x.id === id ? { ...x, status } : x)));
+    // Ghi log doi trang thai don (AUDIT): huy / nhan / tra phong / khong den.
+    const logAction = status === "cancelled" ? "booking_cancelled" : status === "in_house" ? "booking_checked_in" : status === "checked_out" ? "booking_checked_out" : "booking_updated";
+    const logLabel = status === "cancelled" ? "Huỷ đơn" : status === "in_house" ? "Nhận phòng" : status === "checked_out" ? "Trả phòng" : status === "no_show" ? "Đánh dấu không đến" : "Đổi trạng thái";
+    const dShort = (d: string) => d.split("-").reverse().join("/");
+    writeAuditLog({
+      hotelId: HOTEL_ID,
+      accountId: ACCOUNT_ID,
+      action: logAction,
+      entityType: "reservation",
+      entityId: id,
+      summary: `${logLabel} ${r.guestName} · ${dShort(r.checkIn)} → ${dShort(r.checkOut)}${r.roomNumbers.length > 0 ? ` · phòng ${r.roomNumbers.join(", ")}` : ""}`,
+      details: { reservationId: id, guestName: r.guestName, checkIn: r.checkIn, checkOut: r.checkOut, roomNumbers: r.roomNumbers, oldStatus: r.status, newStatus: status, totalAmount: r.totalAmount },
+    });
     // Huy don thi dong popup + thanh booking bien khoi lich ngay
     if (status === "cancelled") closePopup();
     queueChannexDates(stayDates(r.checkIn, r.checkOut));
+    // Tra phong xong: phong dang Sach tu chuyen Chua don (helper khong bao gio lam hong viec tra phong).
+    if (status === "checked_out") void markRoomsDirtyAfterCheckout(HOTEL_ID, r.roomNumbers);
   }
 
   // ---------- derived display data ----------
@@ -699,6 +729,22 @@ export default function StaffCalendar() {
     return map;
   }, [groups, days, blocks, activeRes, rooms]);
 
+  // Dong ban theo loai phong + ngay (tu inventory_blocks) — chi de HIEN tren luoi,
+  // khong doi cach tinh phong trong (le tan van ban truc tiep duoc).
+  const stopSellByType = useMemo(() => {
+    const map: Record<string, Record<string, InventoryBlock[]>> = {};
+    for (const g of groups) {
+      for (const d of days) {
+        const bl = invBlocks.filter((b) => b.roomTypeId === g.typeId && b.from <= d && d <= b.to);
+        if (bl.length > 0) {
+          if (!map[g.typeId]) map[g.typeId] = {};
+          map[g.typeId][d] = bl;
+        }
+      }
+    }
+    return map;
+  }, [groups, days, invBlocks]);
+
   // occupancy % per visible day (whole hotel)
   const occByDay = useMemo(
     () =>
@@ -735,29 +781,32 @@ export default function StaffCalendar() {
     return `₫${v.toLocaleString("en-US")}`;
   };
 
-  const stickyCell = "sticky left-0 z-20";
   // Nhom hien tren lich (loc theo dropdown All Room Types)
   const gridGroups = typeFilter ? groups.filter((g) => g.typeId === typeFilter) : groups;
   // O ngay kieu Cloudbeds: vien so don chua gan / thu + ngay / % cong suat
   // (dung chung cho dau lich va cuoi lich; keyPrefix tranh trung key)
   const dayHeaderCell = (d: string, i: number, keyPrefix: string) => {
     const dt = new Date(d + "T00:00:00");
-    const weekend = dt.getDay() === 0 || dt.getDay() === 6;
     const unCount = unassignedByDay[d] ?? 0;
     return (
       <div
         key={`${keyPrefix}${d}`}
-        onClick={() => { setAssignDate(assignDate === d ? null : d); setCalMonth(null); }}
+        onClick={() => {
+          const next = assignDate === d ? null : d;
+          setAssignDate(next);
+          setCalMonth(null);
+          if (next) setPanelOpen(true);
+        }}
         title={unCount > 0 ? `Xem ${unCount} đơn chưa gán đến ngày ${d}` : "Không có đơn chưa gán đến ngày này"}
-        className={`cursor-pointer border-b border-l border-[var(--cb-bg)] px-1 py-1.5 text-center ${d === assignDate ? "bg-[#fef9c3]" : d === todayStr ? "bg-[var(--cb-blue-soft)]" : "bg-[var(--cb-blue-soft)]"}`}
+        className={`flex h-18 cursor-pointer flex-col items-center justify-center border-b border-l border-[var(--nui-bg)] px-1 text-center ${d === assignDate ? "bg-warning-soft" : d === todayStr ? "bg-success-soft" : "bg-surface"}`}
       >
-        <div className={`mx-auto w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${unCount > 0 ? "bg-[var(--cb-blue)] text-white" : "bg-[var(--cb-border)] text-[var(--cb-muted)]"}`}>
+        <div className={`mx-auto w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${unCount > 0 ? "bg-primary text-white" : "bg-line text-muted"}`}>
           {unCount}
         </div>
-        <div className={`text-sm font-bold ${weekend ? "text-[#e5484d]" : d === todayStr ? "text-[var(--cb-blue)]" : "text-[var(--cb-text)]"}`}>
+        <div className="text-sm font-bold text-ink">
           {WEEKDAYS[dt.getDay()]} {dt.getDate()}
         </div>
-        <div className="text-[10px] text-[var(--cb-muted)]">{occByDay[i]}%</div>
+        <div className="text-[10px] text-muted">{occByDay[i]}%</div>
       </div>
     );
   };
@@ -765,24 +814,10 @@ export default function StaffCalendar() {
   // ---------- render ----------
   return (
     <div className="relative">
-      {dbError && <p className="mb-3 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">Lỗi cơ sở dữ liệu: {dbError}</p>}
+      {dbError && <p className="mb-3 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">Lỗi cơ sở dữ liệu: {dbError}</p>}
 
-      {/* week navigation kieu Cloudbeds: pill ‹ TODAY › + loc loai phong */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <button onClick={() => setStartDate((d) => addDays(d, -7))} className="rounded-full border border-[var(--cb-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--cb-text)]">‹</button>
-        <button onClick={() => setStartDate(todayStr)} className="rounded-full border border-[var(--cb-border)] bg-white px-4 py-1.5 text-sm font-bold text-[var(--cb-blue)]">Hôm nay</button>
-        <button onClick={() => setStartDate((d) => addDays(d, 7))} className="rounded-full border border-[var(--cb-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--cb-text)]">›</button>
-        <select value={typeFilter ?? ""} onChange={(e) => setTypeFilter(e.target.value || null)} className="rounded-full border border-[var(--cb-border)] bg-white px-3 py-1.5 text-sm text-[var(--cb-text)]">
-          <option value="">All Room Types</option>
-          {groups.map((g) => (
-            <option key={g.typeId} value={g.typeId}>{g.name}</option>
-          ))}
-        </select>
-        <span className="ml-1 text-sm text-[var(--cb-muted)]">
-          {days[0]} → {days[days.length - 1]} · {WINDOW} ngày
-        </span>
-      </div>
-
+      {/* Khung lich kieu Cloudbeds: thanh cong cu nam tren 3 hang dau cua luoi */}
+      <div className="bg-surface">
       {/* Unassigned strip: da chuyen xuong panel Assignments ben trai */}
 
       {/* assignment-mode banner: da chuyen vao panel Assignments ben trai */}
@@ -792,7 +827,7 @@ export default function StaffCalendar() {
         <>
           <div className="fixed inset-0 z-40" onClick={() => { setPendingRoom(null); setSpotAnchor(null); }} />
           <div
-            className="fixed z-50 w-[260px] overflow-hidden rounded-xl bg-white shadow-2xl"
+            className="fixed z-50 w-[260px] overflow-hidden rounded-xl bg-surface shadow-2xl"
             style={{
               left: Math.min(Math.max(spotAnchor.x - 40, 8), Math.max((typeof window !== "undefined" ? window.innerWidth : 1200) - 268, 8)),
               top: spotAnchor.y + 162 > (typeof window !== "undefined" ? window.innerHeight : 800) ? Math.max(spotAnchor.y - 162, 8) : spotAnchor.y + 12,
@@ -800,65 +835,55 @@ export default function StaffCalendar() {
           >
             <div className="flex items-center justify-between bg-[#4aa8de] px-3 py-2 text-sm font-semibold text-white">
               <span>{fmtStayDay(assigningBooking.checkIn)} – {fmtStayDay(assigningBooking.checkOut)}</span>
-              <button onClick={() => { setPendingRoom(null); setSpotAnchor(null); }} className="rounded-full px-1.5 leading-none hover:bg-white/20">✕</button>
+              <button onClick={() => { setPendingRoom(null); setSpotAnchor(null); }} className="rounded-full px-1.5 leading-none hover:bg-surface/20">✕</button>
             </div>
             <div className="p-2 text-sm">
-              <button onClick={() => assignRoom(pendingRoom)} className="block w-full rounded-lg px-3 py-2 text-left font-medium text-[var(--cb-text)] hover:bg-[var(--cb-blue-soft)]">› Assign</button>
-              <button onClick={() => { setSelectedId(assigningBooking.id); setPopupAnchor(spotAnchor); }} className="block w-full rounded-lg px-3 py-2 text-left font-medium text-[var(--cb-text)] hover:bg-[var(--cb-blue-soft)]">› Go to Reservation</button>
+              <button onClick={() => assignRoom(pendingRoom)} className="block w-full rounded-lg px-3 py-2 text-left font-medium text-ink hover:bg-primary-soft">› Assign</button>
+              <button onClick={() => { setSelectedId(assigningBooking.id); setPopupAnchor(spotAnchor); }} className="block w-full rounded-lg px-3 py-2 text-left font-medium text-ink hover:bg-primary-soft">› Go to Reservation</button>
             </div>
           </div>
         </>
       )}
 
-      {/* Block-a-room toolbar + form */}
-      <div className="mb-4">
-        <button onClick={() => setShowBlockForm((v) => !v)} className="cb-btn-ghost px-3 py-2 text-sm">
-          ＋ Chặn phòng (sửa chữa / tạm đóng)
-        </button>
-        {showBlockForm && (
-          <div className="cb-card mt-3 flex flex-wrap items-end gap-3 p-4 text-sm text-[var(--cb-text)]">
-            <label>
-              Phòng
-              <select value={bfRoom} onChange={(e) => setBfRoom(e.target.value)} className="ml-2 rounded-lg border border-[var(--cb-border)] px-2 py-2">
-                {rooms.map((r) => (
-                  <option key={r.number} value={r.number}>{r.number} — {typeName(r.roomTypeId)}</option>
-                ))}
-              </select>
-            </label>
-            <div className="flex items-center gap-2">
-              <span className="text-sm">Từ đêm → đến đêm (tính cả đêm này)</span>
-              <DateRangePicker from={bfFrom} to={bfTo} onChange={(f, t) => { setBfFrom(f); setBfTo(t); }} />
-            </div>
-            <label>
-              Loại chặn
-              <select value={bfKind} onChange={(e) => setBfKind(e.target.value as RoomBlock["kind"])} className="ml-2 rounded-lg border border-[var(--cb-border)] px-2 py-2">
-                <option value="out_of_order">Phòng hỏng — trừ khỏi phòng bán được</option>
-                <option value="out_of_service">Tạm đóng — vẫn tính trong tồn, chỉ đánh dấu</option>
-              </select>
-            </label>
-            <label>
-              Lý do
-              <input value={bfReason} onChange={(e) => setBfReason(e.target.value)} className="ml-2 rounded-lg border border-[var(--cb-border)] px-2 py-2" placeholder="VD: Sửa điều hoà" />
-            </label>
-            <button onClick={addBlock} className="cb-btn-primary px-4 py-2 text-sm">Thêm chặn</button>
+      {/* Block-a-room form (mo bang muc Chan phong trong menu + xanh) */}
+      {showBlockForm && (
+        <div className="cb-card mb-4 flex flex-wrap items-end gap-3 p-4 text-sm text-ink">
+          <label>
+            Phòng
+            <select value={bfRoom} onChange={(e) => setBfRoom(e.target.value)} className="ml-2 rounded-lg border border-line px-2 py-2">
+              {rooms.map((r) => (
+                <option key={r.number} value={r.number}>{r.number} — {typeName(r.roomTypeId)}</option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-center gap-2">
+            <span className="text-sm">Từ đêm → đến đêm (tính cả đêm này)</span>
+            <DateRangePicker from={bfFrom} to={bfTo} onChange={(f, t) => { setBfFrom(f); setBfTo(t); }} />
           </div>
-        )}
-      </div>
+          <label>
+            Loại chặn
+            <select value={bfKind} onChange={(e) => setBfKind(e.target.value as RoomBlock["kind"])} className="ml-2 rounded-lg border border-line px-2 py-2">
+              <option value="out_of_order">Phòng hỏng — trừ khỏi phòng bán được</option>
+              <option value="out_of_service">Tạm đóng — vẫn tính trong tồn, chỉ đánh dấu</option>
+            </select>
+          </label>
+          <label>
+            Lý do
+            <input value={bfReason} onChange={(e) => setBfReason(e.target.value)} className="ml-2 rounded-lg border border-line px-2 py-2" placeholder="VD: Sửa điều hoà" />
+          </label>
+          <button onClick={addBlock} className="cb-btn-primary px-4 py-2 text-sm">Thêm chặn</button>
+        </div>
+      )}
 
       {/* ===== assignments layout: panel trai + lich ===== */}
-      <div className="flex items-start gap-0 border border-[var(--cb-border)] bg-white">
-        {/* panel don chua xep phong (co the thu lai) */}
-        {panelOpen ? (
-        <aside className="sticky top-4 max-h-[calc(100vh-2rem)] w-[280px] shrink-0 overflow-y-auto border-r border-[var(--cb-border)] bg-white p-3">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="flex items-center gap-1.5 text-sm font-bold text-[var(--cb-text)]">Đơn chưa xếp phòng <span className="rounded-full bg-[var(--cb-blue)] px-1.5 py-0.5 text-[11px] font-bold text-white">{panelUnassigned.length}</span></h3>
-            <button onClick={() => setPanelOpen(false)} title="Thu panel" className="shrink-0 rounded-md px-1.5 text-sm font-bold text-[var(--cb-muted)] hover:bg-[var(--cb-bg)]">«</button>
+      <div className="flex items-start gap-0">
+        {/* panel don chua xep phong (truot ngang khi bat/tat) */}
+        <aside className={`sticky top-4 shrink-0 overflow-hidden border-line bg-surface transition-all duration-300 ease-in-out ${panelOpen ? "w-[200px] border-r" : "w-0 border-r-0"}`}>
+          <div className="max-h-[calc(100vh-2rem)] w-[200px] overflow-y-auto p-3">
+          <div className="flex items-center justify-between gap-2 border-b border-line pb-2">
+            <h3 className="text-sm font-bold uppercase tracking-wide text-ink">Đơn chưa xếp phòng</h3>
+            <button onClick={() => { setPanelOpen(false); setCalOpen(false); }} title="Thu panel" className="shrink-0 rounded-md px-1.5 text-sm font-bold text-muted hover:bg-[var(--nui-bg)]">«</button>
           </div>
-          {assignDate && (
-            <div className="mt-1 text-right">
-              <button onClick={() => { setAssignDate(null); setCalOpen(false); }} className="text-xs font-semibold text-[var(--cb-blue)]">Xem tất cả</button>
-            </div>
-          )}
           {/* O chon ngay: nut ngay + lich mini popup (fixed de khong bi panel cuon cat) */}
           <div className="mt-2">
             <button
@@ -870,20 +895,23 @@ export default function StaffCalendar() {
                 }
                 setCalOpen(!calOpen);
               }}
-              className="flex w-full items-center justify-between rounded-lg border border-[var(--cb-border)] bg-white px-3 py-2 text-sm font-medium text-[var(--cb-text)]">
+              className="flex w-full items-center justify-between border-b border-line bg-surface px-0 py-2.5 text-sm font-medium text-ink">
               <span className="flex items-center gap-1.5"><IconCalendar className="h-4 w-4" /> {assignDate ? `${assignDate.slice(8, 10)}/${assignDate.slice(5, 7)}/${assignDate.slice(0, 4)}` : "Tất cả ngày"}</span>
-              <span className="text-[var(--cb-muted)]">▾</span>
+              <span className="flex items-center gap-1">
+                {assignDate && <span onClick={(e) => { e.stopPropagation(); setAssignDate(null); setCalOpen(false); }} title="Xem tất cả ngày" className="rounded-full px-1 text-muted hover:bg-[var(--nui-bg)] hover:text-ink">✕</span>}
+                <span className="text-muted">▾</span>
+              </span>
             </button>
             {calOpen && calAnchor && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setCalOpen(false)} />
-                <div className="fixed z-50 rounded-xl border border-[var(--cb-border)] bg-white p-3 shadow-xl" style={{ top: calAnchor.top, left: calAnchor.left, width: calAnchor.width }}>
+                <div className="fixed z-50 rounded-xl border border-line bg-surface p-3 shadow-xl" style={{ top: calAnchor.top, left: calAnchor.left, width: calAnchor.width }}>
                   <div className="flex items-center justify-between">
-                    <button onClick={() => setCalMonth(addMonths(effMonth, -1))} className="rounded-md px-2 py-1 font-bold text-[var(--cb-muted)] hover:bg-[var(--cb-bg)]">‹</button>
-                    <span className="text-sm font-bold text-[var(--cb-text)]">Tháng {Number(effMonth.slice(5, 7))} · {effMonth.slice(0, 4)}</span>
-                    <button onClick={() => setCalMonth(addMonths(effMonth, 1))} className="rounded-md px-2 py-1 font-bold text-[var(--cb-muted)] hover:bg-[var(--cb-bg)]">›</button>
+                    <button onClick={() => setCalMonth(addMonths(effMonth, -1))} className="rounded-md px-2 py-1 font-bold text-muted hover:bg-[var(--nui-bg)]">‹</button>
+                    <span className="text-sm font-bold text-ink">Tháng {Number(effMonth.slice(5, 7))} · {effMonth.slice(0, 4)}</span>
+                    <button onClick={() => setCalMonth(addMonths(effMonth, 1))} className="rounded-md px-2 py-1 font-bold text-muted hover:bg-[var(--nui-bg)]">›</button>
                   </div>
-                  <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-[var(--cb-muted)]">
+                  <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-muted">
                     {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((w) => <div key={w}>{w}</div>)}
                   </div>
                   <div className="mt-1 grid grid-cols-7 gap-1">
@@ -891,7 +919,7 @@ export default function StaffCalendar() {
                       <button
                         key={c}
                         onClick={() => { setAssignDate(c); setCalOpen(false); }}
-                        className={`rounded-lg py-1.5 text-sm ${c === assignDate ? "bg-[var(--cb-blue)] font-bold text-white" : c === todayStr ? "font-bold text-[var(--cb-blue)] ring-1 ring-[var(--cb-blue)]" : "text-[var(--cb-text)] hover:bg-[var(--cb-bg)]"}`}
+                        className={`rounded-lg py-1.5 text-sm ${c === assignDate ? "bg-primary font-bold text-white" : c === todayStr ? "font-bold text-primary ring-1 ring-primary" : "text-ink hover:bg-[var(--nui-bg)]"}`}
                       >
                         {Number(c.slice(8, 10))}
                       </button>
@@ -901,28 +929,17 @@ export default function StaffCalendar() {
               </>
             )}
           </div>
-          <button onClick={autoAssignAll} className="mt-3 w-full rounded-full bg-[#1db584] py-2 text-xs font-bold text-white shadow-sm">
-            Tự gán tất cả
-          </button>
-          <input
-            value={assignQuery}
-            onChange={(e) => setAssignQuery(e.target.value)}
-            placeholder="Tìm tên khách / mã đơn…"
-            className="mt-2 w-full rounded-full border border-[var(--cb-border)] px-2 py-1.5 text-sm text-[var(--cb-text)]"
-          />
-
-
           {/* danh sach don chua gan, nhom theo loai phong */}
           <div className="mt-3 space-y-3">
             {unassignedGroups.length === 0 && (
-              <p className="text-sm font-semibold text-[var(--cb-muted)]">Không còn đơn chờ xếp phòng</p>
+              <p className="mt-6 text-center text-sm font-medium uppercase tracking-wide text-muted">Không còn đơn chờ xếp phòng</p>
             )}
             {unassignedGroups.map((g) => (
               <div key={g.typeId}>
-                <div className="text-xs font-bold text-[var(--cb-text)]">▾ {typeName(g.typeId)} ({g.rows.length})</div>
+                <div className="text-xs font-bold text-ink">▾ {typeName(g.typeId)} ({g.rows.length})</div>
                 <div className="mt-1 space-y-2">
                   {g.rows.map((r) => (
-                    <div key={r.id} className={`overflow-hidden rounded-lg border bg-white ${assigningId === r.id ? "border-[var(--cb-blue)]" : "border-[var(--cb-border)]"}`}>
+                    <div key={r.id} className={`overflow-hidden rounded-lg border bg-surface ${assigningId === r.id ? "border-primary" : "border-line"}`}>
                       <div
                         draggable
                         onDragStart={() => setDragging({ reservationId: r.id, roomNumber: null, visibleStart: 0 })}
@@ -938,19 +955,19 @@ export default function StaffCalendar() {
                           }
                         }}
                         title="Bấm để mở form gán phòng (kéo để thả vào phòng)"
-                        className={`cursor-pointer px-2 py-1.5 ${assigningId === r.id ? "bg-[var(--cb-blue-soft)]" : "bg-white"}`}
+                        className={`cursor-pointer px-2 py-1.5 ${assigningId === r.id ? "bg-primary-soft" : "bg-surface"}`}
                       >
                         <div className="flex items-center gap-1.5">
                           <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_STYLES[r.status].split(" ")[0]}`} />
-                          <span className="text-xs font-bold text-[var(--cb-text)]">{r.guestName}</span>
-                          <span className="text-[11px] text-[var(--cb-muted)]">{r.id}</span>
+                          <span className="text-xs font-bold text-ink">{r.guestName}</span>
+                          <span className="text-[11px] text-muted">{r.id}</span>
                         </div>
-                        <div className="mt-0.5 text-[11px] text-[var(--cb-muted)]">{r.checkIn.slice(5)} → {r.checkOut.slice(5)} · {diffDays(r.checkIn, r.checkOut)} đêm</div>
+                        <div className="mt-0.5 text-[11px] text-muted">{r.checkIn.slice(5)} → {r.checkOut.slice(5)} · {diffDays(r.checkIn, r.checkOut)} đêm</div>
                       </div>
                       {/* form gán phòng mở ngay dưới đơn đang chọn */}
                       {assigningId === r.id && assigningBooking && (
-                        <div className="border-t border-[var(--cb-border)] bg-[var(--cb-blue-soft)] p-2">
-                          <label className="block text-xs text-[var(--cb-muted)]">
+                        <div className="border-t border-line bg-primary-soft p-2">
+                          <label className="block text-xs text-muted">
                             Loại phòng:
                             <select
                               value={assignEffType ?? ""}
@@ -961,19 +978,19 @@ export default function StaffCalendar() {
                                 setPendingRoom(first ? first.number : null);
                                 setSpotAnchor(null);
                               }}
-                              className="mt-1 w-full rounded-lg border border-[var(--cb-border)] bg-white px-2 py-1.5 text-sm text-[var(--cb-text)]"
+                              className="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink"
                             >
                               {groups.map((g) => (
                                 <option key={g.typeId} value={g.typeId}>{g.name}</option>
                               ))}
                             </select>
                           </label>
-                          <label className="mt-2 block text-xs text-[var(--cb-muted)]">
+                          <label className="mt-2 block text-xs text-muted">
                             Phòng:
                             <select
                               value={pendingRoom ?? ""}
                               onChange={(e) => { setPendingRoom(e.target.value || null); setSpotAnchor(null); }}
-                              className="mt-1 w-full rounded-lg border border-[var(--cb-border)] bg-white px-2 py-1.5 text-sm text-[var(--cb-text)]"
+                              className="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink"
                             >
                               {assignFitting.length === 0 && <option value="">Hết phòng trống phù hợp</option>}
                               {assignFitting.map((rm) => (
@@ -983,8 +1000,8 @@ export default function StaffCalendar() {
                           </label>
                           {/* Het phong: giai thich tung dem + goi y loai khac con phong ca ky */}
                           {assignFitting.length === 0 && assignEffType && (
-                            <div className="mt-2 rounded-lg bg-white/70 p-2 text-xs text-[var(--cb-muted)]">
-                              <div className="font-semibold text-[var(--cb-text)]">Không có phòng nào trống cả kỳ ở:</div>
+                            <div className="mt-2 rounded-lg bg-surface/70 p-2 text-xs text-muted">
+                              <div className="font-semibold text-ink">Không có phòng nào trống cả kỳ ở:</div>
                               {stayDates(assigningBooking.checkIn, assigningBooking.checkOut).map((d) => {
                                 const free = rooms.filter((rm) =>
                                   rm.roomTypeId === assignEffType &&
@@ -1000,7 +1017,7 @@ export default function StaffCalendar() {
                                   <button
                                     key={g.typeId}
                                     onClick={() => { setAssignTypeId(g.typeId); setPendingRoom(fit[0].number); setSpotAnchor(null); }}
-                                    className="mt-1 block font-semibold text-[var(--cb-blue)]"
+                                    className="mt-1 block font-semibold text-primary"
                                   >
                                     → Chuyển sang {g.name}: còn phòng {fit.map((rm) => rm.number).join(", ")}
                                   </button>
@@ -1012,13 +1029,13 @@ export default function StaffCalendar() {
                             <button
                               disabled={!pendingRoom}
                               onClick={() => pendingRoom && assignRoom(pendingRoom)}
-                              className="w-full rounded-full bg-[var(--cb-blue)] py-2 text-sm font-bold text-white disabled:opacity-40"
+                              className="w-full rounded-full bg-primary py-2 text-sm font-bold text-white disabled:opacity-40"
                             >
                               ASSIGN
                             </button>
-                            <button onClick={() => { setAssigningId(null); setPendingRoom(null); setSpotAnchor(null); setAssignTypeId(null); }} className="w-full rounded-full bg-[var(--cb-bg)] py-2 text-sm font-semibold text-[var(--cb-text)]">CANCEL</button>
+                            <button onClick={() => { setAssigningId(null); setPendingRoom(null); setSpotAnchor(null); setAssignTypeId(null); }} className="w-full rounded-full bg-[var(--nui-bg)] py-2 text-sm font-semibold text-ink">CANCEL</button>
                           </div>
-                          <p className="mt-2 text-xs text-[var(--cb-muted)]">Hoặc bấm ô sáng trên lịch để chọn phòng.</p>
+                          <p className="mt-2 text-xs text-muted">Hoặc bấm ô sáng trên lịch để chọn phòng.</p>
                         </div>
                       )}
                     </div>
@@ -1027,209 +1044,254 @@ export default function StaffCalendar() {
               </div>
             ))}
           </div>
+          </div>
         </aside>
-        ) : (
-          <button onClick={() => setPanelOpen(true)} title="Mở panel đơn chưa xếp phòng" className="sticky top-4 shrink-0 rounded-xl border border-[var(--cb-border)] bg-white px-2 py-3 text-sm font-bold text-[var(--cb-blue)] shadow-[0_1px_3px_rgba(16,28,66,0.06)]">»</button>
-        )}
 
         {/* lich (phan con lai) */}
         <div className="min-w-0 flex-1">
-      {/* ===== tape chart (Cloudbeds style) ===== */}
-      <div className="overflow-x-auto bg-white">
-        <div
-          className="grid"
-          style={{
-            gridTemplateColumns: `170px repeat(${days.length}, minmax(64px, 1fr))`,
-            minWidth: `${170 + days.length * 64}px`,
-          }}
-        >
-          {/* month band */}
-          <div className={`${stickyCell} border-b border-[var(--cb-bg)] bg-[var(--cb-bg)] px-3 py-1.5 text-[11px] font-semibold text-[var(--cb-muted)]`}>
-            Phòng ↓ · Ngày →
-          </div>
-          {monthRuns.map((m, i) => (
-            <div
-              key={i}
-              className="border-b border-l border-[var(--cb-bg)] bg-[var(--cb-bg)] px-2 py-1.5 text-[11px] font-bold tracking-wide text-[var(--cb-text)]"
-              style={{ gridColumn: `span ${m.span}` }}
-            >
-              {m.label}
-            </div>
-          ))}
-
-          {/* day header kieu Cloudbeds: vien so + thu/ngay + % */}
-          <div className="sticky left-0 z-20 border-b border-[var(--cb-bg)] bg-[var(--cb-blue-soft)] px-3 py-2 text-xs font-semibold text-[var(--cb-muted)]">Phòng</div>
-          {days.map((d, i) => dayHeaderCell(d, i, "t-"))}
-
-          {/* one section per room type */}
-          {gridGroups.map((g) => (
-            <div key={g.typeId} className="contents">
-              {/* section summary row: rooms left + rack price per day */}
-              <div className="sticky left-0 z-20 flex items-center justify-between border-b border-[var(--cb-bg)] bg-[#eef4fb] px-3 py-1.5">
-                <span className="text-xs font-bold text-[var(--cb-text)]">▾ {g.name}</span>
-                <span className="text-[10px] text-[var(--cb-muted)]">{g.rooms.length} phòng</span>
+          <div className="flex items-start gap-0 bg-surface">
+            {/* ===== ASIDE (cot Phong) — thu tu: 4 icon, Hom nay, All Room Types, loai phong, phong ===== */}
+            <div className="w-[200px] shrink-0 bg-surface">
+              {/* 1. 4 icon */}
+              <div className="flex h-10 items-center gap-1 border-b border-[var(--nui-bg)] bg-surface px-3">
+                <button onClick={() => { setPanelOpen((v) => !v); setCalOpen(false); }} title="Mở/đóng panel đơn chưa xếp phòng" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink hover:bg-surface-muted">
+                  <IconMenu className="h-5 w-5" />
+                </button>
+                <div className="relative">
+                  <button onClick={() => { setJumpOpen((v) => !v); setQuickOpen(false); }} title="Nhảy tới ngày" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink hover:bg-surface-muted">
+                    <IconCalendar className="h-5 w-5" />
+                  </button>
+                  {jumpOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setJumpOpen(false)} />
+                      <div className="absolute left-0 top-10 z-50 rounded-xl border border-line bg-surface p-3 shadow-2xl">
+                        <div className="mb-2 text-xs font-bold text-muted">Nhảy tới ngày</div>
+                        <DatePicker value={startDate} onChange={(d) => { setStartDate(d); setJumpOpen(false); }} />
+                      </div>
+                    </>
+                  )}
+                </div>
+                <button onClick={() => setPanelOpen(true)} title="Mở panel đơn chưa xếp phòng" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink hover:bg-surface-muted">
+                  <IconSearch className="h-5 w-5" />
+                </button>
+                <div className="relative">
+                  <button onClick={() => { setQuickOpen((v) => !v); setJumpOpen(false); }} title="Tác vụ nhanh" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-success text-white hover:opacity-90">
+                    <IconPlus className="h-5 w-5" />
+                  </button>
+                  {quickOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setQuickOpen(false)} />
+                      <div className="absolute left-0 top-10 z-50 w-60 overflow-hidden rounded-xl border border-line bg-surface shadow-2xl">
+                        <a href={`/${HOTEL_ID}/reservations/new`} className="block px-3 py-2 text-sm font-medium text-ink hover:bg-primary-soft">＋ Tạo đặt phòng mới</a>
+                        <button onClick={() => { setShowBlockForm(true); setQuickOpen(false); }} className="block w-full px-3 py-2 text-left text-sm font-medium text-ink hover:bg-primary-soft">⊘ Chặn phòng</button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
-              {days.map((d, i) => {
-                const left = leftByType[g.typeId]?.[i] ?? 0;
-                return (
-                  <div key={d} className={`border-b border-l border-[var(--cb-bg)] px-1 py-1 text-center leading-tight ${d === assignDate ? "bg-[#fef9c3]" : "bg-[#eef4fb]"}`}>
-                    <div className={`text-xs font-bold ${left <= 0 ? "text-[#e5484d]" : left === 1 ? "text-[#b45309]" : "text-[var(--cb-text)]"}`}>
-                      {left}
+              {/* 2. Hom nay */}
+              <div className="flex h-9 items-center gap-1.5 border-b border-[var(--nui-bg)] bg-surface px-3">
+                <button onClick={() => setStartDate((d) => addDays(d, -7))} className="rounded-full border border-line bg-surface px-2 py-1 text-sm font-semibold text-ink">‹</button>
+                <button onClick={() => setStartDate(todayStr)} className="rounded-full border border-line bg-surface px-3 py-1 text-sm font-bold text-primary">Hôm nay</button>
+                <button onClick={() => setStartDate((d) => addDays(d, 7))} className="rounded-full border border-line bg-surface px-2 py-1 text-sm font-semibold text-ink">›</button>
+              </div>
+              {/* 3. All Room Types */}
+              <div className="flex h-9 items-center gap-1 border-b border-[var(--nui-bg)] bg-surface px-3">
+                <span className="shrink-0 text-xs text-muted">▾</span>
+                <select value={typeFilter ?? ""} onChange={(e) => setTypeFilter(e.target.value || null)} className="appearance-none border-0 bg-transparent px-0 py-1 text-sm font-semibold text-ink">
+                  <option value="">All Room Types</option>
+                  {groups.map((g) => (
+                    <option key={g.typeId} value={g.typeId}>{g.name}</option>
+                  ))}
+                </select>
+              </div>
+              {/* 4-7. Loai phong + phong */}
+              {gridGroups.map((g) => (
+                <div key={g.typeId}>
+                  <div onClick={() => setCollapsedTypes((c) => ({ ...c, [g.typeId]: !c[g.typeId] }))} title={collapsedTypes[g.typeId] ? "Mở rộng loại phòng" : "Thu gọn loại phòng"} className="flex h-10 cursor-pointer items-center justify-between border-b border-[var(--nui-bg)] bg-surface px-3">
+                    <span className="whitespace-nowrap text-xs font-bold text-ink">{collapsedTypes[g.typeId] ? "▸" : "▾"} {g.name}</span>
+                  </div>
+                  {stopSellByType[g.typeId] && (
+                    <div className="flex h-7 items-center border-b border-[var(--nui-bg)] bg-surface px-3">
+                      <span className="whitespace-nowrap text-[11px] font-bold text-warning">⊘ Ngừng bán</span>
                     </div>
-                    <div className="text-[10px] text-[var(--cb-muted)]">{fmtPrice(rack[g.typeId]?.[d])}</div>
-                  </div>
-                );
-              })}
-
-              {/* physical room rows */}
-              {g.rooms.map((room) => (
-                <div key={room.number} className="contents">
-                  <div className="sticky left-0 z-10 flex items-center gap-2 border-b border-[var(--cb-bg)] bg-white px-3 py-1">
-                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${HK_DOT[room.housekeepingStatus]}`} title={HK_LABEL[room.housekeepingStatus]} />
-                    <div className="text-sm font-semibold text-[var(--cb-text)]">{room.number}</div>
-                  </div>
-
-                  {days.map((day, dayIndex) => (
-                    <div
-                      key={day}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={() => handleDrop(room.number, dayIndex)}
-                      onClick={(e) => {
-                        if (
-                          assigningBooking &&
-                          day >= assigningBooking.checkIn &&
-                          day < assigningBooking.checkOut &&
-                          roomFitsForType(assigningBooking, room, assignEffType ?? assigningBooking.roomTypeId)
-                        ) {
-                          setPendingRoom(room.number);
-                          setSpotAnchor({ x: e.clientX, y: e.clientY });
-                        }
-                      }}
-                      className={`relative min-h-[34px] border-b border-l border-[var(--cb-bg)] ${
-                        assigningBooking &&
-                        day >= assigningBooking.checkIn &&
-                        day < assigningBooking.checkOut &&
-                        roomFitsForType(assigningBooking, room, assignEffType ?? assigningBooking.roomTypeId)
-                          ? "cursor-pointer bg-[var(--cb-blue-soft)] ring-1 ring-inset ring-[var(--cb-blue)]"
-                          : day === assignDate
-                            ? "bg-[#fffde7]"
-                            : day === todayStr
-                              ? "bg-[var(--cb-blue-soft)]"
-                              : ""
-                      }`}
-                    >
-                      {blocks
-                        .filter((b) => b.roomNumber === room.number)
-                        .map((b) => {
-                          const startIdx = diffDays(startDate, b.from);
-                          const endIdx = diffDays(startDate, b.to) + 1;
-                          const visibleStart = Math.max(0, startIdx);
-                          const visibleEnd = Math.min(days.length, endIdx);
-                          if (visibleStart !== dayIndex || visibleEnd <= visibleStart) return null;
-                          // Cloudbeds style: block runs from the middle of
-                          // its first day cell to the middle of the cell
-                          // after its last night
-                          const startsMid = startIdx >= 0;
-                          const endsMid = endIdx < days.length;
-                          const spanCells =
-                            visibleEnd - visibleStart - (startsMid ? 0.5 : 0) + (endsMid ? 0.5 : 0);
-                          return (
-                            <div
-                              key={b.id}
-                              onClick={(e) => { e.stopPropagation(); setSelectedBlockId(b.id); }}
-                              title={`${b.kind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng"} · ${b.from} → ${b.to} · ${b.reason} (bấm để xem / xoá)`}
-                              className={`absolute inset-y-1 z-[5] flex cursor-pointer items-center overflow-hidden whitespace-nowrap px-3 text-[11px] font-medium text-white ${b.kind === "out_of_order" ? "bg-[var(--cb-muted)]" : "bg-[var(--cb-muted)]"}`}
-                              style={{
-                                left: startsMid ? "calc(50% + 1px)" : "2px",
-                                width: `calc(${spanCells * 100}% - ${startsMid ? 3 : 4}px)`,
-                                clipPath: "polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%)",
-                              }}
-                            >
-                              {b.kind === "out_of_order" ? <IconBan className="h-4 w-4" /> : <IconDroplet className="h-4 w-4" />} {b.reason}
-                            </div>
-                          );
-                        })}
-                      {/* Don da huy khong ve len lich */}
-                      {reservations
-                        .filter((r) => r.roomNumbers.includes(room.number) && r.status !== "cancelled")
-                        .map((r) => {
-                          const startIdx = diffDays(startDate, r.checkIn);
-                          const endIdx = diffDays(startDate, r.checkOut);
-                          const visibleStart = Math.max(0, startIdx);
-                          const visibleEnd = Math.min(days.length, endIdx);
-                          if (visibleStart !== dayIndex || visibleEnd <= visibleStart) return null;
-                          // Cloudbeds style: from the middle of the
-                          // check-in cell to the middle of the
-                          // check-out cell
-                          const startsMid = startIdx >= 0;
-                          const endsMid = endIdx < days.length;
-                          const spanCells =
-                            visibleEnd - visibleStart - (startsMid ? 0.5 : 0) + (endsMid ? 0.5 : 0);
-                          return (
-                            <ReservationBar
-                              key={r.id + room.number}
-                              reservation={r}
-                              span={spanCells}
-                              startHalf={startsMid}
-                              hasNotes={!!r.note || (notesCount[r.id] ?? 0) > 0}
-                              draggable={!["checked_out", "no_show"].includes(r.status)}
-                              onDragStart={() =>
-                                setDragging({ reservationId: r.id, roomNumber: room.number, visibleStart })
-                              }
-                              onClick={(e) => openPopup(r.id, e)}
-                            />
-                          );
-                        })}
+                  )}
+                  {!collapsedTypes[g.typeId] && g.rooms.map((room) => (
+                    <div key={room.number} className="flex h-10 items-center justify-between border-b border-[var(--nui-bg)] bg-surface px-3">
+                      <div className="whitespace-nowrap text-sm font-medium text-ink">{room.number}</div>
+                      <span className="shrink-0 text-danger">*</span>
                     </div>
                   ))}
                 </div>
               ))}
+              {/* o goc duoi (khop hang tieu de ngay cuoi lich) */}
+              <div className="h-18 shrink-0 bg-surface" />
             </div>
-          ))}
-
-          {/* day header lap lai o cuoi lich (kieu Cloudbeds) */}
-          <div className="sticky left-0 z-20 border-b border-[var(--cb-bg)] bg-[var(--cb-blue-soft)] px-3 py-2 text-xs font-semibold text-[var(--cb-muted)]">Phòng</div>
-          {days.map((d, i) => dayHeaderCell(d, i, "b-"))}
+            {/* ===== VUNG NGAY (cuon ngang) ===== */}
+            <div className="min-w-0 flex-1 overflow-x-auto bg-surface">
+              <div
+                className="grid"
+                style={{
+                  gridTemplateColumns: `repeat(${days.length}, minmax(64px, 1fr))`,
+                  minWidth: `${days.length * 64}px`,
+                }}
+              >
+                {/* thang */}
+                {monthRuns.map((m, i) => (
+                  <div
+                    key={i}
+                    className="flex h-10 items-center border-l border-[var(--nui-bg)] bg-surface px-2 text-[11px] font-bold tracking-wide text-ink"
+                    style={{ gridColumn: `span ${m.span}` }}
+                  >
+                    {m.label}
+                  </div>
+                ))}
+                {/* tieu de ngay */}
+                {days.map((d, i) => dayHeaderCell(d, i, "t-"))}
+                {/* loai phong + phong (chi o ngay) */}
+                {gridGroups.map((g) => (
+                  <div key={g.typeId} className="contents">
+                    {days.map((d, i) => {
+                      const left = leftByType[g.typeId]?.[i] ?? 0;
+                      return (
+                        <div key={d} className={`flex h-10 flex-col items-center justify-center border-b border-l border-[var(--nui-bg)] px-1 text-center leading-tight ${d === assignDate ? "bg-warning-soft" : d === todayStr ? "bg-success-soft" : "bg-surface"}`}>
+                          <div className="text-xs font-bold text-ink">
+                            {left}
+                          </div>
+                          <div className="text-[10px] text-muted">{fmtPrice(rack[g.typeId]?.[d])}</div>
+                        </div>
+                      );
+                    })}
+                    {stopSellByType[g.typeId] && (
+                      <>
+                        {days.map((d) => {
+                          const bl = stopSellByType[g.typeId]?.[d] ?? [];
+                          const full = bl.some((b) => b.scope === "room_type");
+                          const chs = bl.filter((b) => b.scope === "channel");
+                          const names = full ? ["Toàn bộ kênh"] : chs.map((b) => getChannelName(b.channelCode ?? ""));
+                          const reason = bl.find((b) => b.reason)?.reason;
+                          const title = bl.length === 0 ? undefined : `Ngừng bán: ${names.join(", ")}${reason ? ` — ${reason}` : ""}`;
+                          const short = chs.length === 0 ? "" : chs.length === 1 ? (CH_SHORT[chs[0].channelCode ?? ""] ?? chs[0].channelCode ?? "") : `${CH_SHORT[chs[0].channelCode ?? ""] ?? chs[0].channelCode ?? ""} +${chs.length - 1}`;
+                          return (
+                            <div key={d} title={title} className={`flex h-7 items-center justify-center border-b border-l border-[var(--nui-bg)] px-1 text-center text-[10px] font-bold leading-tight ${bl.length > 0 ? "bg-warning-soft text-warning" : d === todayStr ? "bg-success-soft" : "bg-surface"}`}>
+                              {full ? "ĐÓNG BÁN" : short}
+                            </div>
+                          );
+                        })}
+                      </>
+                    )}
+                    {!collapsedTypes[g.typeId] && g.rooms.map((room) => (
+                      <div key={room.number} className="contents">
+                        {days.map((day, dayIndex) => (
+                          <div
+                            key={day}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={() => handleDrop(room.number, dayIndex)}
+                            onClick={(e) => {
+                              if (
+                                assigningBooking &&
+                                day >= assigningBooking.checkIn &&
+                                day < assigningBooking.checkOut &&
+                                roomFitsForType(assigningBooking, room, assignEffType ?? assigningBooking.roomTypeId)
+                              ) {
+                                setPendingRoom(room.number);
+                                setSpotAnchor({ x: e.clientX, y: e.clientY });
+                              }
+                            }}
+                            className={`relative h-10 border-b border-l border-[var(--nui-bg)] ${
+                              assigningBooking &&
+                              day >= assigningBooking.checkIn &&
+                              day < assigningBooking.checkOut &&
+                              roomFitsForType(assigningBooking, room, assignEffType ?? assigningBooking.roomTypeId)
+                                ? "cursor-pointer bg-primary-soft ring-1 ring-inset ring-primary"
+                                : day === assignDate
+                                  ? "bg-warning-soft"
+                                  : day === todayStr
+                                    ? "bg-success-soft"
+                                    : ""
+                            }`}
+                          >
+                            {blocks
+                              .filter((b) => b.roomNumber === room.number)
+                              .map((b) => {
+                                const startIdx = diffDays(startDate, b.from);
+                                const endIdx = diffDays(startDate, b.to) + 1;
+                                const visibleStart = Math.max(0, startIdx);
+                                const visibleEnd = Math.min(days.length, endIdx);
+                                if (visibleStart !== dayIndex || visibleEnd <= visibleStart) return null;
+                                const startsMid = startIdx >= 0;
+                                const endsMid = endIdx < days.length;
+                                const spanCells =
+                                  visibleEnd - visibleStart - (startsMid ? 0.5 : 0) + (endsMid ? 0.5 : 0);
+                                return (
+                                  <div
+                                    key={b.id}
+                                    onClick={(e) => { e.stopPropagation(); setSelectedBlockId(b.id); }}
+                                    title={`${b.kind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng"} · ${b.from} → ${b.to} · ${b.reason} (bấm để xem / xoá)`}
+                                    className={`absolute inset-y-1 z-[5] flex cursor-pointer items-center overflow-hidden whitespace-nowrap px-3 text-[11px] font-medium text-white ${b.kind === "out_of_order" ? "bg-muted" : "bg-muted"}`}
+                                    style={{
+                                      left: startsMid ? "calc(50% + 1px)" : "2px",
+                                      width: `calc(${spanCells * 100}% - ${startsMid ? 3 : 4}px)`,
+                                      clipPath: "polygon(8px 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 8px 100%, 0 50%)",
+                                    }}
+                                  >
+                                    {b.kind === "out_of_order" ? <IconBan className="h-4 w-4" /> : <IconDroplet className="h-4 w-4" />} {b.reason}
+                                  </div>
+                                );
+                              })}
+                            {reservations
+                              .filter((r) => r.roomNumbers.includes(room.number) && r.status !== "cancelled")
+                              .map((r) => {
+                                const startIdx = diffDays(startDate, r.checkIn);
+                                const endIdx = diffDays(startDate, r.checkOut);
+                                const visibleStart = Math.max(0, startIdx);
+                                const visibleEnd = Math.min(days.length, endIdx);
+                                if (visibleStart !== dayIndex || visibleEnd <= visibleStart) return null;
+                                const startsMid = startIdx >= 0;
+                                const endsMid = endIdx < days.length;
+                                const spanCells =
+                                  visibleEnd - visibleStart - (startsMid ? 0.5 : 0) + (endsMid ? 0.5 : 0);
+                                return (
+                                  <ReservationBar
+                                    key={r.id + room.number}
+                                    reservation={r}
+                                    span={spanCells}
+                                    startHalf={startsMid}
+                                    hasNotes={!!r.note || (notesCount[r.id] ?? 0) > 0}
+                                    draggable={!["checked_out", "no_show"].includes(r.status)}
+                                    onDragStart={() =>
+                                      setDragging({ reservationId: r.id, roomNumber: room.number, visibleStart })
+                                    }
+                                    onClick={(e) => openPopup(r.id, e)}
+                                  />
+                                );
+                              })}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                {/* tieu de ngay cuoi lich */}
+                {days.map((d, i) => dayHeaderCell(d, i, "b-"))}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-        </div>
-      </div>
-
-      {/* Legend kieu Cloudbeds */}
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[var(--cb-muted)]">
-        <span className="font-bold text-[var(--cb-text)]">Legend</span>
-        {(["in_house", "confirmed", "pending", "checked_out"] as const).map((s) => (
-          <span key={s} className="flex items-center gap-1.5">
-            <span className={`inline-block h-3 w-3 rounded-sm ${STATUS_STYLES[s].split(" ")[0]}`} />
-            {STATUS_LABELS[s]}
-          </span>
-        ))}
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block h-3 w-3 rounded-sm bg-[var(--cb-muted)]" />
-          Phòng bị chặn
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block h-2 w-2 rounded-full bg-[#e5484d]" />
-          Còn nợ tiền
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block h-2 w-2 rounded-full bg-[#facc15]" />
-          Có ghi chú
-        </span>
-        <span>Kéo thanh khách để đổi phòng/ngày. Bấm thanh khách để mở hồ sơ.</span>
       </div>
 
       {/* selected room-block panel */}
       {selectedBlock && (
-        <div className="cb-card mt-3 flex flex-wrap items-center gap-3 p-4 text-sm text-[var(--cb-text)]">
-          <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold text-white ${selectedBlock.kind === "out_of_order" ? "bg-[var(--cb-muted)]" : "bg-[var(--cb-muted)]"}`}>
+        <div className="cb-card mt-3 flex flex-wrap items-center gap-3 p-4 text-sm text-ink">
+          <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold text-white ${selectedBlock.kind === "out_of_order" ? "bg-muted" : "bg-muted"}`}>
             {selectedBlock.kind === "out_of_order" ? (<><IconBan className="h-3.5 w-3.5" /> PHÒNG HỎNG</>) : (<><IconDroplet className="h-3.5 w-3.5" /> TẠM ĐÓNG</>)}
           </span>
           <span className="font-semibold">Phòng {selectedBlock.roomNumber}</span>
           <span>{selectedBlock.from} → {selectedBlock.to} (đến đêm {selectedBlock.to})</span>
-          <span className="text-[var(--cb-muted)]">{selectedBlock.reason}</span>
+          <span className="text-muted">{selectedBlock.reason}</span>
           <span className="ml-auto flex gap-2">
-            <button onClick={() => removeBlock(selectedBlock.id)} className="rounded-lg border border-[#e5484d] px-3 py-1.5 text-sm font-semibold text-[#e5484d] hover:bg-red-50">
+            <button onClick={() => removeBlock(selectedBlock.id)} className="rounded-lg border border-danger px-3 py-1.5 text-sm font-semibold text-danger hover:bg-danger-soft">
               Xoá chặn (mở phòng lại)
             </button>
             <button onClick={() => setSelectedBlockId(null)} className="cb-btn-ghost px-3 py-1.5 text-sm">Đóng</button>

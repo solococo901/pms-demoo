@@ -1,27 +1,8 @@
 "use client";
 
-// ============================================================
-// FILE HOTELCONFIG3 — app/[hotelId]/hotel-config/page.tsx
-// Trang CAU HINH KHACH SAN rieng biet (theo yeu cau 2026-10-27):
-// khong con thanh tab lon (Thong tin chung / Cau hinh / Loai
-// phong & Phong chung 1 trang) nua. Trang nay chi co 5 tab con:
-//   Cau hinh chung | Chinh sach thanh toan | Chinh sach huy
-//   dat phong | Phuong thuc thanh toan | Phuong thuc canh bao
-// (dung nhu anh Vos gui). Trang nay TU CHUA moi thu, khong
-// dung chung component HotelDetailPage nua — dan 1 file nay
-// la chay ngay. Ham luu ghi lai toan bo profile nen cac phan
-// khac (thong tin chung, tien ich, hinh anh...) khong bi mat.
-// HOTELCONFIG3 (2026-11-13, chuot lai tu tren xuong duoi):
-//   - Tien te mo rong quoc te (12 loai thay vi 3).
-//   - Nam xay dung / so tang / khoang cach de trong khi chua
-//     nhap, thay vi hien 0.
-//   - Ten + mo ta chinh sach sua duoc ngay trong bang (truoc
-//     day muon sua phai xoa roi them lai).
-//   - O "Phuong thuc" canh bao bo select khoa cung chi co
-//     Email, doi thanh dong chu ro rang.
-//   - Ghi ro 2 cai dat chi luu chu chua chay that (huy tu
-//     dong, canh bao phong sap het) — can may chu 24/7 o GĐ4.
-// ============================================================
+// NATEUI14 — app/[hotelId]/hotel-config/page.tsx (Cau hinh khach san)
+// Trang rieng 5 tab con: Cau hinh chung | Chinh sach thanh toan | Chinh sach huy | Phuong thuc thanh toan | Phuong thuc canh bao; luu ca profile de khong mat phan chua sua.
+// Doi sang token toi gian 2026-11-21.
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -40,14 +21,14 @@ import {
 } from "@/lib/mock-data";
 
 const inputCls =
-  "w-full rounded-lg border border-[#dde3ea] bg-white px-3 py-2 text-sm outline-none focus:border-[#2563eb]";
+  "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
 const inputSm =
-  "rounded-lg border border-[#dde3ea] bg-white px-3 py-2 text-sm outline-none focus:border-[#2563eb]";
+  "rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block text-sm">
-      <span className="text-[#68707a]">{label}</span>
+      <span className="text-muted">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
   );
@@ -55,18 +36,18 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function SaveRow({ msg, onSave }: { msg: string; onSave: () => void }) {
   return (
-    <div className="mt-5 flex items-center gap-3 border-t border-[#eef1f5] pt-4">
+    <div className="mt-5 flex items-center gap-3 border-t border-[var(--nui-bg)] pt-4">
       <button onClick={onSave} className="cb-btn-primary px-5 py-2 text-sm">
         Lưu
       </button>
-      {msg && <span className="text-sm text-[#1db584]">{msg}</span>}
+      {msg && <span className="text-sm text-success">{msg}</span>}
     </div>
   );
 }
 
 function GroupTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="mt-6 text-[13px] font-bold uppercase tracking-wide text-[#2563eb] first:mt-0">
+    <h3 className="mt-6 text-[13px] font-bold uppercase tracking-wide text-primary first:mt-0">
       {children}
     </h3>
   );
@@ -111,7 +92,7 @@ function PolicySection({
     <div>
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-[#eef1f5] text-left text-xs uppercase tracking-wide text-[#68707a]">
+          <tr className="border-b border-[var(--nui-bg)] text-left text-xs uppercase tracking-wide text-muted">
             <th className="py-2 pr-3 font-semibold">Tên chính sách</th>
             <th className="py-2 pr-3 font-semibold">Mô tả</th>
             <th className="py-2 pr-3 font-semibold">Trạng thái</th>
@@ -120,17 +101,17 @@ function PolicySection({
         </thead>
         <tbody>
           {items.map((p) => (
-            <tr key={p.id} className="border-b border-[#eef1f5]">
+            <tr key={p.id} className="border-b border-[var(--nui-bg)]">
               <td className="py-2.5 pr-3">
                 <input
-                  className={`${inputSm} w-full font-medium text-[#17293e]`}
+                  className={`${inputSm} w-full font-medium text-ink`}
                   value={p.name}
                   onChange={(e) => setItems((prev) => prev.map((x) => (x.id === p.id ? { ...x, name: e.target.value } : x)))}
                 />
               </td>
               <td className="py-2.5 pr-3">
                 <input
-                  className={`${inputSm} w-full text-[#68707a]`}
+                  className={`${inputSm} w-full text-muted`}
                   value={p.description}
                   placeholder="—"
                   onChange={(e) => setItems((prev) => prev.map((x) => (x.id === p.id ? { ...x, description: e.target.value } : x)))}
@@ -141,16 +122,16 @@ function PolicySection({
                   onClick={() =>
                     setItems((prev) => prev.map((x) => (x.id === p.id ? { ...x, active: !x.active } : x)))
                   }
-                  className={`relative h-5 w-9 rounded-full transition ${p.active ? "bg-[#2563eb]" : "bg-gray-300"}`}
+                  className={`relative h-5 w-9 rounded-full transition ${p.active ? "bg-primary" : "bg-gray-300"}`}
                   title={p.active ? "Đang áp dụng" : "Đã tắt"}
                 >
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${p.active ? "left-[18px]" : "left-0.5"}`} />
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-surface transition-all ${p.active ? "left-[18px]" : "left-0.5"}`} />
                 </button>
               </td>
               <td className="py-2.5 text-right">
                 <button
                   onClick={() => setItems((prev) => prev.filter((x) => x.id !== p.id))}
-                  className="font-medium text-[#e5484d] hover:underline"
+                  className="font-medium text-danger hover:underline"
                 >
                   Xoá
                 </button>
@@ -159,7 +140,7 @@ function PolicySection({
           ))}
           {items.length === 0 && (
             <tr>
-              <td colSpan={4} className="py-6 text-center text-[#68707a]">
+              <td colSpan={4} className="py-6 text-center text-muted">
                 Chưa có chính sách nào — thêm mới bên dưới.
               </td>
             </tr>
@@ -267,26 +248,26 @@ export default function HotelConfigPage() {
 
   const subBtn = (active: boolean) =>
     active
-      ? "rounded-full bg-[#e8effe] px-3.5 py-1.5 text-[13px] font-semibold text-[#2563eb]"
-      : "rounded-full px-3.5 py-1.5 text-[13px] text-[#68707a] hover:bg-[#f4f7fb]";
+      ? "rounded-full bg-primary-soft px-3.5 py-1.5 text-[13px] font-semibold text-primary"
+      : "rounded-full px-3.5 py-1.5 text-[13px] text-muted hover:bg-primary-soft";
 
   return (
     <div>
-      <Link href="/" className="text-sm font-medium text-[#2563eb] hover:underline">
+      <Link href="/" className="text-sm font-medium text-primary hover:underline">
         ← Tất cả khách sạn
       </Link>
       <div className="mt-2 flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-bold text-[#17293e]">{hotel.name}</h1>
+        <h1 className="text-2xl font-bold text-ink">{hotel.name}</h1>
         {hotel.code && (
-          <span className="rounded-md bg-[#f0f3f7] px-2 py-0.5 text-xs font-semibold text-[#68707a]">{hotel.code}</span>
+          <span className="rounded-md bg-primary-soft px-2 py-0.5 text-xs font-semibold text-muted">{hotel.code}</span>
         )}
         {hotel.starRating && <span className="text-amber-500">{"★".repeat(hotel.starRating)}</span>}
       </div>
-      <p className="mt-1 text-sm text-[#68707a]">
+      <p className="mt-1 text-sm text-muted">
         Trang quản lí riêng của khách sạn này — không ảnh hưởng khách sạn khác.
       </p>
-      {loading && <p className="mt-3 text-sm text-[#68707a]">Đang tải dữ liệu từ Supabase...</p>}
-      {dbError && <p className="mt-3 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">Lỗi cơ sở dữ liệu: {dbError}</p>}
+      {loading && <p className="mt-3 text-sm text-muted">Đang tải dữ liệu từ Supabase...</p>}
+      {dbError && <p className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">Lỗi cơ sở dữ liệu: {dbError}</p>}
 
       {/* ===== 5 tab con cua Cau hinh khach san ===== */}
       <div className="cb-card mt-5 p-5">
@@ -318,12 +299,12 @@ export default function HotelConfigPage() {
             </div>
             <div className="mt-3 space-y-2 text-sm">
               <label className="flex items-center gap-2.5">
-                <input type="checkbox" className="h-4 w-4 accent-[#2563eb]" checked={config.autoCancelUnconfirmed} onChange={(e) => setConfig({ ...config, autoCancelUnconfirmed: e.target.checked })} />
+                <input type="checkbox" className="h-4 w-4 accent-primary" checked={config.autoCancelUnconfirmed} onChange={(e) => setConfig({ ...config, autoCancelUnconfirmed: e.target.checked })} />
                 Cho phép huỷ tự động nếu booking không được xác nhận
               </label>
               <label className="flex flex-wrap items-center gap-2.5">
                 <input
-                  type="checkbox" className="h-4 w-4 accent-[#2563eb]"
+                  type="checkbox" className="h-4 w-4 accent-primary"
                   checked={config.autoCancelFailedPaymentMinutes > 0}
                   onChange={(e) => setConfig({ ...config, autoCancelFailedPaymentMinutes: e.target.checked ? 30 : 0 })}
                 />
@@ -336,7 +317,7 @@ export default function HotelConfigPage() {
                 phút
               </label>
             </div>
-            <p className="mt-2 text-[13px] text-[#68707a]">
+            <p className="mt-2 text-[13px] text-muted">
               Huỷ tự động chỉ chạy khi có máy chủ chạy 24/7 — hiện chỉ lưu cài đặt, chưa tự huỷ (làm ở GĐ4).
             </p>
 
@@ -347,7 +328,7 @@ export default function HotelConfigPage() {
                   {[{ code: "vi", label: "Tiếng Việt" }, { code: "en", label: "English" }].map((l) => (
                     <label key={l.code} className="flex items-center gap-2">
                       <input
-                        type="checkbox" className="h-4 w-4 accent-[#2563eb]"
+                        type="checkbox" className="h-4 w-4 accent-primary"
                         checked={config.displayLanguages.includes(l.code)}
                         onChange={(e) =>
                           setConfig({
@@ -368,7 +349,7 @@ export default function HotelConfigPage() {
                   {[{ code: "vi", label: "Tiếng Việt" }, { code: "en", label: "English" }].map((l) => (
                     <label key={l.code} className="flex items-center gap-2">
                       <input
-                        type="radio" name="primaryLang" className="h-4 w-4 accent-[#2563eb]"
+                        type="radio" name="primaryLang" className="h-4 w-4 accent-primary"
                         checked={config.primaryLanguage === l.code}
                         onChange={() => setConfig({ ...config, primaryLanguage: l.code })}
                       />
@@ -379,7 +360,7 @@ export default function HotelConfigPage() {
               </Field>
             </div>
             <div className="mt-3">
-              <span className="text-sm text-[#68707a]">Ngày cuối tuần (căn cứ tính giá cuối tuần)</span>
+              <span className="text-sm text-muted">Ngày cuối tuần (căn cứ tính giá cuối tuần)</span>
               <div className="mt-2 flex gap-2">
                 {[
                   { d: 1, l: "T2" }, { d: 2, l: "T3" }, { d: 3, l: "T4" }, { d: 4, l: "T5" },
@@ -397,8 +378,8 @@ export default function HotelConfigPage() {
                       }
                       className={
                         on
-                          ? "h-10 w-10 rounded-full bg-[#2563eb] text-sm font-semibold text-white"
-                          : "h-10 w-10 rounded-full bg-[#eef1f5] text-sm font-medium text-[#68707a] hover:bg-[#e2e8f0]"
+                          ? "h-10 w-10 rounded-full bg-primary text-sm font-semibold text-white"
+                          : "h-10 w-10 rounded-full bg-[var(--nui-bg)] text-sm font-medium text-muted hover:bg-line"
                       }
                     >
                       {l}
@@ -425,7 +406,7 @@ export default function HotelConfigPage() {
               </Field>
               <Field label="Giá hiển thị">
                 <label className="flex items-center gap-2.5 pt-2 text-sm">
-                  <input type="checkbox" className="h-4 w-4 accent-[#2563eb]" checked={config.pricesIncludeTax} onChange={(e) => setConfig({ ...config, pricesIncludeTax: e.target.checked })} />
+                  <input type="checkbox" className="h-4 w-4 accent-primary" checked={config.pricesIncludeTax} onChange={(e) => setConfig({ ...config, pricesIncludeTax: e.target.checked })} />
                   Giá đã bao gồm thuế / phí
                 </label>
               </Field>
@@ -517,15 +498,15 @@ export default function HotelConfigPage() {
             </div>
             <div className="mt-4 space-y-2.5 text-sm">
               <label className="flex items-center gap-2.5">
-                <input type="checkbox" className="h-4 w-4 accent-[#2563eb]" checked={methods.bankTransfer} onChange={(e) => setMethods({ ...methods, bankTransfer: e.target.checked })} />
+                <input type="checkbox" className="h-4 w-4 accent-primary" checked={methods.bankTransfer} onChange={(e) => setMethods({ ...methods, bankTransfer: e.target.checked })} />
                 Thanh toán chuyển khoản
               </label>
               <label className="flex items-center gap-2.5">
-                <input type="checkbox" className="h-4 w-4 accent-[#2563eb]" checked={methods.cash} onChange={(e) => setMethods({ ...methods, cash: e.target.checked })} />
+                <input type="checkbox" className="h-4 w-4 accent-primary" checked={methods.cash} onChange={(e) => setMethods({ ...methods, cash: e.target.checked })} />
                 Thanh toán tiền mặt
               </label>
               <label className="flex items-center gap-2.5">
-                <input type="checkbox" className="h-4 w-4 accent-[#2563eb]" checked={methods.credit} onChange={(e) => setMethods({ ...methods, credit: e.target.checked })} />
+                <input type="checkbox" className="h-4 w-4 accent-primary" checked={methods.credit} onChange={(e) => setMethods({ ...methods, credit: e.target.checked })} />
                 Thanh toán công nợ (cho công ty / đại lý)
               </label>
             </div>
@@ -544,8 +525,8 @@ export default function HotelConfigPage() {
             <GroupTitle>Phương thức nhận cảnh báo</GroupTitle>
             <div className="mt-3 grid gap-4 sm:grid-cols-2">
               <Field label="Phương thức">
-                <div className="rounded-lg border border-[#dde3ea] bg-[#f7f9fb] px-3 py-2 text-sm text-[#17293e]">
-                  Email <span className="text-[#68707a]">— SMS / Zalo sẽ có sau</span>
+                <div className="rounded-lg border border-line bg-primary-soft px-3 py-2 text-sm text-ink">
+                  Email <span className="text-muted">— SMS / Zalo sẽ có sau</span>
                 </div>
               </Field>
               <Field label="Nhập email *">
@@ -554,7 +535,7 @@ export default function HotelConfigPage() {
             </div>
             <GroupTitle>Cảnh báo khi số lượng phòng đạt ngưỡng</GroupTitle>
             <label className="mt-3 flex flex-wrap items-center gap-2.5 text-sm">
-              <input type="checkbox" className="h-4 w-4 accent-[#2563eb]" checked={alerts.enabled} onChange={(e) => setAlerts({ ...alerts, enabled: e.target.checked })} />
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={alerts.enabled} onChange={(e) => setAlerts({ ...alerts, enabled: e.target.checked })} />
               Gửi cảnh báo khi số phòng còn lại của một loại phòng còn
               <input
                 type="number" min={0} className={`${inputSm} w-20`}
@@ -564,7 +545,7 @@ export default function HotelConfigPage() {
               />
               phòng trở xuống
             </label>
-            <p className="mt-3 text-[13px] text-[#68707a]">
+            <p className="mt-3 text-[13px] text-muted">
               Cảnh báo chỉ gửi được khi có email + máy chủ kiểm tra tồn phòng — hiện chỉ lưu cài đặt (làm ở GĐ4).
             </p>
             <SaveRow msg={savedMsg} onSave={save} />

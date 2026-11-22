@@ -1,34 +1,11 @@
 "use client";
-
-// ============================================================
-// File-CBDASH2-dashboard.tsx — Dashboard theo dung anh Cloudbeds
-// (ghi lai tu DASH2h + CBDASH1. CBDASH2: luoi 2 cot (the ngay /
-//  hoat dong) xuong tu xl (1280px) thanh lg (1024px) — vi khung
-//  app gio chi rong 80% nen man hinh laptop nho van giu duoc
-//  2 cot; KHONG doi cach tinh so lieu nao.)
-//  - Chon duoc NGAY cho khoi Activity: nut ‹ ›, o chon ngay,
-//    nut "Hom nay" — moi so lieu ben duoi chay theo ngay do.
-//  - Cot trai: the ngay + vong cong suat + so phong
-//    (tong phong ban duoc / da dat / ngung ban / ngay bi chan).
-//  - Activity: 7 o so (den / di / dang o / o tiep / don moi /
-//    huy / ban lo) — bam vao o nao thi bang khach ben duoi
-//    hien danh sach do; nut Check-in / Check-out chay that.
-//  - Forecast: chon duoc KHOANG NGAY (tu-den + nut ‹ › dich
-//    ca khoang), 5 chi so (cong suat / dem phong / ADR /
-//    RevPAR / doanh thu) + 2 tab:
-//      + "Da dat & bi chan": bieu do duong cong suat theo ngay.
-//      + "Phong trong": luoi tung loai phong x tung ngay,
-//        o = 0 to hong (het phong), co nut Prev/Next lat trang.
-// ADR    = gia trung binh 1 dem phong DA BAN.
-// RevPAR = doanh thu / phong SAN CO (ban hay khong) —
-//          con so "suc khoe kinh doanh" cua nganh.
-// So lieu tinh tu Supabase (reservations, rooms, room_blocks)
-// cua khach san dang chon; du lieu mau chi de hien tam.
-// ============================================================
+// DASHSCROLL1 — app/[hotelId]/dashboard/page.tsx (Tong quan, noi tra phong -> Chua don)
+// Bang don trong muc Hoat dong cuon trong khung cao 400px khi nhieu don (tieu de cot dinh khi cuon).
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
+import { markRoomsDirtyAfterCheckout } from "@/lib/checkout-housekeeping";
 import { useParams } from "next/navigation";
 import {
   RESERVATIONS,
@@ -74,19 +51,9 @@ const WEEKDAYS_SHORT = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
 
 
 const HK_CHIP: Record<string, { label: string; cls: string }> = {
-  dirty: { label: "Chưa dọn", cls: "bg-red-50 text-red-600" },
-  in_progress: { label: "Đang dọn", cls: "bg-amber-50 text-amber-600" },
-  out_of_order: { label: "Ngừng bán", cls: "bg-gray-100 text-gray-500" },
-};
-
-// Mau huy hieu theo kenh (nhin la biet don ve tu dau)
-const CHANNEL_CHIP: Record<string, string> = {
-  booking_com: "bg-[#e8f0fe] text-[#1a56db]",
-  expedia: "bg-[#fef3c7] text-[#92400e]",
-  airbnb: "bg-[#ffe4e0] text-[#c2410c]",
-  agoda: "bg-[#ede9fe] text-[#5b21b6]",
-  website: "bg-[#dcfce7] text-[#15803d]",
-  frontdesk: "bg-[#f1f5f9] text-[#475569]",
+  dirty: { label: "Chưa dọn", cls: "bg-danger-soft text-danger" },
+  in_progress: { label: "Đang dọn", cls: "bg-warning-soft text-warning" },
+  out_of_order: { label: "Ngừng bán", cls: "bg-surface-muted text-muted" },
 };
 
 // ---------- Lich chon ngay kieu Cloudbeds (khong dung o date mac dinh) ----------
@@ -120,7 +87,7 @@ function CalendarPopup({ view, setView, dayClass, onDay, footer }: {
     setView({ y: dt.getFullYear(), m: dt.getMonth() });
   };
   return (
-    <div className="absolute right-0 z-50 mt-2 w-[304px] rounded-xl border border-[var(--cb-border)] bg-white p-3 shadow-xl">
+    <div className="absolute right-0 z-50 mt-2 w-[304px] rounded-xl border border-line bg-surface p-3 shadow-xl">
       <div className="flex items-center justify-between gap-2">
         <button className="cb-btn-ghost px-2 py-1 text-sm" onClick={() => shiftMonth(-1)}>‹</button>
         <div className="flex gap-1">
@@ -141,7 +108,7 @@ function CalendarPopup({ view, setView, dayClass, onDay, footer }: {
         </div>
         <button className="cb-btn-ghost px-2 py-1 text-sm" onClick={() => shiftMonth(1)}>›</button>
       </div>
-      <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] font-medium text-[var(--cb-muted)]">
+      <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] font-medium text-muted">
         {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((d) => (<div key={d}>{d}</div>))}
       </div>
       <div className="mt-1 grid grid-cols-7 gap-1">
@@ -152,14 +119,14 @@ function CalendarPopup({ view, setView, dayClass, onDay, footer }: {
             <button
               key={day}
               onClick={() => onDay(day)}
-              className={`rounded-lg py-1.5 text-sm ${dayClass(day)} ${day === todayISO ? "ring-1 ring-[var(--cb-blue)]" : ""}`}
+              className={`rounded-lg py-1.5 text-sm ${dayClass(day)} ${day === todayISO ? "ring-1 ring-primary" : ""}`}
             >
               {toDate(day).getDate()}
             </button>
           )
         )}
       </div>
-      {footer && <div className="mt-3 border-t border-[var(--cb-bg)] pt-2">{footer}</div>}
+      {footer && <div className="mt-3 border-t border-[var(--nui-bg)] pt-2">{footer}</div>}
     </div>
   );
 }
@@ -182,7 +149,7 @@ function DatePicker({ value, onChange }: { value: string; onChange: (iso: string
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <CalendarPopup
             view={view} setView={setView}
-            dayClass={(day) => (day === value ? "bg-[var(--cb-blue)] font-bold text-white" : "hover:bg-[var(--cb-bg)]")}
+            dayClass={(day) => (day === value ? "bg-primary font-bold text-white" : "hover:bg-[var(--nui-bg)]")}
             onDay={(day) => { onChange(day); setOpen(false); }}
             footer={
               <button className="cb-btn-ghost w-full py-1.5 text-sm" onClick={() => { onChange(localISO(new Date())); setOpen(false); }}>
@@ -217,11 +184,11 @@ function DateRangePicker({ from, to, onChange }: { from: string; to: string; onC
     setOpen(false);
   };
   const dayClass = (day: string) => {
-    if (start && day === start) return "bg-[var(--cb-blue)] font-bold text-white";
-    if (!start && (day === from || day === to)) return "bg-[var(--cb-blue)] font-bold text-white";
-    if (!start && day > from && day < to) return "bg-[var(--cb-blue-soft)]";
-    if (start && day > start) return "bg-[var(--cb-blue-soft)]";
-    return "hover:bg-[var(--cb-bg)]";
+    if (start && day === start) return "bg-primary font-bold text-white";
+    if (!start && (day === from || day === to)) return "bg-primary font-bold text-white";
+    if (!start && day > from && day < to) return "bg-primary-soft";
+    if (start && day > start) return "bg-primary-soft";
+    return "hover:bg-[var(--nui-bg)]";
   };
   return (
     <div className="relative">
@@ -237,7 +204,7 @@ function DateRangePicker({ from, to, onChange }: { from: string; to: string; onC
             onDay={pick}
             footer={
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-[var(--cb-muted)]">
+                <span className="text-xs text-muted">
                   {start ? `Đã chọn bắt đầu ${fmtDate(start)} — bấm tiếp ngày kết thúc` : "Bấm ngày bắt đầu, rồi ngày kết thúc"}
                 </span>
                 {start && (
@@ -509,6 +476,8 @@ function DashboardPage() {
     setReservations((prev) =>
       prev.map((x) => (x.id === id ? { ...x, status } : x))
     );
+    // Tra phong xong: phong dang Sach tu chuyen Chua don (helper khong bao gio lam hong viec tra phong).
+    if (status === "checked_out") void markRoomsDirtyAfterCheckout(HOTEL_ID, r.roomNumbers);
   };
 
   // ---------- Forecast (selected range) ----------
@@ -606,10 +575,10 @@ function DashboardPage() {
 
   return (
     <div>
-      {dbError && <p className="mb-4 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">Lỗi cơ sở dữ liệu: {dbError}</p>}
+      {dbError && <p className="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">Lỗi cơ sở dữ liệu: {dbError}</p>}
       {/* ===== Header: date navigation ===== */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold text-[var(--cb-text)]">Tổng quan</h1>
+        <h1 className="text-2xl font-bold text-ink">Tổng quan</h1>
         <div className="flex items-center gap-2">
           <button
             className="cb-btn-ghost px-3 py-1.5 text-sm"
@@ -627,33 +596,33 @@ function DashboardPage() {
         {/* ===== Left column: date + occupancy ===== */}
         <div className="space-y-5">
           <div className="cb-card p-5">
-            <div className="text-sm text-[var(--cb-muted)]">{WEEKDAYS[selDate.getDay()]}</div>
-            <div className="text-6xl font-light leading-tight text-[var(--cb-muted)]">{selDate.getDate()}</div>
-            <div className="text-sm text-[var(--cb-muted)]">{MONTHS[selDate.getMonth()]} {selDate.getFullYear()}</div>
-            <div className="mt-3 text-xs text-[var(--cb-muted)]">{hotelName}</div>
+            <div className="text-sm text-muted">{WEEKDAYS[selDate.getDay()]}</div>
+            <div className="text-6xl font-light leading-tight text-muted">{selDate.getDate()}</div>
+            <div className="text-sm text-muted">{MONTHS[selDate.getMonth()]} {selDate.getFullYear()}</div>
+            <div className="mt-3 text-xs text-muted">{hotelName}</div>
           </div>
 
           <div className="cb-card p-5">
             <div className="flex justify-center">
               <svg width="150" height="150" viewBox="0 0 150 150">
-                <circle cx="75" cy="75" r="54" fill="none" stroke="var(--cb-border)" strokeWidth="14" />
+                <circle cx="75" cy="75" r="54" fill="none" stroke="var(--nui-border)" strokeWidth="14" />
                 <circle
-                  cx="75" cy="75" r="54" fill="none" stroke="#1db584" strokeWidth="14"
+                  cx="75" cy="75" r="54" fill="none" stroke="var(--nui-success)" strokeWidth="14"
                   strokeDasharray={donutDash} strokeLinecap="round"
                   transform="rotate(-90 75 75)"
                 />
-                <text x="75" y="72" textAnchor="middle" fontSize="24" fontWeight="bold" fill="var(--cb-text)">
+                <text x="75" y="72" textAnchor="middle" fontSize="24" fontWeight="bold" fill="var(--nui-text)">
                   {occupancyPct.toFixed(2)}%
                 </text>
-                <text x="75" y="92" textAnchor="middle" fontSize="11" fill="var(--cb-muted)">Công suất</text>
+                <text x="75" y="92" textAnchor="middle" fontSize="11" fill="var(--nui-text-muted)">Công suất</text>
               </svg>
             </div>
             <div className="mt-4 space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Phòng bán được</span><b>{sellableUnits}</b></div>
-              <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Phòng đã đặt</span><b>{occupiedUnits}</b></div>
-              <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Phòng còn trống</span><b>{Math.max(sellableUnits - occupiedUnits, 0)}</b></div>
-              <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Ngừng bán</span><b>{outOfService}</b></div>
-              <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Ngày bị chặn</span><b>{blockedDates}</b></div>
+              <div className="flex justify-between"><span className="text-muted">Phòng bán được</span><b>{sellableUnits}</b></div>
+              <div className="flex justify-between"><span className="text-muted">Phòng đã đặt</span><b>{occupiedUnits}</b></div>
+              <div className="flex justify-between"><span className="text-muted">Phòng còn trống</span><b>{Math.max(sellableUnits - occupiedUnits, 0)}</b></div>
+              <div className="flex justify-between"><span className="text-muted">Ngừng bán</span><b>{outOfService}</b></div>
+              <div className="flex justify-between"><span className="text-muted">Ngày bị chặn</span><b>{blockedDates}</b></div>
             </div>
           </div>
         </div>
@@ -661,35 +630,35 @@ function DashboardPage() {
         {/* ===== Activity ===== */}
         <div className="cb-card p-5">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-[var(--cb-text)]">Hoạt động ngày {fmtDate(selectedDate)}</h2>
+            <h2 className="text-lg font-bold text-ink">Hoạt động ngày {fmtDate(selectedDate)}</h2>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
             {TABS.map((t) => (
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
-                className={`rounded-xl border p-3 text-left ${tab === t.key ? "border-[var(--cb-blue)] ring-1 ring-[var(--cb-blue)]" : "border-[var(--cb-border)]"}`}
+                className={`rounded-xl border p-3 text-left ${tab === t.key ? "border-primary ring-1 ring-primary" : "border-line"}`}
               >
                 <div className="flex items-baseline gap-1.5">
-                  <span className="text-xl font-bold text-[var(--cb-text)]">{t.value}</span>
+                  <span className="text-xl font-bold text-ink">{t.value}</span>
                   {t.badge !== undefined && (
-                    <span className="rounded-full bg-[var(--cb-blue)] px-1.5 py-0.5 text-[11px] font-bold text-white">{t.badge}</span>
+                    <span className="rounded-full bg-primary px-1.5 py-0.5 text-[11px] font-bold text-white">{t.badge}</span>
                   )}
                 </div>
-                <div className="text-xs text-[var(--cb-muted)]">{t.label}</div>
+                <div className="text-xs text-muted">{t.label}</div>
               </button>
             ))}
           </div>
 
-          <div className="overflow-x-auto">
-          <table className="mt-4 w-full min-w-[640px] text-sm">
-            <thead>
-              <tr className="border-b border-[var(--cb-border)] text-left text-[var(--cb-muted)]">
-                <th className="py-2 pr-2 font-medium">Khách</th>
-                <th className="py-2 pr-2 font-medium">Phòng</th>
-                <th className="py-2 pr-2 font-medium">Lưu trú</th>
-                <th className="py-2 pr-2 font-medium">Nguồn</th>
-                <th className="py-2 font-medium">Trạng thái</th>
+          <div className="mt-4 max-h-[400px] overflow-auto">
+          <table className="w-full min-w-[640px] text-sm">
+            <thead className="sticky top-0">
+              <tr className="border-b border-line bg-surface text-left text-muted">
+                <th className="bg-surface py-2 pr-2 font-medium">Khách</th>
+                <th className="bg-surface py-2 pr-2 font-medium">Phòng</th>
+                <th className="bg-surface py-2 pr-2 font-medium">Lưu trú</th>
+                <th className="bg-surface py-2 pr-2 font-medium">Nguồn</th>
+                <th className="bg-surface py-2 font-medium">Trạng thái</th>
               </tr>
             </thead>
             <tbody>
@@ -698,28 +667,28 @@ function DashboardPage() {
                 const hk = firstRoom ? roomStatusOf.get(firstRoom) : undefined;
                 const chip = hk && hk !== "clean" ? HK_CHIP[hk] : undefined;
                 return (
-                  <tr key={r.id} className="border-b border-[var(--cb-bg)] align-top">
+                  <tr key={r.id} className="border-b border-[var(--nui-bg)] align-top">
                     <td className="py-3 pr-2">
-                      <div className="font-semibold text-[var(--cb-text)]">{r.guestName}</div>
-                      <div className="text-xs text-[var(--cb-muted)]">{hotelName} – {r.id}</div>
+                      <div className="font-semibold text-ink">{r.guestName}</div>
+                      <div className="text-xs text-muted">{hotelName} – {r.id}</div>
                       {chip && <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] ${chip.cls}`}>{chip.label}</span>}
                     </td>
                     <td className="py-3 pr-2">
                       {r.roomNumbers.length > 0 ? (
                         <span>{r.roomNumbers.join(", ")} – {getRoomTypeName(r.roomTypeId)}</span>
                       ) : (
-                        <span>{getRoomTypeName(r.roomTypeId)} <span className="text-[var(--cb-muted)]">(chưa xếp phòng)</span></span>
+                        <span>{getRoomTypeName(r.roomTypeId)} <span className="text-muted">(chưa xếp phòng)</span></span>
                       )}
                     </td>
                     <td className="py-3 pr-2">
                       <div>{fmtDate(r.checkIn)} – {fmtDate(r.checkOut)}</div>
-                      <div className="text-xs text-[var(--cb-muted)]">
+                      <div className="text-xs text-muted">
                         {nightsBetween(r.checkIn, r.checkOut)} đêm · {r.guests || 1} khách
                       </div>
                     </td>
                     <td className="py-3 pr-2">
                       <span
-                        className={`inline-block whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${CHANNEL_CHIP[r.channelCode] ?? "bg-[#f1f5f9] text-[#475569]"}`}
+                        className="inline-block whitespace-nowrap rounded-full bg-surface-muted px-2.5 py-1 text-xs font-semibold text-muted"
                         title={r.paymentCollector === "channel_collect" ? "Kênh thu hộ tiền" : "Khách sạn thu tiền"}
                       >
                         {getChannelName(r.channelCode)}
@@ -733,20 +702,20 @@ function DashboardPage() {
                         <button className="cb-btn-primary rounded-full px-4 py-1.5 text-xs" onClick={() => setStatus(r.id, "checked_out")}>Check-out</button>
                       )}
                       {tab !== "arrivals" && tab !== "departures" && (
-                        <span className="text-xs text-[var(--cb-muted)]">{STATUS_LABELS[r.status] ?? r.status}</span>
+                        <span className="text-xs text-muted">{STATUS_LABELS[r.status] ?? r.status}</span>
                       )}
                     </td>
                   </tr>
                 );
               })}
               {rows.length === 0 && (
-                <tr><td colSpan={5} className="py-6 text-center text-sm text-[var(--cb-muted)]">Không có dữ liệu cho mục này trong ngày đã chọn.</td></tr>
+                <tr><td colSpan={5} className="py-6 text-center text-sm text-muted">Không có dữ liệu cho mục này trong ngày đã chọn.</td></tr>
               )}
             </tbody>
           </table>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-[var(--cb-bg)] px-3 py-2">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-[var(--nui-bg)] px-3 py-2">
             <label className="flex cursor-pointer items-center gap-2 text-sm">
               <input
                 type="checkbox"
@@ -755,7 +724,7 @@ function DashboardPage() {
               />
               Xem cả khách đến ngày mai
             </label>
-            <span className="text-sm text-[var(--cb-muted)]">Khách đến trong ngày: <b className="text-[var(--cb-text)]">{sumGuests(arrivals)}</b></span>
+            <span className="text-sm text-muted">Khách đến trong ngày: <b className="text-ink">{sumGuests(arrivals)}</b></span>
           </div>
         </div>
       </div>
@@ -763,7 +732,7 @@ function DashboardPage() {
       {/* ===== Forecast ===== */}
       <div className="cb-card mt-5 p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-bold text-[var(--cb-text)]">Dự báo</h2>
+          <h2 className="text-lg font-bold text-ink">Dự báo</h2>
           <div className="flex flex-wrap items-center gap-2">
             <button className="cb-btn-ghost px-3 py-1.5 text-sm" onClick={() => shiftRange(-1)}>‹</button>
             <DateRangePicker from={fcFrom} to={fcTo} onChange={(f, t) => applyRange(f, t)} />
@@ -779,20 +748,20 @@ function DashboardPage() {
             { label: "RevPAR", value: fmtMoney(forecast.revpar) },
             { label: "Doanh thu", value: fmtMoney(forecast.revenue) },
           ].map((k) => (
-            <div key={k.label} className="rounded-xl border border-[var(--cb-border)] px-4 py-2">
-              <div className="text-base font-bold text-[var(--cb-text)]">{k.value}</div>
-              <div className="text-xs text-[var(--cb-muted)]">{k.label}</div>
+            <div key={k.label} className="rounded-xl border border-line px-4 py-2">
+              <div className="text-base font-bold text-ink">{k.value}</div>
+              <div className="text-xs text-muted">{k.label}</div>
             </div>
           ))}
         </div>
 
-        <div className="mt-5 flex gap-5 border-b border-[var(--cb-border)] text-sm">
+        <div className="mt-5 flex gap-5 border-b border-line text-sm">
           <button
-            className={`pb-2 font-semibold ${chartMode === "booked" ? "border-b-2 border-[var(--cb-blue)] text-[var(--cb-blue)]" : "text-[var(--cb-muted)]"}`}
+            className={`pb-2 font-semibold ${chartMode === "booked" ? "border-b-2 border-primary text-primary" : "text-muted"}`}
             onClick={() => setChartMode("booked")}
           >Đã đặt & bị chặn</button>
           <button
-            className={`pb-2 font-semibold ${chartMode === "available" ? "border-b-2 border-[var(--cb-blue)] text-[var(--cb-blue)]" : "text-[var(--cb-muted)]"}`}
+            className={`pb-2 font-semibold ${chartMode === "available" ? "border-b-2 border-primary text-primary" : "text-muted"}`}
             onClick={() => setChartMode("available")}
           >Phòng trống</button>
         </div>
@@ -802,32 +771,32 @@ function DashboardPage() {
             <svg viewBox={`0 0 ${CW} ${CH}`} className="h-auto w-full">
               {gridSteps.map((g) => (
                 <g key={g}>
-                  <line x1={ML} x2={CW - MR} y1={chartY(g)} y2={chartY(g)} stroke="var(--cb-border)" strokeDasharray="4 4" />
-                  <text x={ML - 8} y={chartY(g) + 4} textAnchor="end" fontSize="12" fill="var(--cb-muted)">{chartMode === "booked" ? `${g}%` : g}</text>
+                  <line x1={ML} x2={CW - MR} y1={chartY(g)} y2={chartY(g)} stroke="var(--nui-border)" strokeDasharray="4 4" />
+                  <text x={ML - 8} y={chartY(g) + 4} textAnchor="end" fontSize="12" fill="var(--nui-text-muted)">{chartMode === "booked" ? `${g}%` : g}</text>
                 </g>
               ))}
-              <polygon points={areaPoints} fill="var(--cb-blue)" opacity="0.08" />
-              <polyline points={points} fill="none" stroke="var(--cb-blue)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+              <polygon points={areaPoints} fill="var(--nui-primary)" opacity="0.08" />
+              <polyline points={points} fill="none" stroke="var(--nui-primary)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
               {chartValues.map((v, i) => (
-                <circle key={i} cx={chartX(i)} cy={chartY(v)} r="3.5" fill="var(--cb-blue)" stroke="#fff" strokeWidth="1.5">
+                <circle key={i} cx={chartX(i)} cy={chartY(v)} r="3.5" fill="var(--nui-primary)" stroke="#fff" strokeWidth="1.5">
                   <title>{fmtDate(fcDays[i])}: {chartMode === "booked" ? `${v.toFixed(1)}%` : `${v} phòng trống`}</title>
                 </circle>
               ))}
               {fcDays.map((d, i) =>
                 i % labelStep === 0 || i === fcNights - 1 ? (
-                  <text key={d} x={chartX(i)} y={CH - 8} textAnchor="middle" fontSize="11" fill="var(--cb-muted)">
+                  <text key={d} x={chartX(i)} y={CH - 8} textAnchor="middle" fontSize="11" fill="var(--nui-text-muted)">
                     {toDate(d).getDate()}/{toDate(d).getMonth() + 1}
                   </text>
                 ) : null
               )}
             </svg>
-            <p className="mt-1 text-xs text-[var(--cb-muted)]">Di chuột lên chấm để xem công suất từng ngày (chấm = % phòng bán được đã có khách đêm đó).</p>
+            <p className="mt-1 text-xs text-muted">Di chuột lên chấm để xem công suất từng ngày (chấm = % phòng bán được đã có khách đêm đó).</p>
           </div>
         ) : (
           <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[720px] text-sm">
               <thead>
-                <tr className="text-[var(--cb-muted)]">
+                <tr className="text-muted">
                   <th className="py-2 pr-2 text-left font-medium">Loại phòng</th>
                   {availDays.map((d) => (
                     <th key={d} className="px-1 py-2 text-center font-medium">
@@ -836,11 +805,11 @@ function DashboardPage() {
                     </th>
                   ))}
                 </tr>
-                <tr className="text-[var(--cb-muted)]">
+                <tr className="text-muted">
                   <td className="py-1 pr-2 text-xs">Tổng còn trống</td>
                   {availDays.map((d) => (
                     <td key={d} className="px-1 py-1 text-center">
-                      <span className="rounded-full border border-[var(--cb-border)] px-2 py-0.5 text-xs">
+                      <span className="rounded-full border border-line px-2 py-0.5 text-xs">
                         {roomsLeftOn(d)}
                       </span>
                     </td>
@@ -849,13 +818,13 @@ function DashboardPage() {
               </thead>
               <tbody>
                 {typeIds.map((t) => (
-                  <tr key={t} className="border-t border-[var(--cb-bg)]">
-                    <td className="py-2 pr-2 font-medium text-[var(--cb-text)]">{getRoomTypeName(t)}</td>
+                  <tr key={t} className="border-t border-[var(--nui-bg)]">
+                    <td className="py-2 pr-2 font-medium text-ink">{getRoomTypeName(t)}</td>
                     {availDays.map((d) => {
                       const left = roomsLeftOn(d, t);
                       return (
                         <td key={d} className="px-1 py-2 text-center">
-                          <span className={`inline-block min-w-[28px] rounded-full px-2 py-0.5 text-xs ${left === 0 ? "bg-[#fdecec] text-[#e5484d]" : "text-[var(--cb-text)]"}`}>
+                          <span className={`inline-block min-w-[28px] rounded-full px-2 py-0.5 text-xs ${left === 0 ? "bg-danger-soft text-danger" : "text-ink"}`}>
                             {left}
                           </span>
                         </td>
@@ -864,13 +833,13 @@ function DashboardPage() {
                   </tr>
                 ))}
                 {typeIds.length === 0 && (
-                  <tr><td colSpan={availDays.length + 1} className="py-6 text-center text-sm text-[var(--cb-muted)]">Chưa có phòng nào cho khách sạn này.</td></tr>
+                  <tr><td colSpan={availDays.length + 1} className="py-6 text-center text-sm text-muted">Chưa có phòng nào cho khách sạn này.</td></tr>
                 )}
               </tbody>
             </table>
             <div className="mt-3 flex items-center gap-2">
               <button className="cb-btn-ghost px-4 py-1.5 text-sm disabled:opacity-40" disabled={safeAvailPage === 0} onClick={() => setAvailPage(safeAvailPage - 1)}>Prev</button>
-              <span className="text-sm text-[var(--cb-muted)]">Trang {safeAvailPage + 1}/{totalAvailPages} · {fmtDate(fcFrom)} – {fmtDate(fcTo)}</span>
+              <span className="text-sm text-muted">Trang {safeAvailPage + 1}/{totalAvailPages} · {fmtDate(fcFrom)} – {fmtDate(fcTo)}</span>
               <button className="cb-btn-ghost px-4 py-1.5 text-sm disabled:opacity-40" disabled={safeAvailPage >= totalAvailPages - 1} onClick={() => setAvailPage(safeAvailPage + 1)}>Next</button>
             </div>
           </div>
@@ -892,7 +861,7 @@ export default function DashboardPageWrapper() {
     setMounted(true);
   }, []);
   if (!mounted) {
-    return <p className="p-6 text-sm text-[var(--cb-muted)]">Đang tải dashboard...</p>;
+    return <p className="p-6 text-sm text-muted">Đang tải dashboard...</p>;
   }
   return <DashboardPage />;
 }

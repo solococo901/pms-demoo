@@ -1,21 +1,8 @@
 "use client";
 
-// ============================================================
-// components/BookingPopup.tsx — Popup thong tin booking kieu
-// Cloudbeds cho Lich phong: bam vao thanh booking thi bat len
-// ngay canh thanh (khong phai panel phai).
-//  - Header xanh: ten khach – trang thai, ma don – kenh.
-//  - Cot trai: ngay den/di, so khach, tong tien, con no
-//    (do neu > 0).
-//  - Tab Reservation: chi tiet don + nut Nhan phong /
-//    Tra phong / Huy don (goi ve ham setStatus cua lich) +
-//    link "Mo trang chi tiet" sang trang day du (RESFLOW1,
-//    giong Cloudbeds: panel -> "View reservation" -> trang day du).
-//  - Tab Notes (n): danh sach ghi chu + O CHAT ben duoi —
-//    go xong bam Gui (hoac Enter) la luu ngay vao bang
-//    reservation_notes. Ghi chu cu o cot note cua don (neu co)
-//    hien dau danh sach.
-// ============================================================
+// CANCEL1 — components/BookingPopup.tsx (popup chi tiet don tren Lich phong, bo nut Huy don)
+// Huy don chi o trang chi tiet day du — popup Lich phong chi con Nhan/Tra phong + link mo trang chi tiet.
+// Doi sang token toi gian 2026-11-21.
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -40,18 +27,15 @@ const fmtTime = (ts: string) => {
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
-// Mau header popup theo dung mau thanh booking cua don do
-// (cung ma mau voi STATUS_STYLES trong ReservationBar):
-// dang o = xanh la dam, da xac nhan = xanh duong nhat,
-// cho xac nhan = xanh ngoc nhat (chu dam cho de doc),
-// tra phong = xam dam, huy = do, khong den = xam.
+// Mau header popup theo dung mau thanh booking cua don do (cung ma mau voi STATUS_STYLES trong ReservationBar).
+// Cac ma mau legend GIU NGUYEN — chi #e5484d doi sang bg-danger (cung gia tri).
 const HEADER_STYLES: Record<Reservation["status"], string> = {
   pending: "bg-[#8fd0c5] text-[#134e4a]",
   confirmed: "bg-[#4aa8de] text-white",
   in_house: "bg-[#2aa76d] text-white",
   checked_out: "bg-[#757c85] text-white",
-  cancelled: "bg-[#e5484d] text-white",
-  no_show: "bg-[var(--cb-muted)] text-white",
+  cancelled: "bg-danger text-white",
+  no_show: "bg-muted text-white",
 };
 
 export default function BookingPopup({
@@ -135,8 +119,7 @@ export default function BookingPopup({
     setDraft("");
   };
 
-  // Vi tri popup: canh thanh vua bam, kep trong man hinh.
-  // Khong co vi tri bam (mo tu ban phim...) thi dat giua man hinh.
+  // Vi tri popup: canh thanh vua bam, kep trong man hinh; khong co vi tri bam thi dat giua man hinh.
   const W = 580, H = 480;
   const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
@@ -153,7 +136,7 @@ export default function BookingPopup({
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} />
       <div
-        className="fixed z-50 flex flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
+        className="fixed z-50 flex flex-col overflow-hidden rounded-xl bg-surface shadow-2xl"
         style={{ width: W, maxWidth: "94vw", left, top }}
       >
         {/* header doi mau theo trang thai cua don (giong mau thanh booking) */}
@@ -166,39 +149,39 @@ export default function BookingPopup({
               {r.id} – {getChannelName(r.channelCode)}
             </div>
           </div>
-          <button onClick={onClose} className="rounded-full px-2 py-0.5 text-lg leading-none hover:bg-white/20">✕</button>
+          <button onClick={onClose} className="rounded-full px-2 py-0.5 text-lg leading-none hover:bg-surface/20">✕</button>
         </div>
 
         <div className="grid grid-cols-[170px_1fr]">
           {/* cot trai: tom tat */}
-          <div className="space-y-3 border-r border-[var(--cb-bg)] p-4 text-sm">
+          <div className="space-y-3 border-r border-[var(--nui-bg)] p-4 text-sm">
             <div>
-              <div className="text-xs text-[var(--cb-muted)]">Check-in / Out</div>
-              <div className="font-medium text-[var(--cb-text)]">{fmtDate(r.checkIn)} – {fmtDate(r.checkOut)}</div>
+              <div className="text-xs text-muted">Check-in / Out</div>
+              <div className="font-medium text-ink">{fmtDate(r.checkIn)} – {fmtDate(r.checkOut)}</div>
             </div>
             <div>
-              <div className="text-xs text-[var(--cb-muted)]">Khách</div>
-              <div className="font-medium text-[var(--cb-text)]">{r.guests || 1}</div>
+              <div className="text-xs text-muted">Khách</div>
+              <div className="font-medium text-ink">{r.guests || 1}</div>
             </div>
             <div>
-              <div className="text-xs text-[var(--cb-muted)]">Tổng tiền</div>
-              <div className="font-medium text-[var(--cb-text)]">{money(r.totalAmount)}</div>
+              <div className="text-xs text-muted">Tổng tiền</div>
+              <div className="font-medium text-ink">{money(r.totalAmount)}</div>
             </div>
             <div>
-              <div className="text-xs text-[var(--cb-muted)]">Còn nợ</div>
-              <div className={`font-bold ${balance > 0 ? "text-[#e5484d]" : "text-[var(--cb-text)]"}`}>{money(balance)}</div>
+              <div className="text-xs text-muted">Còn nợ</div>
+              <div className={`font-bold ${balance > 0 ? "text-danger" : "text-ink"}`}>{money(balance)}</div>
             </div>
           </div>
 
           {/* cot phai: tabs */}
           <div className="flex min-h-[300px] flex-col">
-            <div className="flex gap-4 border-b border-[var(--cb-bg)] px-4 pt-3 text-sm">
+            <div className="flex gap-4 border-b border-[var(--nui-bg)] px-4 pt-3 text-sm">
               <button
-                className={`pb-2 font-semibold ${tab === "info" ? "border-b-2 border-[var(--cb-blue)] text-[var(--cb-blue)]" : "text-[var(--cb-muted)]"}`}
+                className={`pb-2 font-semibold ${tab === "info" ? "border-b-2 border-primary text-primary" : "text-muted"}`}
                 onClick={() => setTab("info")}
               >Reservation</button>
               <button
-                className={`pb-2 font-semibold ${tab === "notes" ? "border-b-2 border-[var(--cb-blue)] text-[var(--cb-blue)]" : "text-[var(--cb-muted)]"}`}
+                className={`pb-2 font-semibold ${tab === "notes" ? "border-b-2 border-primary text-primary" : "text-muted"}`}
                 onClick={() => setTab("notes")}
               >
                 Notes ({allNotes.length})
@@ -216,8 +199,8 @@ export default function BookingPopup({
                 <InfoRow label="Tổng tiền" value={money(r.totalAmount)} />
                 <InfoRow label="Đã trả" value={money(r.paidAmount)} />
                 <div className="flex justify-between gap-4">
-                  <span className="text-[var(--cb-muted)]">Còn nợ</span>
-                  <span className={`font-medium ${balance > 0 ? "text-[#e5484d]" : "text-[var(--cb-text)]"}`}>{money(balance)}</span>
+                  <span className="text-muted">Còn nợ</span>
+                  <span className={`font-medium ${balance > 0 ? "text-danger" : "text-ink"}`}>{money(balance)}</span>
                 </div>
                 <div className="flex gap-2 pt-3">
                   {r.roomNumbers.length === 0 && onEnterAssignMode && (
@@ -229,32 +212,29 @@ export default function BookingPopup({
                   {r.status === "in_house" && (
                     <button onClick={() => onSetStatus(r.id, "checked_out")} className="cb-btn-primary flex-1 py-2 text-sm">Trả phòng</button>
                   )}
-                  {["pending", "confirmed"].includes(r.status) && (
-                    <button onClick={() => onSetStatus(r.id, "cancelled")} className="rounded-lg border border-[#e5484d] px-4 py-2 text-sm font-semibold text-[#e5484d] hover:bg-red-50">Huỷ đơn</button>
-                  )}
                 </div>
-                <div className="border-t border-[var(--cb-bg)] pt-3">
-                  <Link href={`/${hotelId}/reservations/${r.id}`} className="text-sm font-medium text-[var(--cb-blue)] hover:underline">Mở trang chi tiết ↗</Link>
+                <div className="border-t border-[var(--nui-bg)] pt-3">
+                  <Link href={`/${hotelId}/reservations/${r.id}`} className="text-sm font-medium text-primary hover:underline">Mở trang chi tiết ↗</Link>
                 </div>
               </div>
             ) : (
               <div className="flex flex-1 flex-col overflow-hidden">
                 <div ref={listRef} className="max-h-[320px] flex-1 space-y-3 overflow-y-auto p-4">
                   {allNotes.length === 0 && (
-                    <p className="text-sm text-[var(--cb-muted)]">Chưa có ghi chú nào cho đơn này. Gõ vào ô bên dưới để ghi chú ngay.</p>
+                    <p className="text-sm text-muted">Chưa có ghi chú nào cho đơn này. Gõ vào ô bên dưới để ghi chú ngay.</p>
                   )}
                   {allNotes.map((n) => (
-                    <div key={n.id} className="rounded-lg bg-[#f4f6f9] px-3 py-2">
-                      <div className="text-xs font-semibold text-[var(--cb-text)]">
+                    <div key={n.id} className="rounded-lg bg-surface-muted px-3 py-2">
+                      <div className="text-xs font-semibold text-ink">
                         {n.author}
-                        {n.createdAt && <span className="ml-2 font-normal text-[var(--cb-muted)]">{fmtTime(n.createdAt)}</span>}
+                        {n.createdAt && <span className="ml-2 font-normal text-muted">{fmtTime(n.createdAt)}</span>}
                       </div>
-                      <div className="mt-0.5 whitespace-pre-wrap text-sm text-[var(--cb-text)]">{n.body}</div>
+                      <div className="mt-0.5 whitespace-pre-wrap text-sm text-ink">{n.body}</div>
                     </div>
                   ))}
-                  {notesError && <p className="text-sm text-[#e5484d]">{notesError}</p>}
+                  {notesError && <p className="text-sm text-danger">{notesError}</p>}
                 </div>
-                <div className="flex gap-2 border-t border-[var(--cb-bg)] p-3">
+                <div className="flex gap-2 border-t border-[var(--nui-bg)] p-3">
                   <input
                     className="cb-input-pill flex-1 px-3 py-2 text-sm"
                     placeholder="Ghi chú gì đó cho đơn này… (Enter để gửi)"
@@ -278,8 +258,8 @@ export default function BookingPopup({
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-4">
-      <span className="text-[var(--cb-muted)]">{label}</span>
-      <span className="text-right font-medium text-[var(--cb-text)]">{value}</span>
+      <span className="text-muted">{label}</span>
+      <span className="text-right font-medium text-ink">{value}</span>
     </div>
   );
 }

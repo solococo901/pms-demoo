@@ -1,22 +1,8 @@
 "use client";
 
-// ============================================================
-// FILE CHANNELS2 — app/[hotelId]/channels/page.tsx
-// Trang KENH BAN: moi o kenh hien trang thai THAT (doc tu DB),
-// khong con du lieu mau viet cung nhu truoc (A7).
-//   - Da ket noi = kenh co goi gia mang channex_id tren Channex.
-//   - Dang ban = da ket noi + khong co block "Tat ban tren kenh".
-//     Tat cong tac = tao block dong ban theo kenh (scope=channel)
-//     cho moi loai phong, day stop-sell len Channex qua hang doi;
-//     bat lai = xoa cac block do.
-//   - Hoa hong luu that vao channel_connections.settings.
-//   - Dong bo gan nhat = settings.last_sync_at, do ChannexSync
-//     (dong bo tay) va ChannexOutbox (dong bo tu dong) ghi lai.
-//   - Khong con nut "Dong bo ngay" / "Ket noi" gia tren tung
-//     the: noi kenh that o the Thiet lap, dong bo that o the
-//     Dong bo API. Kênh trực tiếp (Website, Lễ tân) không có
-//     công tắc — bán trực tiếp trong PMS, không qua Channex.
-// ============================================================
+// NATEUI8 — app/[hotelId]/channels/page.tsx (Kenh ban)
+// Moi o kenh hien trang thai THAT doc tu DB; doi sang token toi gian 2026-11-21.
+// Da ket noi = co goi gia mang channex_id; tat ban = tao block dong ban theo kenh.
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
@@ -31,9 +17,7 @@ import { patchChannelSettings, queueChannexDates, rangeDates } from "@/lib/chann
 import { IconBuilding } from "@/components/icons";
 
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
-// Ly do danh dau block do cong tac tat-ban tao ra (de bat lai
-// chi xoa dung cac block nay, khong dong den block dong ban
-// theo ngay ma nguoi dung tao o trang Chan phong & Dong ban).
+// Ly do danh dau block do cong tac tat-ban tao ra (de bat lai chi xoa dung cac block nay).
 const OFF_REASON = "Tắt bán trên kênh";
 const OFF_DAYS = 365;
 const DEFAULT_COMMISSIONS: Record<string, number> = {
@@ -44,7 +28,7 @@ type OffBlock = {
   id: string; channelCode: string; roomTypeId: string;
 };
 
-const inputCls = "rounded-lg border border-[var(--cb-border)] px-3 py-2 text-[var(--cb-text)] outline-none focus:border-[var(--cb-blue)]";
+const inputCls = "rounded-lg border border-line px-3 py-2 text-ink outline-none focus:border-primary";
 
 function relTime(iso: string | null): string {
   if (!iso) return "chưa từng";
@@ -71,8 +55,7 @@ export default function ChannelsPage() {
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [busyCode, setBusyCode] = useState<string | null>(null);
 
-  // REAL connection test: the browser asks our own server
-  // route, which holds the API key (see app/api/channex/test).
+  // Kiem tra ket noi that: trinh duyet goi route may chu giu API key.
   async function testChannex() {
     setChannexStatus("checking");
     setChannexMsg("");
@@ -127,9 +110,7 @@ export default function ChannelsPage() {
   const isOff = (code: string) => offBlocks.some((b) => b.channelCode === code);
   const isSelling = (code: string) => !!connected[code] && !isOff(code);
 
-  // Bat/tat ban that tren 1 kenh OTA: tat = tao block dong ban
-  // theo kenh cho moi loai phong (hom nay..+365 ngay) roi xep
-  // hang doi de Channex nhan stop-sell; bat = xoa cac block do.
+  // Tat ban = tao block dong ban theo kenh cho moi loai phong (365 ngay), bat lai = xoa cac block do.
   async function setSelling(code: string, sell: boolean) {
     if (!connected[code] || busyCode) return;
     setBusyCode(code);
@@ -174,29 +155,29 @@ export default function ChannelsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-[var(--cb-text)]">Kênh bán</h1>
-      <p className="mt-1 text-sm text-[var(--cb-muted)]">
+      <h1 className="text-2xl font-bold text-ink">Kênh bán</h1>
+      <p className="mt-1 text-sm text-muted">
         Các OTA nối qua Channex — một kết nối tới Channex là đủ cho mọi OTA. Website và Lễ tân bán trực tiếp trong PMS.
       </p>
 
       {/* Channex account box */}
       <div className="cb-card mt-5 p-5">
         <div className="flex items-center justify-between">
-          <h2 className="font-bold text-[var(--cb-text)]">Tài khoản Channex</h2>
-          <span className={`rounded-full px-3 py-1 text-xs font-medium ${channexStatus === "ok" ? "bg-[#e6f7f1] text-[#0e7a56]" : channexStatus === "error" ? "bg-[#fdecec] text-[#e5484d]" : "bg-[var(--cb-bg)] text-[var(--cb-muted)]"}`}>
+          <h2 className="font-bold text-ink">Tài khoản Channex</h2>
+          <span className={`rounded-full px-3 py-1 text-xs font-medium ${channexStatus === "ok" ? "bg-success-soft text-success" : channexStatus === "error" ? "bg-danger-soft text-danger" : "bg-[var(--nui-bg)] text-muted"}`}>
             {channexStatus === "ok" ? "● Kết nối tốt" : channexStatus === "error" ? "● Kết nối lỗi" : channexStatus === "checking" ? "● Đang kiểm tra..." : "○ Chưa kiểm tra"}
           </span>
         </div>
         <div className="mt-3 flex flex-wrap items-end gap-3">
-          <label className="text-sm text-[var(--cb-text)]">
+          <label className="text-sm text-ink">
             Môi trường (đọc từ máy chủ)
             <select value={environment} disabled className={`${inputCls} mt-1 block opacity-70`}>
               <option value="staging">Staging (thử nghiệm)</option>
               <option value="production">Production (chạy thật)</option>
             </select>
           </label>
-          <div className="flex-1 rounded-lg bg-[var(--cb-blue-soft)] px-3 py-2 text-sm text-[var(--cb-muted)]">
-            API key được đọc từ file <b className="text-[var(--cb-text)]">.env.local</b> phía máy chủ —
+          <div className="flex-1 rounded-lg bg-primary-soft px-3 py-2 text-sm text-muted">
+            API key được đọc từ file <b className="text-ink">.env.local</b> phía máy chủ —
             trình duyệt không bao giờ nhìn thấy key.
           </div>
           <button
@@ -207,20 +188,20 @@ export default function ChannelsPage() {
             {channexStatus === "checking" ? "Đang kiểm tra..." : "Kiểm tra kết nối"}
           </button>
         </div>
-        <p className="mt-2 text-xs text-[var(--cb-muted)]">
-          Đang ở môi trường <b className="text-[var(--cb-text)]">{environment}</b>:
+        <p className="mt-2 text-xs text-muted">
+          Đang ở môi trường <b className="text-ink">{environment}</b>:
           {environment === "staging" ? " dùng để học và test, không bán phòng thật." : " bán phòng thật — cần qua kiểm duyệt (certification) của Channex."}
         </p>
         {channexMsg && (
-          <p className={`mt-2 rounded-lg px-3 py-2 text-sm ${channexStatus === "ok" ? "bg-[#e6f7f1] text-[#0e7a56]" : "bg-[#fdecec] text-[#e5484d]"}`}>
+          <p className={`mt-2 rounded-lg px-3 py-2 text-sm ${channexStatus === "ok" ? "bg-success-soft text-success" : "bg-danger-soft text-danger"}`}>
             {channexMsg}
           </p>
         )}
         {channexProps.length > 0 && (
-          <ul className="mt-2 space-y-1 text-sm text-[var(--cb-text)]">
+          <ul className="mt-2 space-y-1 text-sm text-ink">
             {channexProps.map((pr) => (
-              <li key={pr.id} className="flex items-center gap-1.5 rounded-lg bg-[var(--cb-blue-soft)] px-3 py-1.5">
-                <IconBuilding className="h-4 w-4 shrink-0" /> {pr.title} <span className="text-xs text-[var(--cb-muted)]">({pr.id})</span>
+              <li key={pr.id} className="flex items-center gap-1.5 rounded-lg bg-primary-soft px-3 py-1.5">
+                <IconBuilding className="h-4 w-4 shrink-0" /> {pr.title} <span className="text-xs text-muted">({pr.id})</span>
               </li>
             ))}
           </ul>
@@ -233,7 +214,7 @@ export default function ChannelsPage() {
 
       {/* one card per channel — real state from the DB */}
       {loading ? (
-        <p className="mt-5 text-sm text-[var(--cb-muted)]">Đang tải trạng thái kênh...</p>
+        <p className="mt-5 text-sm text-muted">Đang tải trạng thái kênh...</p>
       ) : (
         <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {CHANNELS.map((c) => {
@@ -243,16 +224,16 @@ export default function ChannelsPage() {
                 <div key={c.code} className="cb-card p-5">
                   <div className="flex items-start justify-between">
                     <div>
-                      <div className="font-bold text-[var(--cb-text)]">{c.name}</div>
-                      <div className="text-xs text-[var(--cb-muted)]">
+                      <div className="font-bold text-ink">{c.name}</div>
+                      <div className="text-xs text-muted">
                         {c.type === "direct" ? "Kênh trực tiếp" : "Tại quầy"}
                       </div>
                     </div>
-                    <span className="rounded-full bg-[var(--cb-bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--cb-muted)]">
+                    <span className="rounded-full bg-[var(--nui-bg)] px-2.5 py-1 text-[11px] font-medium text-muted">
                       Trong PMS
                     </span>
                   </div>
-                  <p className="mt-4 text-sm text-[var(--cb-muted)]">
+                  <p className="mt-4 text-sm text-muted">
                     Bán trực tiếp trong PMS — không qua Channex, không cần kết nối.
                   </p>
                 </div>
@@ -264,51 +245,51 @@ export default function ChannelsPage() {
               <div key={c.code} className="cb-card p-5">
                 <div className="flex items-start justify-between">
                   <div>
-                    <div className="font-bold text-[var(--cb-text)]">{c.name}</div>
-                    <div className="text-xs text-[var(--cb-muted)]">OTA — qua Channex</div>
+                    <div className="font-bold text-ink">{c.name}</div>
+                    <div className="text-xs text-muted">OTA — qua Channex</div>
                   </div>
-                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${conn ? "bg-[#e6f7f1] text-[#0e7a56]" : "bg-[#fdecec] text-[#e5484d]"}`}>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${conn ? "bg-success-soft text-success" : "bg-danger-soft text-danger"}`}>
                     {conn ? "Đã kết nối" : "Chưa kết nối"}
                   </span>
                 </div>
 
                 <div className="mt-4 space-y-2 text-sm">
                   <div className="flex items-center justify-between">
-                    <span className="text-[var(--cb-muted)]">Đang bán trên kênh này</span>
+                    <span className="text-muted">Đang bán trên kênh này</span>
                     <button
                       onClick={() => setSelling(c.code, !on)}
                       disabled={!conn || busyCode === c.code}
-                      className={`h-6 w-11 rounded-full p-0.5 transition ${on ? "bg-[#1db584]" : "bg-[#ccd5df]"} disabled:opacity-50`}
+                      className={`h-6 w-11 rounded-full p-0.5 transition ${on ? "bg-success" : "bg-line"} disabled:opacity-50`}
                       title={conn ? "Bật/tắt bán trên kênh này (đẩy stop-sell lên Channex)" : "Cần tạo cấu trúc trên Channex trước"}
                     >
-                      <span className={`block h-5 w-5 rounded-full bg-white transition ${on ? "translate-x-5" : ""}`} />
+                      <span className={`block h-5 w-5 rounded-full bg-surface transition ${on ? "translate-x-5" : ""}`} />
                     </button>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-[var(--cb-muted)]">Hoa hồng kênh thu</span>
-                    <span className="text-[var(--cb-text)]">
+                    <span className="text-muted">Hoa hồng kênh thu</span>
+                    <span className="text-ink">
                       <input
                         type="number"
                         value={commissions[c.code] ?? 0}
                         onChange={(e) => setCommissions((prev) => ({ ...prev, [c.code]: Number(e.target.value) }))}
                         onBlur={() => saveCommission(c.code, commissions[c.code] ?? 0)}
-                        className="w-16 rounded border border-[var(--cb-border)] px-2 py-1 text-right outline-none focus:border-[var(--cb-blue)]"
+                        className="w-16 rounded border border-line px-2 py-1 text-right outline-none focus:border-primary"
                       /> %
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-[var(--cb-muted)]">Đồng bộ gần nhất</span>
-                    <span className="text-[var(--cb-text)]">{relTime(lastSyncAt)}</span>
+                    <span className="text-muted">Đồng bộ gần nhất</span>
+                    <span className="text-ink">{relTime(lastSyncAt)}</span>
                   </div>
                 </div>
 
                 {!conn && (
-                  <p className="mt-4 rounded-lg bg-[var(--cb-blue-soft)] px-3 py-2 text-[13px] text-[var(--cb-muted)]">
+                  <p className="mt-4 rounded-lg bg-primary-soft px-3 py-2 text-[13px] text-muted">
                     Chưa có gói giá trên Channex — nhập giá ở Lịch giá rồi bấm “Tạo cấu trúc trên Channex” ở thẻ phía trên.
                   </p>
                 )}
                 {conn && !on && (
-                  <p className="mt-4 rounded-lg bg-[#fdf3e3] px-3 py-2 text-[13px] text-[#9a6a12]">
+                  <p className="mt-4 rounded-lg bg-warning-soft px-3 py-2 text-[13px] text-warning">
                     Đang tắt bán trên kênh này (đã đẩy stop-sell lên Channex).
                   </p>
                 )}
@@ -318,7 +299,7 @@ export default function ChannelsPage() {
         </div>
       )}
 
-      <p className="mt-4 text-xs text-[var(--cb-muted)]">
+      <p className="mt-4 text-xs text-muted">
         Trạng thái kênh đọc từ dữ liệu thật: đã kết nối = có gói giá trên Channex; tắt bán = đóng bán trên kênh đó (đẩy stop-sell lên Channex).
         Tắt/bật xong nên bấm “Đồng bộ ngay” ở thẻ phía trên để đẩy ngay, nếu không hàng đợi tự đẩy dần trong vài phút.
       </p>

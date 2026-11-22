@@ -286,7 +286,19 @@ export const PRICE_FORMULAS: PriceFormula[] = [
   { id: "f-minus5", name: "Rẻ hơn gói gốc 5%", kind: "percent", value: -5 },
   { id: "f-plus2", name: "Cao hơn gói gốc 2%", kind: "percent", value: 2 },
   { id: "f-plus100k", name: "Cộng thêm 100.000₫", kind: "amount", value: 100000 },
+  { id: "f-plus14", name: "Cao hơn gói gốc 14%", kind: "percent", value: 14 },
+  { id: "f-plus15", name: "Cao hơn gói gốc 15%", kind: "percent", value: 15 },
+  { id: "f-plus16", name: "Cao hơn gói gốc 16%", kind: "percent", value: 16 },
+  { id: "f-plus18", name: "Cao hơn gói gốc 18%", kind: "percent", value: 18 },
 ];
+
+// Cong thuc suy gia kenh tu gia goc (= % hoa hong cua kenh). Website / Le tan khong co cong thuc — gia cua ho CHINH LA gia goc.
+export const CHANNEL_FORMULA: Record<string, string> = {
+  booking_com: "f-plus15",
+  expedia: "f-plus18",
+  airbnb: "f-plus14",
+  agoda: "f-plus16",
+};
 
 export const getFormula = (id?: string): PriceFormula | undefined =>
   PRICE_FORMULAS.find((f) => f.id === id);

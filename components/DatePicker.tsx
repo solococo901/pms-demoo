@@ -1,23 +1,9 @@
 "use client";
 import { IconCalendar } from "@/components/icons";
 
-// ============================================================
-// components/DatePicker.tsx — Lich chon ngay dung chung cho ca PMS
-// (tach tu DatePicker/DateRangePicker o trang Tong quan, 2026-11-17).
-//   - DatePicker: chon 1 ngay (loc, gia han, ngay bat dau luoi gia).
-//     Co the khoa 2 dau (min/max) va hien khoang khi chon theo cap:
-//     truyen rangeStart = ngay den thi o lich ngay di, ngay den to
-//     xanh dam, cac ngay tu ngay den tro ve truoc bi khoa, re chuot
-//     qua cac ngay thi khoang tu ngay den den ngay dang re to xanh
-//     nhat (xem truoc khoang o).
-//   - DateRangePicker: chon khoang ngay — bam ngay bat dau, roi ngay
-//     ket thuc. Ngay bat dau da chon luon hien xanh dam + ghi ro o
-//     chan popup ("Da chon ngay den 14/11 — bam tiep ngay di"), re
-//     chuot xem truoc khoang (chi khoang dang re moi to xanh nhat),
-//     bam nguoc tu dao.
-//   Popup dat co dinh theo vi tri nut (fixed + getBoundingClientRect)
-//   nen dung duoc ca trong the co overflow-hidden hay drawer cuon doc.
-// ============================================================
+// NATEUI21 — components/DatePicker.tsx (lich chon ngay dung chung cho ca PMS)
+// DatePicker chon 1 ngay (co khoa min/max, hien khoang khi chon theo cap); DateRangePicker chon khoang ngay; popup dat co dinh theo vi tri nut.
+// Doi sang token toi gian 2026-11-21.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -54,9 +40,9 @@ function monthCells(y: number, m: number): (string | null)[] {
 }
 
 const BTN_INPUT =
-  "inline-flex items-center gap-2 rounded-lg border border-[var(--cb-border)] bg-white px-3 py-2 text-sm text-[var(--cb-text)] outline-none hover:border-[var(--cb-blue)]";
+  "inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none hover:border-primary";
 const BTN_CHIP =
-  "inline-flex items-center gap-1.5 rounded-full border border-[var(--cb-border)] bg-[#f1f5f9] px-3 py-1.5 text-xs font-medium text-[var(--cb-text)] outline-none hover:border-[var(--cb-blue)]";
+  "inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-muted px-3 py-1.5 text-xs font-medium text-ink outline-none hover:border-primary";
 
 function CalendarPopup({ rect, view, setView, dayClass, onDay, onHover, footer }: {
   rect: { left: number; top: number; bottom: number };
@@ -80,7 +66,7 @@ function CalendarPopup({ rect, view, setView, dayClass, onDay, onHover, footer }
   const left = Math.min(Math.max(rect.left, 8), Math.max(vw - W - 8, 8));
   const top = rect.bottom + H + 12 > vh ? Math.max(rect.top - H - 8, 8) : rect.bottom + 8;
   return (
-    <div className="fixed z-50 w-[304px] rounded-xl border border-[var(--cb-border)] bg-white p-3 shadow-2xl" style={{ left, top }}>
+    <div className="fixed z-50 w-[304px] rounded-xl border border-line bg-surface p-3 shadow-2xl" style={{ left, top }}>
       <div className="flex items-center justify-between gap-2">
         <button type="button" className="cb-btn-ghost px-2 py-1 text-sm" onClick={() => shiftMonth(-1)}>‹</button>
         <div className="flex gap-1">
@@ -95,7 +81,7 @@ function CalendarPopup({ rect, view, setView, dayClass, onDay, onHover, footer }
         </div>
         <button type="button" className="cb-btn-ghost px-2 py-1 text-sm" onClick={() => shiftMonth(1)}>›</button>
       </div>
-      <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] font-medium text-[var(--cb-muted)]">
+      <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] font-medium text-muted">
         {WEEKDAYS.map((d) => (<div key={d}>{d}</div>))}
       </div>
       <div className="mt-1 grid grid-cols-7 gap-1" onMouseLeave={() => onHover?.(null)}>
@@ -108,14 +94,14 @@ function CalendarPopup({ rect, view, setView, dayClass, onDay, onHover, footer }
               type="button"
               onClick={() => onDay(day)}
               onMouseEnter={() => onHover?.(day)}
-              className={`rounded-lg py-1.5 text-sm ${dayClass(day)} ${day === todayISO ? "ring-1 ring-[var(--cb-blue)]" : ""}`}
+              className={`rounded-lg py-1.5 text-sm ${dayClass(day)} ${day === todayISO ? "ring-1 ring-primary" : ""}`}
             >
               {toDate(day).getDate()}
             </button>
           )
         )}
       </div>
-      {footer && <div className="mt-3 border-t border-[var(--cb-bg)] pt-2">{footer}</div>}
+      {footer && <div className="mt-3 border-t border-[var(--nui-bg)] pt-2">{footer}</div>}
     </div>
   );
 }
@@ -146,8 +132,7 @@ function pickerButtonClass(variant: "input" | "chip", fullWidth: boolean, extra?
 export function DatePicker({ value, onChange, min, rangeStart, placeholder, clearable, className, fullWidth, variant = "input" }: {
   value: string;
   onChange: (iso: string) => void;
-  // rangeStart: ngay dau cua cap (vd ngay den) — hien xanh dam, khoa
-  // cac ngay <= no khi co min, re chuot xem truoc khoang o.
+  // rangeStart: ngay dau cua cap (vd ngay den) — hien xanh dam, khoa cac ngay <= no khi co min, re chuot xem truoc khoang o.
   rangeStart?: string;
   placeholder?: string;
   clearable?: boolean;
@@ -170,12 +155,12 @@ export function DatePicker({ value, onChange, min, rangeStart, placeholder, clea
     setOpen(true);
   };
   const dayClass = (day: string) => {
-    if (min && day < min) return "cursor-not-allowed text-[var(--cb-muted)] opacity-40";
-    if (rangeStart && day === rangeStart) return "bg-[var(--cb-blue)] font-bold text-white";
-    if (rangeStart && hover && day > rangeStart && day <= hover) return "bg-[var(--cb-blue-soft)]";
-    if (rangeStart && !hover && value && day > rangeStart && day < value) return "bg-[var(--cb-blue-soft)]";
-    if (day === value) return "bg-[var(--cb-blue)] font-bold text-white";
-    return "hover:bg-[var(--cb-bg)]";
+    if (min && day < min) return "cursor-not-allowed text-muted opacity-40";
+    if (rangeStart && day === rangeStart) return "bg-primary font-bold text-white";
+    if (rangeStart && hover && day > rangeStart && day <= hover) return "bg-primary-soft";
+    if (rangeStart && !hover && value && day > rangeStart && day < value) return "bg-primary-soft";
+    if (day === value) return "bg-primary font-bold text-white";
+    return "hover:bg-[var(--nui-bg)]";
   };
   const pick = (day: string) => {
     if (min && day < min) return;
@@ -197,7 +182,7 @@ export function DatePicker({ value, onChange, min, rangeStart, placeholder, clea
             footer={
               <div>
                 {rangeStart && (
-                  <p className="mb-2 text-xs text-[var(--cb-muted)]">
+                  <p className="mb-2 text-xs text-muted">
                     Đã chọn ngày đến {fmtDate(rangeStart)} — các ngày từ ngày này trở về trước đã khoá, rê chuột để xem trước khoảng ở.
                   </p>
                 )}
@@ -261,12 +246,12 @@ export function DateRangePicker({ from, to, onChange, min, fromLabel, toLabel, c
     setOpen(false);
   };
   const dayClass = (day: string) => {
-    if (min && day < min) return "cursor-not-allowed text-[var(--cb-muted)] opacity-40";
-    if (start && day === start) return "bg-[var(--cb-blue)] font-bold text-white";
-    if (!start && from && (day === from || day === to)) return "bg-[var(--cb-blue)] font-bold text-white";
-    if (!start && from && to && day > from && day < to) return "bg-[var(--cb-blue-soft)]";
-    if (start && hover && day > start && day <= hover) return "bg-[var(--cb-blue-soft)]";
-    return "hover:bg-[var(--cb-bg)]";
+    if (min && day < min) return "cursor-not-allowed text-muted opacity-40";
+    if (start && day === start) return "bg-primary font-bold text-white";
+    if (!start && from && (day === from || day === to)) return "bg-primary font-bold text-white";
+    if (!start && from && to && day > from && day < to) return "bg-primary-soft";
+    if (start && hover && day > start && day <= hover) return "bg-primary-soft";
+    return "hover:bg-[var(--nui-bg)]";
   };
   const label = from && to ? `${fmtDate(from)} → ${fmtDate(to)}` : "Chọn ngày đến → ngày đi";
   return (
@@ -282,7 +267,7 @@ export function DateRangePicker({ from, to, onChange, min, fromLabel, toLabel, c
             rect={rect} view={view} setView={setView} dayClass={dayClass} onDay={pick} onHover={setHover}
             footer={
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-[var(--cb-muted)]">
+                <span className="text-xs text-muted">
                   {start
                     ? `Đã chọn ${fromLabel ?? "ngày đến"} ${fmtDate(start)} — bấm tiếp ${toLabel ?? "ngày đi"}`
                     : from && to

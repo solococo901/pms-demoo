@@ -1,96 +1,167 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
 /* ============================================================
-   FILE CBLAYOUT1 — app/globals.css
-   CLOUDBEDS BRIGHT THEME (2026-11-17, theo ban chinh thuc
-   Cloudbeds ma Vos chot — thay cho THEME1 kem/navy/dong):
-   nen xam-xanh nhat, the trang, chu navy-xanh, nut xanh duong.
-   - Nen trang: #f5f7fb; the trang; vien #e5e9f0.
-   - Chu chinh #17293e, chu phu #68707a (mau goc Cloudbeds).
-   - Nut chinh: xanh duong #2563eb — bien --cb-blue GIO LA
-     MAU XANH DUONG THAT (THEME1 doi no thanh dong de giu ten;
-     gio ten va gia tri khop nhau tro lai). Hover #1d4ed8,
-     nen nhat #eef4ff cho muc dang chon.
-   - Màu trang thai GIU NGUYEN: xanh la #1db584, vang #f59e0b,
-     do #e5484d.
-   - Cac trang con hien dang viet ma mau Cloudbeds truc tiep
-     (#17293e, #68707a, #2563eb...) nen doi bang nay lam chung
-     khop mau ngay — khong can quet lai B1 nhu du kien cu
-     (B1 doi cac ma do sang bien dong cua THEME1, gio da loi
-     thoi).
-   NOTE: Tailwind v4 — file phai mo dau bang 1 dong import
-   o tren. Cu phap v3 lam mat toan bo CSS (dinh 2026-10-22).
+   FILE NATEUI1 — app/globals.css
+   TOKEN THEME KIỂU NATEUI, PHONG CÁCH TỐI GIẢN (2026-11-21,
+   Vos chốt: làm theo bản demo tối giản, không giống AI tạo).
+
+   Ý tưởng: mọi màu/chữ/bo góc/bóng chỉ định 1 lần ở đây
+   (bộ --nui-*), các màn hình dùng lại — không còn mỗi chỗ
+   tự chọn 1 màu, 1 cỡ bo khác nhau. Đó là thứ làm giao
+   diện trông như đồ làm tay, không phải đồ AI nhả ra.
+
+   Quy tắc nhìn (giữ cho mọi file sau này):
+   - Nền trắng/xám nhạt, chữ gần đen, CHỈ 1 màu nhấn xanh
+     #2563eb (nút chính, link, mục đang mở).
+   - Màu chỉ để báo trạng thái: xanh lá = xong, vàng = chờ,
+     đỏ = lỗi — và chỉ dùng bản nhạt cho nền.
+   - KHÔNG dải chuyển màu, KHÔNG kính mờ, KHÔNG thẻ tô đặc
+     màu, KHÔNG emoji làm icon, KHÔNG bóng nặng.
+   - Viền mỏng thay cho bóng; bo góc nhỏ (6–12px), không
+     bo tròn quá đà; chữ Inter.
+   - Các biến --cb-* cũ GIỮ NGUYÊN để các trang hiện tại
+     không vỡ; chúng chỉ trỏ sang token mới.
+   NOTE: Tailwind v4 — dòng font Inter phải đứng TRƯỚC
+   dòng import Tailwind.
    ============================================================ */
 
 :root {
-  --cb-bg: #f5f7fb; /* app background: pale blue-grey */
-  --cb-card: #ffffff; /* card / panel background */
-  --cb-border: #e5e9f0; /* card border */
-  --cb-text: #17293e; /* main text: Cloudbeds dark */
-  --cb-muted: #68707a; /* secondary text */
-  --cb-blue: #2563eb; /* primary button blue */
-  --cb-blue-dark: #1d4ed8; /* primary button hover: darker blue */
-  --cb-blue-soft: #eef4ff; /* soft blue background (selected item) */
-  --cb-green: #1db584; /* occupancy / success green */
-  --cb-amber: #f59e0b; /* warning */
-  --cb-red: #e5484d; /* danger / notification dot */
+  /* --- Bề mặt --- */
+  --nui-bg: #f5f7fb; /* nền app: xám-xanh rất nhạt */
+  --nui-surface: #ffffff; /* nền thẻ / bảng */
+  --nui-surface-muted: #f7f9fb; /* nền phụ: hàng xen kẽ, ô nhập */
+  --nui-border: #e5e9f0; /* viền thẻ, viền bảng */
+  --nui-border-strong: #d5dbe4; /* viền cần nhấn hơn (ô nhập focus) */
+
+  /* --- Chữ --- */
+  --nui-text: #17293e; /* chữ chính: gần đen */
+  --nui-text-muted: #68707a; /* chữ phụ */
+  --nui-text-subtle: #9aa7b4; /* chữ mờ nhất: gợi ý, chú thích */
+
+  /* --- Màu nhấn duy nhất --- */
+  --nui-primary: #2563eb; /* nút chính, link, mục đang mở */
+  --nui-primary-hover: #1d4ed8; /* nút chính khi rê chuột */
+  --nui-primary-active: #1e40af; /* nút chính khi đang bấm */
+  --nui-primary-soft: #eef4ff; /* nền nhạt xanh: mục đang chọn */
+
+  /* --- Trạng thái (chỉ dùng bản nhạt cho nền) --- */
+  --nui-success: #1db584;
+  --nui-success-soft: #e6f7f0;
+  --nui-warning: #f59e0b;
+  --nui-warning-soft: #fef6e0;
+  --nui-danger: #e5484d;
+  --nui-danger-soft: #fdecec;
+
+  /* --- Chữ, bo góc, bóng --- */
+  --nui-font-sans: "Inter", "Segoe UI", system-ui, -apple-system, Roboto,
+    "Helvetica Neue", sans-serif;
+  --nui-radius-sm: 6px;
+  --nui-radius-md: 8px;
+  --nui-radius-lg: 12px;
+  --nui-radius-xl: 16px;
+  --nui-shadow-card: 0 1px 3px rgba(23, 41, 62, 0.08);
+
+  /* --- Lớp tương thích: biến --cb-* cũ trỏ sang token mới --- */
+  --cb-bg: var(--nui-bg);
+  --cb-card: var(--nui-surface);
+  --cb-border: var(--nui-border);
+  --cb-text: var(--nui-text);
+  --cb-muted: var(--nui-text-muted);
+  --cb-blue: var(--nui-primary);
+  --cb-blue-dark: var(--nui-primary-hover);
+  --cb-blue-soft: var(--nui-primary-soft);
+  --cb-green: var(--nui-success);
+  --cb-amber: var(--nui-warning);
+  --cb-red: var(--nui-danger);
+}
+
+/* Nối token vào Tailwind v4: từ đây dùng được các class
+   bg-primary, text-ink, text-muted, bg-surface, bg-primary-soft,
+   border-line, bg-success-soft... thay cho mã màu viết tay. */
+@theme inline {
+  --color-primary: var(--nui-primary);
+  --color-primary-hover: var(--nui-primary-hover);
+  --color-primary-active: var(--nui-primary-active);
+  --color-primary-soft: var(--nui-primary-soft);
+  --color-surface: var(--nui-surface);
+  --color-surface-muted: var(--nui-surface-muted);
+  --color-line: var(--nui-border);
+  --color-line-strong: var(--nui-border-strong);
+  --color-ink: var(--nui-text);
+  --color-muted: var(--nui-text-muted);
+  --color-subtle: var(--nui-text-subtle);
+  --color-success: var(--nui-success);
+  --color-success-soft: var(--nui-success-soft);
+  --color-warning: var(--nui-warning);
+  --color-warning-soft: var(--nui-warning-soft);
+  --color-danger: var(--nui-danger);
+  --color-danger-soft: var(--nui-danger-soft);
+  --font-sans: var(--nui-font-sans);
+  --radius-sm: var(--nui-radius-sm);
+  --radius-md: var(--nui-radius-md);
+  --radius-lg: var(--nui-radius-lg);
+  --radius-xl: var(--nui-radius-xl);
+  --shadow-card: var(--nui-shadow-card);
 }
 
 body {
-  background: var(--cb-bg);
-  color: var(--cb-text);
-  font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue",
-    sans-serif;
+  background: var(--nui-bg);
+  color: var(--nui-text);
+  font-family: var(--nui-font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
-/* ---- Shared pieces in Cloudbeds style (used by many pages) ---- */
+/* ---- Các mảnh dùng chung (giờ trỏ sang token, hình thức giữ nguyên) ---- */
 
-/* White rounded card with a soft border and shadow */
+/* Thẻ trắng bo góc, viền mỏng, bóng nhẹ */
 .cb-card {
-  background: var(--cb-card);
-  border: 1px solid var(--cb-border);
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(23, 41, 62, 0.08);
+  background: var(--nui-surface);
+  border: 1px solid var(--nui-border);
+  border-radius: var(--nui-radius-lg);
+  box-shadow: var(--nui-shadow-card);
 }
 
-/* Main blue button (rounded) */
+/* Nút chính xanh */
 .cb-btn-primary {
-  background: var(--cb-blue);
+  background: var(--nui-primary);
   color: #fff;
-  border-radius: 8px;
+  border-radius: var(--nui-radius-md);
   font-weight: 600;
   transition: background 0.15s ease;
 }
 .cb-btn-primary:hover {
-  background: var(--cb-blue-dark);
+  background: var(--nui-primary-hover);
+}
+.cb-btn-primary:active {
+  background: var(--nui-primary-active);
 }
 
-/* Quiet white button with a border */
+/* Nút trắng lặng, viền mỏng */
 .cb-btn-ghost {
-  background: #fff;
-  color: var(--cb-text);
-  border: 1px solid var(--cb-border);
-  border-radius: 8px;
+  background: var(--nui-surface);
+  color: var(--nui-text);
+  border: 1px solid var(--nui-border);
+  border-radius: var(--nui-radius-md);
   font-weight: 600;
 }
 .cb-btn-ghost:hover {
-  background: #f5f7fb;
+  background: var(--nui-surface-muted);
 }
 
-/* Pill-shaped search box (top bar) */
+/* Ô tìm kiếm hình viên thuốc (thanh trên) */
 .cb-input-pill {
-  background: #fff;
-  border: 1px solid var(--cb-border);
+  background: var(--nui-surface);
+  border: 1px solid var(--nui-border);
   border-radius: 999px;
   outline: none;
 }
 .cb-input-pill:focus {
-  border-color: var(--cb-blue);
+  border-color: var(--nui-primary);
 }
 
-/* Small red notification dot */
+/* Chấm đỏ thông báo */
 .cb-dot {
-  background: var(--cb-red);
+  background: var(--nui-danger);
   border-radius: 999px;
 }

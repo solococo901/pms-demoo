@@ -1,24 +1,8 @@
 "use client";
 
-// ============================================================
-// CHANNEX SETUP — components/ChannexSetup.tsx
-// SETUP2 (2026-11-11): gui kem roomTypeMap (ma Channex cua loai
-// phong DA CO) khi bam nut tao cau truc — neu khong, dot chay them
-// kenh sau (Expedia) se bao loi vi may chu khong biet goi gia moi
-// thuoc loai phong nao. Cung sua thong bao xanh: co loi thi khong
-// noi "da tao xong" nua.
-// CHANRATE1 (2026-11-13): gia goc khi tao goi tren Channex lay
-// theo ngay hom nay that (hom nay chua co gia thi lay gia gan
-// nhat sau do), khong lay gia ngay mau 2026-10-21 nua; gia
-// goc hien ngay tren dong goi chua tao de doi chieu.
-// One card on the Channels page: shows which parts of the
-// pilot hotel are already mirrored on Channex (Property /
-// room types / OTA base rate plans) and a button that
-// creates the missing ones via /api/channex/setup, then
-// saves the Channex ids back into Supabase (the mapping).
-// Website + Front Desk plans are NOT sent to Channex, and
-// derived plans are created in step C3b — by design.
-// ============================================================
+// NATEUI23 — components/ChannexSetup.tsx (the tao cau truc tren Channex)
+// Cho biet phan nao cua khach san da co tren Channex (Property / loai phong / goi gia OTA) va nut tao phan con thieu, roi luu ma anh xa ve Supabase.
+// Doi sang token toi gian 2026-11-21.
 
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -47,8 +31,7 @@ const FORMULA_RULES: Record<string, [string, string]> = {
 };
 
 export default function ChannexSetup() {
-  // Khach san lay tu URL /h/[hotelId] khi co; neu khong (duong dan cu)
-  // thi dung khach san da luu theo tab.
+  // Khach san lay tu URL khi co, khong thi dung khach san da luu theo tab.
   const params = useParams();
   const HOTEL_ID = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
   const [loading, setLoading] = useState(true);
@@ -96,19 +79,15 @@ export default function ChannexSetup() {
       roomCount: counts.get(t.id) ?? 0,
     })));
     const otaPlans = (plansRes.data ?? []).filter((p) => OTA_CHANNELS.includes(p.channel_code));
-    // Gia goc khi tao goi tren Channex: gia cua NGAY HOM NAY THAT.
-    // Neu hom nay chua co gia thi lay gia gan nhat tu hom nay tro
-    // di; khong co gia tuong lai thi lay gia gan nhat truoc do.
-    // Truoc day lay gia ngay mau 2026-10-21 — sai khi ngay do
-    // khong phai ngay hien tai.
+    // Gia goc khi tao goi tren Channex: gia cua NGAY HOM NAY THAT — hom nay chua co gia thi lay gia gan nhat sau do,
+    // khong co gia tuong lai thi lay gia gan nhat truoc do (truoc day lay gia ngay mau 2026-10-21 — sai khi ngay do khong phai ngay hien tai).
     const today = (() => {
       const d = new Date();
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     })();
     const priceByPlan = new Map<string, number>();
     if (otaPlans.length > 0) {
-      // Lay theo trang (Supabase tra toi da 1000 dong/lan),
-      // sap theo ngay tang dan.
+      // Lay theo trang (Supabase tra toi da 1000 dong/lan), sap theo ngay tang dan.
       let priceRows: { rate_plan_id: string; date: string; price: number }[] = [];
       for (let from = 0; ; from += 1000) {
         const { data: page } = await supabase
@@ -156,11 +135,8 @@ export default function ChannexSetup() {
       body: JSON.stringify({
         propertyId,
         property: hotelPayload,
-        // SETUP2: gui kem ma Channex cua loai phong DA CO. Dot chay
-        // dau gui ca loai phong con thieu nen may chu biet du ma;
-        // dot chay them (Expedia) khong con loai phong nao thieu
-        // nen may chu khong biet goi gia moi thuoc loai phong nao
-        // va bao loi — dung loi gap toi nay.
+        // SETUP2: gui kem ma Channex cua loai phong DA CO — dot chay them (Expedia) khong con loai phong nao thieu
+        // nen may chu khong biet goi gia moi thuoc loai phong nao va bao loi neu khong gui kem.
         roomTypeMap: Object.fromEntries(
           types.filter((t) => t.channexId).map((t) => [t.id, t.channexId as string])
         ),
@@ -194,8 +170,7 @@ export default function ChannexSetup() {
       await supabase.from("rate_plans").update({ channex_id: cid }).eq("id", pmsId);
     }
     setErrors(data.errors ?? []);
-    // SETUP2: co loi thi dung noi "da tao xong" nua — thong bao
-    // xanh hien cung o do nhu 2 lan toi nay rat de hieu lam.
+    // SETUP2: co loi thi dung noi "da tao xong" nua — thong bao xanh hien cung o do rat de hieu lam.
     setMsg(
       (data.errors ?? []).length > 0
         ? "Đã tạo được một phần — còn lỗi ở dưới, xem rồi báo tôi."
@@ -252,9 +227,7 @@ export default function ChannexSetup() {
     setBusyDerived(false);
   }
 
-  // Gia goc hien cho nguoi xem truoc khi bam tao (de doi chieu
-  // voi gia tren Luoi gia — phai la gia ngay hom nay, khong
-  // phai gia ngay mau).
+  // Gia goc hien cho nguoi xem truoc khi bam tao — phai la gia ngay hom nay, khong phai gia ngay mau.
   const fmtRate = (rate: string) => {
     const n = Number(rate);
     return (hotelPayload.currency ?? "VND") === "USD"
@@ -263,9 +236,9 @@ export default function ChannexSetup() {
   };
 
   const row = (label: string, done: boolean, note?: string, rowKey?: string) => (
-    <li key={rowKey ?? label} className="flex items-center justify-between rounded-lg bg-[#f4f7fb] px-3 py-1.5 text-sm">
-      <span className="text-[#17293e]">{label}</span>
-      <span className={done ? "font-medium text-[#0e7a56]" : "text-[#68707a]"}>
+    <li key={rowKey ?? label} className="flex items-center justify-between rounded-lg bg-primary-soft px-3 py-1.5 text-sm">
+      <span className="text-ink">{label}</span>
+      <span className={done ? "font-medium text-success" : "text-muted"}>
         {done ? "✓ Đã có trên Channex" : note ?? "○ Chưa tạo"}
       </span>
     </li>
@@ -273,13 +246,13 @@ export default function ChannexSetup() {
 
   return (
     <div className="cb-card mt-5 p-5">
-      <h2 className="font-bold text-[#17293e]">Thiết lập cấu trúc trên Channex — {hotelName || HOTEL_ID}</h2>
-      <p className="mt-1 text-sm text-[#68707a]">
+      <h2 className="font-bold text-ink">Thiết lập cấu trúc trên Channex — {hotelName || HOTEL_ID}</h2>
+      <p className="mt-1 text-sm text-muted">
         Channex cần biết khách sạn (Property), các loại phòng và các gói giá OTA trước khi nhận giá và tồn phòng.
         Gói Website và Lễ tân không gửi lên Channex (chỉ bán trong PMS).
       </p>
       {loading ? (
-        <p className="mt-3 text-sm text-[#68707a]">Đang tải trạng thái ánh xạ...</p>
+        <p className="mt-3 text-sm text-muted">Đang tải trạng thái ánh xạ...</p>
       ) : (
         <>
           <ul className="mt-3 space-y-1.5">
@@ -302,7 +275,7 @@ export default function ChannexSetup() {
             >
               {busy ? "Đang tạo trên Channex..." : nothingToDo ? "Đã thiết lập đủ" : "Tạo cấu trúc trên Channex"}
             </button>
-            {nothingToDo && <span className="text-sm text-[#0e7a56]">Cấu trúc gốc đã sẵn sàng cho bước đẩy giá & tồn (C3c).</span>}
+            {nothingToDo && <span className="text-sm text-success">Cấu trúc gốc đã sẵn sàng cho bước đẩy giá & tồn (C3c).</span>}
           </div>
           {derivedMissing.length > 0 && (
             <div className="mt-3 flex items-center gap-3">
@@ -313,12 +286,12 @@ export default function ChannexSetup() {
               >
                 {busyDerived ? "Đang tạo gói kế thừa..." : `Tạo ${derivedMissing.length} gói kế thừa trên Channex`}
               </button>
-              <span className="text-xs text-[#68707a]">Gói kế thừa dùng cơ chế giá dẫn xuất của Channex — khớp công thức trong PMS.</span>
+              <span className="text-xs text-muted">Gói kế thừa dùng cơ chế giá dẫn xuất của Channex — khớp công thức trong PMS.</span>
             </div>
           )}
-          {msg && <p className="mt-3 rounded-lg bg-[#e6f7f1] px-3 py-2 text-sm text-[#0e7a56]">{msg}</p>}
+          {msg && <p className="mt-3 rounded-lg bg-success-soft px-3 py-2 text-sm text-success">{msg}</p>}
           {errors.length > 0 && (
-            <div className="mt-3 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">
+            <div className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
               {errors.map((e, i) => <p key={i}>{e}</p>)}
             </div>
           )}

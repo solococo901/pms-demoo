@@ -1,32 +1,7 @@
 "use client";
-// ============================================================
-// app/[hotelId]/settings/users/page.tsx — Quan ly nguoi dung
-// (chi Admin). USERS3 — lam lai theo huong toi uu rut tu so
-// sanh 9 he (nghien cuu 2026-11-19, trang "So sanh PMS — Quan
-// ly nguoi dung va phan quyen"):
-//   - Kieu Stripe: 1 bang Nguoi dung co Tim kiem + Loc theo vai
-//     tro / trang thai + so luong (N hoat dong - N da khoa) +
-//     cot Dang nhap gan nhat; doi vai tro ngay tren dong (kieu
-//     Notion); Khoa/Mo khoa la hanh dong co the hoan tac, tach
-//     biet khoi Xoa han (kieu Slack/Google).
-//   - Kieu Cloudbeds + Little Hotelier: tab Vai tro rieng — 4
-//     vai tro co dinh, moi vai tro 1 cau mo ta bang tieng Viet
-//     doi thuong + nut "So sanh cac vai tro" mo bang chi-doc
-//     (ma tran chi de XEM, khong phai de sua).
-//   - Khoa service_role NHAP NGAY TREN TRANG (the Cai dat khoa):
-//     khong con bat buoc sua .env.local + khoi dong lai. Khoa
-//     luu vao bang admin_secrets (SQL 21), chi Admin doc duoc,
-//     khong bao gio hien lai. .env.local van duoc uu tien neu co.
-//
-// 4 vai tro theo checklist Module 1 cua sep:
-//   Admin — toan quyen. | Quan ly toa — quan ly toa nha.
-//   Le tan — truc quay. | Buong phong — don phong.
-// QUYEN THUC TE HIEN TAI: chi Admin moi co quyen admin; 3 vai
-// tro con lai deu dung muc Le tan (staff) cho den khi sep chot
-// bang phan quyen chi tiet — khi do chi sua cho nhan quyen o
-// lib/current-role.ts + layout, khong doi trang nay. Bang so
-// sanh o tab Vai tro noi ro quyen thuc te hom nay.
-// ============================================================
+// USERS4 — app/[hotelId]/settings/users/page.tsx (Nguoi dung, chi Admin)
+// Tieu de gon lai; form them chi hien khi bam nut Them (mac dinh an).
+// 2 tab Nguoi dung | Vai tro; khoa service_role nhap ngay tren trang, luu vao bang admin_secrets (SQL 21).
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -35,7 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { IconBan, IconCheckCircle, IconEdit, IconPlus, IconTrash, IconUser } from "@/components/icons";
 
 const inputCls =
-  "rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm text-[var(--cb-text)] outline-none focus:border-[var(--cb-blue)]";
+  "rounded-lg border border-line px-3 py-2 text-sm text-ink outline-none focus:border-primary";
 
 const ROLES = [
   { value: "admin", label: "Admin" },
@@ -44,8 +19,7 @@ const ROLES = [
   { value: "housekeeping", label: "Buồng phòng" },
 ];
 
-// Moi vai tro 1 cau mo ta bang tieng Viet doi thuong — noi ro
-// vai tro do LAM DUOC GI va KHONG LAM DUOC GI (hom nay).
+// Moi vai tro 1 cau mo ta bang tieng Viet doi thuong — noi ro lam duoc gi va khong lam duoc gi (hom nay).
 const ROLE_PROMISE: Record<string, string> = {
   admin: "Toàn quyền: mọi khách sạn, giá, kênh bán, báo cáo, cài đặt, quản lý người dùng. Chỉ nên có 1–2 người.",
   manager:
@@ -55,10 +29,8 @@ const ROLE_PROMISE: Record<string, string> = {
     "Buồng phòng — hiện dùng chung mức Lễ tân; sau này chỉ thấy báo cáo buồng phòng + trạng thái phòng. Chờ bảng phân quyền của sếp.",
 };
 
-// Bang quyen THUC TE hom nay (chi-doc). Quan ly toa / Le tan /
-// Buong phong deu dung muc Le tan nen 3 cot giong nhau — do la
-// su that hien tai, khong phai loi hien thi; khi sep chot bang
-// phan quyen thi 2 cot do se doi.
+// Bang quyen THUC TE hom nay (chi-doc). Quan ly toa / Le tan / Buong phong deu dung muc Le tan
+// nen 3 cot giong nhau — do la su that hien tai, khong phai loi hien thi.
 const MATRIX: { label: string; caps: Record<string, boolean> }[] = [
   { label: "Xem Tổng quan & Lịch phòng", caps: { admin: true, manager: true, staff: true, housekeeping: true } },
   { label: "Tạo / sửa / huỷ đặt phòng", caps: { admin: true, manager: true, staff: true, housekeeping: true } },
@@ -147,6 +119,7 @@ export default function UsersPage() {
   const [displayName, setDisplayName] = useState("");
   const [role, setRole] = useState("staff");
   const [creating, setCreating] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
 
   // Doi mat khau cho 1 nguoi (mo form inline o dung dong do).
   const [resetId, setResetId] = useState("");
@@ -217,6 +190,7 @@ export default function UsersPage() {
       setDisplayName("");
       setRole("staff");
       await load();
+      setShowAddForm(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không tạo được tài khoản.");
     } finally {
@@ -278,14 +252,14 @@ export default function UsersPage() {
             value={keyInput}
             onChange={(e) => setKeyInput(e.target.value)}
             placeholder="Dán khóa service_role vào đây"
-            className={`${inputCls} block flex-1 bg-white`}
+            className={`${inputCls} block flex-1 bg-surface`}
           />
           <button type="button" onClick={() => setShowKey((v) => !v)} className="cb-btn-ghost shrink-0 px-3 text-sm">
             {showKey ? "Ẩn" : "Hiện"}
           </button>
         </div>
-        {keyError && <p className="mt-2 text-[#e5484d]">{keyError}</p>}
-        {keyOk && <p className="mt-2 font-medium text-[#0e7a56]">✓ Đã bật quản lý người dùng — danh sách tải lại bên dưới.</p>}
+        {keyError && <p className="mt-2 text-danger">{keyError}</p>}
+        {keyOk && <p className="mt-2 font-medium text-success">✓ Đã bật quản lý người dùng — danh sách tải lại bên dưới.</p>}
         <button
           onClick={saveKey}
           disabled={savingKey || !keyInput.trim()}
@@ -302,24 +276,29 @@ export default function UsersPage() {
   }
 
   const tabCls = (t: "users" | "roles") =>
-    `px-4 py-2 text-sm font-semibold ${tab === t ? "border-b-2 border-[var(--cb-blue)] text-[var(--cb-blue)]" : "text-[var(--cb-muted)] hover:text-[var(--cb-text)]"}`;
+    `px-4 py-2 text-sm font-semibold ${tab === t ? "border-b-2 border-primary text-primary" : "text-muted hover:text-ink"}`;
 
   return (
     <div className="space-y-4">
-      <div>
-        <Link href={`/${hotelId}/settings`} className="text-sm font-medium text-[var(--cb-blue)] hover:underline">
-          ← Về Cài đặt
-        </Link>
-        <h1 className="mt-1 text-2xl font-bold text-[var(--cb-text)]">Người dùng</h1>
-        <p className="text-sm text-[var(--cb-muted)]">
-          Tạo tài khoản, gán vai trò, khóa/mở khóa và đặt lại mật khẩu cho nhân viên. Chỉ Admin thấy trang này.
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <Link href={`/${hotelId}/settings`} className="text-sm font-medium text-primary hover:underline">
+            ← Về Cài đặt
+          </Link>
+          <h1 className="mt-0.5 text-xl font-bold text-ink">Người dùng</h1>
+          <p className="text-sm text-muted">Tạo tài khoản, gán vai trò, khóa/mở khóa và đặt lại mật khẩu cho nhân viên.</p>
+        </div>
+        {tab === "users" && !setupNeeded && (
+          <button onClick={() => setShowAddForm((v) => !v)} className="cb-btn-primary shrink-0 px-4 py-2 text-sm">
+            {showAddForm ? "✕ Đóng" : "＋ Thêm người dùng"}
+          </button>
+        )}
       </div>
 
       {/* ---------- the cai dat khoa (thay o loi do cu) ---------- */}
       {setupNeeded && (
-        <div className="rounded-xl border border-[#f5d9a0] bg-[#fff8e6] p-5 text-sm text-[#6b4e00]">
-          <b className="text-base text-[var(--cb-text)]">Chưa bật được quản lý người dùng.</b>
+        <div className="rounded-xl border border-line bg-warning-soft p-5 text-sm text-ink">
+          <b className="text-base text-ink">Chưa bật được quản lý người dùng.</b>
           {keyInvalid ? (
             <p className="mt-1">
               Khóa đã lưu không dùng được nữa (có thể khóa đã đổi bên Supabase) — dán khóa mới vào ô dưới.
@@ -353,20 +332,20 @@ export default function UsersPage() {
 
       {/* ---------- khoa da cau hinh bang bang (doi khoa) ---------- */}
       {!setupNeeded && keySource === "db" && (
-        <div className="rounded-xl bg-[var(--cb-bg)] p-4 text-sm text-[var(--cb-muted)]">
-          <span className="font-medium text-[#0e7a56]">✓ Khóa quản lý đã cấu hình</span> (lưu trong cơ sở dữ liệu, chỉ
+        <div className="rounded-xl bg-[var(--nui-bg)] p-4 text-sm text-muted">
+          <span className="font-medium text-success">✓ Khóa quản lý đã cấu hình</span> (lưu trong cơ sở dữ liệu, chỉ
           Admin đọc được).{" "}
-          <button onClick={() => setShowKeyForm((v) => !v)} className="font-medium text-[var(--cb-blue)] hover:underline">
+          <button onClick={() => setShowKeyForm((v) => !v)} className="font-medium text-primary hover:underline">
             {showKeyForm ? "Ẩn form đổi khóa" : "Đổi khóa"}
           </button>
-          {showKeyForm && <div className="mt-3 text-[var(--cb-text)]">{keyFormJsx()}</div>}
+          {showKeyForm && <div className="mt-3 text-ink">{keyFormJsx()}</div>}
         </div>
       )}
 
-      {error && <p className="rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">{error}</p>}
+      {error && <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">{error}</p>}
 
       {/* ---------- tab Nguoi dung / Vai tro ---------- */}
-      <div className="flex gap-1 border-b border-[var(--cb-border)]">
+      <div className="flex gap-1 border-b border-line">
         <button onClick={() => setTab("users")} className={tabCls("users")}>
           Người dùng
         </button>
@@ -377,17 +356,18 @@ export default function UsersPage() {
 
       {tab === "users" && !setupNeeded && (
         <div className="space-y-4">
-          {/* ---------- tao tai khoan moi ---------- */}
+          {/* ---------- tao tai khoan moi (chi hien khi bam Them) ---------- */}
+          {showAddForm && (
           <div className="cb-card space-y-3 p-5">
-            <h2 className="flex items-center gap-2 text-base font-bold text-[var(--cb-text)]">
+            <h2 className="flex items-center gap-2 text-base font-bold text-ink">
               <IconPlus className="h-5 w-5" /> Thêm người dùng mới
             </h2>
             <div className="grid gap-3 sm:grid-cols-2">
-              <label className="text-sm text-[var(--cb-text)]">
+              <label className="text-sm text-ink">
                 Email *
                 <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="VD: letan2@pms.local" className={`${inputCls} mt-1 block w-full`} />
               </label>
-              <label className="text-sm text-[var(--cb-text)]">
+              <label className="text-sm text-ink">
                 Mật khẩu * (từ 6 ký tự)
                 <span className="mt-1 flex gap-2">
                   <input
@@ -402,11 +382,11 @@ export default function UsersPage() {
                   </button>
                 </span>
               </label>
-              <label className="text-sm text-[var(--cb-text)]">
+              <label className="text-sm text-ink">
                 Tên hiển thị *
                 <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="VD: Lễ tân Ca tối" className={`${inputCls} mt-1 block w-full`} />
               </label>
-              <label className="text-sm text-[var(--cb-text)]">
+              <label className="text-sm text-ink">
                 Vai trò
                 <select value={role} onChange={(e) => setRole(e.target.value)} className={`${inputCls} mt-1 block w-full`}>
                   {ROLES.map((r) => (
@@ -415,26 +395,32 @@ export default function UsersPage() {
                     </option>
                   ))}
                 </select>
-                <span className="mt-1 block text-xs text-[var(--cb-muted)]">{ROLE_PROMISE[role]}</span>
+                <span className="mt-1 block text-xs text-muted">{ROLE_PROMISE[role]}</span>
               </label>
             </div>
-            <p className="text-xs text-[var(--cb-muted)]">
+            <p className="text-xs text-muted">
               Tài khoản tạo xong đăng nhập được ngay, không cần xác nhận email. Ghi mật khẩu ra giấy cho nhân viên — mật khẩu không
               gửi qua email và không xem lại được sau này.
             </p>
-            <button onClick={createUser} disabled={creating} className="cb-btn-primary px-5 py-2.5 text-sm disabled:opacity-50">
-              {creating ? "Đang tạo..." : "Tạo tài khoản"}
-            </button>
+            <div className="flex gap-2">
+              <button onClick={createUser} disabled={creating} className="cb-btn-primary px-5 py-2.5 text-sm disabled:opacity-50">
+                {creating ? "Đang tạo..." : "Tạo tài khoản"}
+              </button>
+              <button onClick={() => setShowAddForm(false)} className="cb-btn-ghost px-5 py-2.5 text-sm">
+                Hủy
+              </button>
+            </div>
           </div>
+          )}
 
           {/* ---------- danh sach ---------- */}
           <div className="cb-card overflow-hidden">
-            <div className="flex flex-wrap items-center gap-3 border-b border-[var(--cb-border)] px-5 py-3">
-              <h2 className="text-base font-bold text-[var(--cb-text)]">
+            <div className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3">
+              <h2 className="text-base font-bold text-ink">
                 Tài khoản trong hệ thống ({shownUsers.length}
                 {userQuery.trim() || roleFilter !== "all" || statusFilter !== "all" ? ` / ${users.length}` : ""})
               </h2>
-              <span className="text-sm text-[var(--cb-muted)]">
+              <span className="text-sm text-muted">
                 {activeCount} đang hoạt động · {lockedCount} đã khóa
               </span>
               <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -460,9 +446,9 @@ export default function UsersPage() {
               </div>
             </div>
             {loading ? (
-              <p className="p-5 text-sm text-[var(--cb-muted)]">Đang tải danh sách...</p>
+              <p className="p-5 text-sm text-muted">Đang tải danh sách...</p>
             ) : shownUsers.length === 0 ? (
-              <p className="p-5 text-sm text-[var(--cb-muted)]">
+              <p className="p-5 text-sm text-muted">
                 {userQuery.trim() || roleFilter !== "all" || statusFilter !== "all"
                   ? "Không tìm thấy tài khoản nào khớp."
                   : "Chưa có tài khoản nào."}
@@ -470,7 +456,7 @@ export default function UsersPage() {
             ) : (
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-[var(--cb-border)] text-left text-xs text-[var(--cb-muted)]">
+                  <tr className="border-b border-line text-left text-xs text-muted">
                     <th className="px-5 py-2.5 font-semibold">Người dùng</th>
                     <th className="px-3 py-2.5 font-semibold">Vai trò</th>
                     <th className="px-3 py-2.5 font-semibold">Trạng thái</th>
@@ -480,10 +466,10 @@ export default function UsersPage() {
                 </thead>
                 <tbody>
                   {shownUsers.map((u) => (
-                    <tr key={u.userId} className="border-b border-[var(--cb-bg)] align-top">
+                    <tr key={u.userId} className="border-b border-[var(--nui-bg)] align-top">
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--cb-blue-soft)] text-[var(--cb-blue)]">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-soft text-primary">
                             <IconUser className="h-5 w-5" />
                           </span>
                           <span>
@@ -511,9 +497,9 @@ export default function UsersPage() {
                               </span>
                             ) : (
                               <span className="flex items-center gap-1.5">
-                                <span className="font-semibold text-[var(--cb-text)]">
+                                <span className="font-semibold text-ink">
                                   {u.displayName || "(chưa đặt tên)"}
-                                  {u.userId === me && <span className="ml-2 rounded bg-[var(--cb-bg)] px-2 py-0.5 text-xs font-normal text-[var(--cb-muted)]">bạn</span>}
+                                  {u.userId === me && <span className="ml-2 rounded bg-[var(--nui-bg)] px-2 py-0.5 text-xs font-normal text-muted">bạn</span>}
                                 </span>
                                 <button
                                   onClick={() => {
@@ -521,13 +507,13 @@ export default function UsersPage() {
                                     setEditName(u.displayName);
                                   }}
                                   title="Sửa tên hiển thị"
-                                  className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--cb-muted)] hover:bg-[var(--cb-bg)] hover:text-[var(--cb-text)]"
+                                  className="flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-[var(--nui-bg)] hover:text-ink"
                                 >
                                   <IconEdit className="h-3.5 w-3.5" />
                                 </button>
                               </span>
                             )}
-                            <span className="block text-xs text-[var(--cb-muted)]">{u.email}</span>
+                            <span className="block text-xs text-muted">{u.email}</span>
                           </span>
                         </div>
                       </td>
@@ -548,12 +534,12 @@ export default function UsersPage() {
                       </td>
                       <td className="px-3 py-3">
                         {u.banned ? (
-                          <span className="rounded-full bg-[#fdecec] px-2.5 py-1 text-xs font-medium text-[#e5484d]">Đã khóa</span>
+                          <span className="rounded-full bg-danger-soft px-2.5 py-1 text-xs font-medium text-danger">Đã khóa</span>
                         ) : (
-                          <span className="rounded-full bg-[#e6f7f1] px-2.5 py-1 text-xs font-medium text-[#0e7a56]">Hoạt động</span>
+                          <span className="rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success">Hoạt động</span>
                         )}
                       </td>
-                      <td className="px-3 py-3 text-[var(--cb-muted)]">{fmtDateTime(u.lastSignInAt)}</td>
+                      <td className="px-3 py-3 text-muted">{fmtDateTime(u.lastSignInAt)}</td>
                       <td className="px-3 py-3">
                         <div className="flex flex-wrap gap-2">
                           {u.banned ? (
@@ -568,7 +554,7 @@ export default function UsersPage() {
                             <button
                               onClick={() => patchUser(u.userId, { action: "lock" }, `Khóa tài khoản ${u.email}? Người này sẽ bị đăng xuất và không đăng nhập được nữa. Đặt phòng, ghi chú và lịch sử của họ vẫn giữ nguyên — mở khóa lại được bất cứ lúc nào.`)}
                               disabled={busy !== "" || u.userId === me}
-                              className="cb-btn-ghost flex items-center gap-1 px-3 py-1.5 text-xs text-[#e5484d] disabled:opacity-40"
+                              className="cb-btn-ghost flex items-center gap-1 px-3 py-1.5 text-xs text-danger disabled:opacity-40"
                             >
                               <IconBan className="h-4 w-4" /> Khóa
                             </button>
@@ -586,7 +572,7 @@ export default function UsersPage() {
                             onClick={() => deleteUser(u)}
                             disabled={busy !== "" || u.userId === me}
                             title={u.userId === me ? "Không tự xóa chính mình" : "Xóa hẳn tài khoản này"}
-                            className="cb-btn-ghost flex items-center gap-1 px-3 py-1.5 text-xs text-[#e5484d] disabled:opacity-40"
+                            className="cb-btn-ghost flex items-center gap-1 px-3 py-1.5 text-xs text-danger disabled:opacity-40"
                           >
                             <IconTrash className="h-4 w-4" /> Xóa
                           </button>
@@ -624,14 +610,14 @@ export default function UsersPage() {
           {/* ---------- tai khoan chua co ho so ---------- */}
           {unassigned.length > 0 && (
             <div className="cb-card space-y-3 p-5">
-              <h2 className="text-base font-bold text-[var(--cb-text)]">Tài khoản chưa có hồ sơ ({unassigned.length})</h2>
-              <p className="text-sm text-[var(--cb-muted)]">
+              <h2 className="text-base font-bold text-ink">Tài khoản chưa có hồ sơ ({unassigned.length})</h2>
+              <p className="text-sm text-muted">
                 Các tài khoản này đã có trong Supabase Auth nhưng chưa gắn vai trò — họ chưa đăng nhập được đúng quyền. Gán vai trò
                 cho họ ở đây.
               </p>
               {unassigned.map((u) => (
-                <div key={u.userId} className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--cb-border)] p-3 text-sm">
-                  <span className="font-medium text-[var(--cb-text)]">{u.email}</span>
+                <div key={u.userId} className="flex flex-wrap items-center gap-2 rounded-xl border border-line p-3 text-sm">
+                  <span className="font-medium text-ink">{u.email}</span>
                   <input
                     value={assignName[u.userId] ?? ""}
                     onChange={(e) => setAssignName((prev) => ({ ...prev, [u.userId]: e.target.value }))}
@@ -673,8 +659,8 @@ export default function UsersPage() {
       {tab === "roles" && (
         <div className="space-y-4">
           <div className="cb-card overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--cb-border)] px-5 py-3">
-              <h2 className="text-base font-bold text-[var(--cb-text)]">4 vai trò</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
+              <h2 className="text-base font-bold text-ink">4 vai trò</h2>
               <button onClick={() => setCompareRoles((v) => !v)} className="cb-btn-ghost px-3 py-1.5 text-sm">
                 {compareRoles ? "Ẩn bảng so sánh" : "So sánh các vai trò"}
               </button>
@@ -684,11 +670,11 @@ export default function UsersPage() {
               return (
                 <div
                   key={r.value}
-                  className="flex flex-wrap items-center gap-3 border-b border-[var(--cb-bg)] px-5 py-3 last:border-b-0"
+                  className="flex flex-wrap items-center gap-3 border-b border-[var(--nui-bg)] px-5 py-3 last:border-b-0"
                 >
-                  <span className="w-36 font-semibold text-[var(--cb-text)]">{r.label}</span>
-                  <span className="flex-1 text-sm text-[var(--cb-muted)]">{ROLE_PROMISE[r.value]}</span>
-                  <span className="text-sm text-[var(--cb-muted)]">
+                  <span className="w-36 font-semibold text-ink">{r.label}</span>
+                  <span className="flex-1 text-sm text-muted">{ROLE_PROMISE[r.value]}</span>
+                  <span className="text-sm text-muted">
                     {setupNeeded ? "—" : `${count} người dùng`}
                   </span>
                 </div>
@@ -698,7 +684,7 @@ export default function UsersPage() {
               <div className="overflow-x-auto px-5 py-3">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-[var(--cb-border)] text-left text-xs text-[var(--cb-muted)]">
+                    <tr className="border-b border-line text-left text-xs text-muted">
                       <th className="py-2 pr-3 font-semibold">Quyền</th>
                       {ROLES.map((r) => (
                         <th key={r.value} className="px-3 py-2 text-center font-semibold">
@@ -709,14 +695,14 @@ export default function UsersPage() {
                   </thead>
                   <tbody>
                     {MATRIX.map((row) => (
-                      <tr key={row.label} className="border-b border-[var(--cb-bg)]">
+                      <tr key={row.label} className="border-b border-[var(--nui-bg)]">
                         <td className="py-2 pr-3">{row.label}</td>
                         {ROLES.map((r) => (
                           <td key={r.value} className="px-3 py-2 text-center">
                             {row.caps[r.value] ? (
-                              <span className="font-bold text-[#0e7a56]">✓</span>
+                              <span className="font-bold text-success">✓</span>
                             ) : (
-                              <span className="text-[var(--cb-muted)]">—</span>
+                              <span className="text-muted">—</span>
                             )}
                           </td>
                         ))}
@@ -724,14 +710,14 @@ export default function UsersPage() {
                     ))}
                   </tbody>
                 </table>
-                <p className="mt-2 text-xs text-[var(--cb-muted)]">
+                <p className="mt-2 text-xs text-muted">
                   Bảng này chỉ để xem — sửa quyền của 1 vai trò chưa làm ở đây (chờ bảng phân quyền của sếp).
                 </p>
               </div>
             )}
           </div>
-          <div className="rounded-xl bg-[var(--cb-bg)] p-4 text-sm text-[var(--cb-muted)]">
-            <b className="text-[var(--cb-text)]">Bảng này là quyền THỰC TẾ hôm nay.</b> Quản lý tòa và Buồng phòng hiện dùng
+          <div className="rounded-xl bg-[var(--nui-bg)] p-4 text-sm text-muted">
+            <b className="text-ink">Bảng này là quyền THỰC TẾ hôm nay.</b> Quản lý tòa và Buồng phòng hiện dùng
             chung mức Lễ tân vì bảng phân quyền chi tiết chưa chốt với sếp. Khi sếp chốt (ai được xem giá, ai được khóa phòng, ai
             được xem báo cáo...), chỉ cần sửa chỗ nhận quyền, không cần làm lại trang này — lúc đó cột Quản lý tòa / Buồng phòng
             sẽ đổi theo bảng mới.

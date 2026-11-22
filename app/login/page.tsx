@@ -1,25 +1,9 @@
 "use client";
 
-// ============================================================
-// FILE LOGIN4b — app/login/page.tsx (CityHouse brand style)
-// Trang dang nhap theo dung mau Vos gui 2026-11-04: nen be,
-// the trang bo goc lon, logo CityHouse tren cung, nut navy
-// dam. LOGIN4b (2026-11-05): bo o "Ghi nho dang nhap" va
-// link "Quen mat khau?" theo yeu cau cua Vos — form chi
-// con 2 o nhap + nut Dang nhap.
-// Màu lay mau truc tiep tu anh mau: nen #f7f3ed, nut
-// #1b2a4a, nau dat #b67a63, logo nen trang.
-// Chuc nang GIU NGUYEN nhu LOGIN3: email + mat khau qua
-// Supabase Auth, loi bao chung chung, xong ve "/".
-// Luu y:
-//  - Nhan o dau ghi "Email hoac ten dang nhap" theo mau,
-//    nhung dang nhap van chi bang email (ban cu khong co
-//    ten dang nhap rieng; muon them thi can cot ten dang
-//    nhap trong ho so, de sau).
-//  - Ban LOGIN4b da bo o tich "Ghi nho dang nhap" va link
-//    "Quen mat khau?" — form chi con 2 o nhap + nut Dang
-//    nhap (Supabase van nho phien sau F5 nhu truoc).
-// ============================================================
+// NATEUI27 — app/login/page.tsx (trang dang nhap, theo mau CityHouse cua Vos)
+// Mau thuong hieu GIU NGUYEN (nen be #f7f3ed, nut navy #1b2a4a, vien am #e5ddd3) — chi mau chu ve token (nhin y het).
+// Nhan o dau ghi "Email hoac ten dang nhap" nhung dang nhap van chi bang email.
+// Doi sang token toi gian 2026-11-21.
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -51,7 +35,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#f7f3ed] p-4">
-      <div className="w-full max-w-md rounded-[24px] bg-white p-8 shadow-[0_20px_50px_rgba(27,42,74,0.12)] sm:p-10">
+      <div className="w-full max-w-md rounded-[24px] bg-surface p-8 shadow-[0_20px_50px_rgba(27,42,74,0.12)] sm:p-10">
         <img
           src="/cityhouse-logo.png"
           alt="CityHouse — PMS · Property Management System"
@@ -59,7 +43,7 @@ export default function LoginPage() {
         />
 
         <form onSubmit={submit} className="mt-8">
-          <label className="block text-sm font-medium text-[#334155]">
+          <label className="block text-sm font-medium text-ink">
             Email hoặc tên đăng nhập
           </label>
           <input
@@ -70,10 +54,10 @@ export default function LoginPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="vd: letan@cityhouse.vn"
-            className="mt-2 w-full rounded-xl border border-[#e5ddd3] px-4 py-3 text-[15px] text-[#1f2937] outline-none placeholder:text-[#9aa7b4] focus:border-[#1b2a4a]"
+            className="mt-2 w-full rounded-xl border border-[#e5ddd3] px-4 py-3 text-[15px] text-ink outline-none placeholder:text-subtle focus:border-[#1b2a4a]"
           />
 
-          <label className="mt-5 block text-sm font-medium text-[#334155]">
+          <label className="mt-5 block text-sm font-medium text-ink">
             Mật khẩu
           </label>
           <div className="relative mt-2">
@@ -84,13 +68,13 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Nhập mật khẩu"
-              className="w-full rounded-xl border border-[#e5ddd3] px-4 py-3 pr-12 text-[15px] text-[#1f2937] outline-none placeholder:text-[#9aa7b4] focus:border-[#1b2a4a]"
+              className="w-full rounded-xl border border-[#e5ddd3] px-4 py-3 pr-12 text-[15px] text-ink outline-none placeholder:text-subtle focus:border-[#1b2a4a]"
             />
             <button
               type="button"
               onClick={() => setShowPassword((v) => !v)}
               title={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9aa7b4] hover:text-[#334155]"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-subtle hover:text-ink"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 {showPassword ? (
@@ -111,7 +95,7 @@ export default function LoginPage() {
           </div>
 
           {error && (
-            <p className="mt-3 rounded-xl bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">{error}</p>
+            <p className="mt-3 rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">{error}</p>
           )}
 
           <button
@@ -123,7 +107,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="mt-6 text-center text-xs text-[#9aa7b4]">© 2026 CityHouse</p>
+        <p className="mt-6 text-center text-xs text-subtle">© 2026 CityHouse</p>
       </div>
     </div>
   );

@@ -1,23 +1,7 @@
 "use client";
-// ============================================================
-// app/[hotelId]/reservations/[id]/page.tsx — TRANG CHI TIET DON
-// kieu Cloudbeds (RESDETAIL1, 2026-11-17).
-//   Header: ten khach + trang thai + ma don + kenh + ngay o +
-//   so con no + nut hanh dong chinh (Nhan/Tra phong tuy giai doan).
-//   8 tab nhu Cloudbeds: Cho o | Folio | Khach | The | Ghi chu |
-//   Tai lieu | Hoat dong | Email.
-//   - Cho o: bang phong o + sua don + gia han (chay bo kiem tra
-//     dung chung, giong drawer o trang danh sach).
-//   - Folio: gia tung dem + dich vu them + thu tien (nhu drawer).
-//   - Khach: thong tin khach + sua (mo form sua o tab Cho o).
-//   - Ghi chu: doc/ghi reservation_notes (mau BookingPopup).
-//   - The / Tai lieu / Hoat dong / Email: chua co — ghi ro, khong
-//     lam nut gia (The lam cung buoc Payment; Tai lieu can kho luu
-//     tru; Hoat dong = nhat ky thao tac, lam 19-20/11; Email chua
-//     co ha tang gui mail).
-// RESDETAIL2 (2026-11-17): bo max-w-4xl — trang dung dung width
-// 80% cua layout chung (app/layout.tsx) nhu moi trang khac.
-// ============================================================
+// CLOUDBED3 — app/[hotelId]/reservations/[id]/page.tsx (Chi tiet don, vien trang thai du muc kieu Cloudbeds)
+// Vien trang thai o dau trang bam ra du 5 muc con lai (tru trang thai hien tai), gom ca Da huy — doi khong hop le van bi changeStatus chan.
+// Nut Nhan/Tra/Huy/Khong den tren trang chi tiet ghi vao audit_logs + nap lai tab Hoat dong.
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -37,6 +21,8 @@ import {
 import { supabase } from "@/lib/supabase";
 import { queueChannexDates, stayDates } from "@/lib/channex-outbox";
 import { currentHotelId } from "@/lib/current-hotel";
+import { markRoomsDirtyAfterCheckout } from "@/lib/checkout-housekeeping";
+import { writeAuditLog } from "@/lib/audit-log";
 import { STATUS_LABELS, STATUS_STYLES } from "@/components/ReservationBar";
 import { DatePicker } from "@/components/DatePicker";
 import {
@@ -67,6 +53,13 @@ const localToday = () => {
 };
 
 type Note = { id: string; author: string; body: string; createdAt: string };
+type AuditLog = { id: string; actorName: string; action: string; summary: string; createdAt: string };
+// dd/MM/yyyy HH:mm (gio dia phuong cua trinh duyet).
+const fmtDateTime = (iso: string) => {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 type TabKey = "stay" | "folio" | "guest" | "cards" | "notes" | "docs" | "activity" | "email";
 const TABS: { key: TabKey; label: string }[] = [
   { key: "stay", label: "Chỗ ở" },
@@ -97,6 +90,7 @@ export default function ReservationDetailPage() {
   });
   const [folioItems, setFolioItems] = useState<FolioItem[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
+  const [activityLogs, setActivityLogs] = useState<AuditLog[]>([]);
   const [tab, setTab] = useState<TabKey>("stay");
 
   // Folio: them dich vu + thu tien.
@@ -108,6 +102,7 @@ export default function ReservationDetailPage() {
   const [noteBody, setNoteBody] = useState("");
   // Sua don + gia han.
   const [editing, setEditing] = useState(false);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [editError, setEditError] = useState("");
   const [eName, setEName] = useState("");
   const [ePhone, setEPhone] = useState("");
@@ -148,7 +143,7 @@ export default function ReservationDetailPage() {
   useEffect(() => {
     if (!HOTEL_ID || !RES_ID) return;
     (async () => {
-      const [res, rr, folio, typesRes, roomsRes, plansRes, blocksRes, invRes, notesRes] = await Promise.all([
+      const [res, rr, folio, typesRes, roomsRes, plansRes, blocksRes, invRes, notesRes, logsRes] = await Promise.all([
         supabase.from("reservations").select("*").eq("hotel_id", HOTEL_ID).order("booked_at", { ascending: false }),
         supabase.from("reservation_rooms").select("reservation_id, room_number"),
         supabase.from("folio_items").select("*").eq("hotel_id", HOTEL_ID),
@@ -158,8 +153,9 @@ export default function ReservationDetailPage() {
         supabase.from("room_blocks").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("inventory_blocks").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("reservation_notes").select("id, author, body, created_at").eq("reservation_id", RES_ID).order("created_at", { ascending: true }),
+        supabase.from("audit_logs").select("id, actor_name, action, summary, created_at").eq("hotel_id", HOTEL_ID).eq("entity_type", "reservation").eq("entity_id", RES_ID).order("created_at", { ascending: false }).limit(100),
       ]);
-      const err = res.error ?? rr.error ?? folio.error ?? typesRes.error ?? roomsRes.error ?? plansRes.error ?? blocksRes.error ?? invRes.error ?? notesRes.error;
+      const err = res.error ?? rr.error ?? folio.error ?? typesRes.error ?? roomsRes.error ?? plansRes.error ?? blocksRes.error ?? invRes.error ?? notesRes.error ?? logsRes.error;
       if (err) {
         setLoadError(err.message);
         setLoading(false);
@@ -198,6 +194,9 @@ export default function ReservationDetailPage() {
       );
       setNotes(
         (notesRes.data ?? []).map((n) => ({ id: n.id, author: n.author, body: n.body, createdAt: n.created_at }))
+      );
+      setActivityLogs(
+        (logsRes.data ?? []).map((l) => ({ id: l.id, actorName: l.actor_name ?? "—", action: l.action, summary: l.summary, createdAt: l.created_at }))
       );
       setRoomBlocks(
         (blocksRes.data ?? []).map((b) => ({ id: b.id, roomNumber: b.room_number, from: b.from_date, to: b.to_date, kind: b.kind, reason: b.reason ?? "" }))
@@ -310,7 +309,24 @@ export default function ReservationDetailPage() {
     return true;
   }
 
+  // Nap lai nhat ky hoat dong cua don (goi sau khi doi trang thai).
+  async function loadActivityLogs() {
+    const { data: logs } = await supabase
+      .from("audit_logs")
+      .select("id, actor_name, action, summary, created_at")
+      .eq("hotel_id", HOTEL_ID)
+      .eq("entity_type", "reservation")
+      .eq("entity_id", RES_ID)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    setActivityLogs((logs ?? []).map((l) => ({ id: l.id, actorName: l.actor_name ?? "—", action: l.action, summary: l.summary, createdAt: l.created_at })));
+  }
+
   // ---------- doi trang thai: chay bo kiem tra dung chung truoc ----------
+  // Tat ca trang thai kieu Cloudbeds (tru trang thai hien tai) — vien trang thai bam ra doi duoc bat ky muc nao.
+  const ALL_STATUSES: ReservationStatus[] = ["pending", "confirmed", "in_house", "checked_out", "no_show", "cancelled"];
+  const statusOptions = (s: ReservationStatus): ReservationStatus[] => ALL_STATUSES.filter((x) => x !== s);
+
   async function changeStatus(id: string, status: ReservationStatus) {
     const r = reservations.find((x) => x.id === id);
     if (!r) return;
@@ -330,7 +346,25 @@ export default function ReservationDetailPage() {
       if (r.status !== "confirmed") return alert("Chỉ đánh dấu không đến cho đơn đã xác nhận.");
       if (!window.confirm(`Đánh dấu khách không đến cho đơn ${r.id} của ${r.guestName}?`)) return;
     }
-    await patchReservation(id, { status });
+    const ok = await patchReservation(id, { status });
+    if (ok) {
+      // Ghi log doi trang thai don (AUDIT) roi nap lai tab Hoat dong (cho ghi xong moi nap de thay dong moi ngay).
+      const logAction = status === "cancelled" ? "booking_cancelled" : status === "in_house" ? "booking_checked_in" : status === "checked_out" ? "booking_checked_out" : "booking_updated";
+      const logLabel = status === "cancelled" ? "Huỷ đơn" : status === "in_house" ? "Nhận phòng" : status === "checked_out" ? "Trả phòng" : status === "no_show" ? "Đánh dấu không đến" : "Đổi trạng thái";
+      const dShort = (d: string) => d.split("-").reverse().join("/");
+      await writeAuditLog({
+        hotelId: HOTEL_ID,
+        accountId: ACCOUNT_ID,
+        action: logAction,
+        entityType: "reservation",
+        entityId: id,
+        summary: `${logLabel} ${r.guestName} · ${dShort(r.checkIn)} → ${dShort(r.checkOut)}${r.roomNumbers.length > 0 ? ` · phòng ${r.roomNumbers.join(", ")}` : ""}`,
+        details: { reservationId: id, guestName: r.guestName, checkIn: r.checkIn, checkOut: r.checkOut, roomNumbers: r.roomNumbers, oldStatus: r.status, newStatus: status, totalAmount: r.totalAmount },
+      });
+      if (id === RES_ID) await loadActivityLogs();
+    }
+    // Tra phong xong: phong dang Sach tu chuyen Chua don (helper khong bao gio lam hong viec tra phong).
+    if (ok && status === "checked_out") void markRoomsDirtyAfterCheckout(HOTEL_ID, r.roomNumbers);
   }
 
   // ---------- folio: them / xoa dich vu, ghi nhan thanh toan ----------
@@ -477,12 +511,12 @@ export default function ReservationDetailPage() {
     ? [{ id: "legacy", author: "Ghi chú đơn", body: detail.note, createdAt: "" }, ...notes]
     : notes;
 
-  const inputCls = "rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm text-[var(--cb-text)] outline-none focus:border-[var(--cb-blue)]";
+  const inputCls = "rounded-lg border border-line px-3 py-2 text-sm text-ink outline-none focus:border-primary";
 
   if (loading) {
     return (
       <div>
-        <p className="mt-10 text-sm text-[var(--cb-muted)]">Đang tải chi tiết đơn...</p>
+        <p className="mt-10 text-sm text-muted">Đang tải chi tiết đơn...</p>
       </div>
     );
   }
@@ -490,10 +524,10 @@ export default function ReservationDetailPage() {
   if (loadError || !detail) {
     return (
       <div>
-        <Link href={`/${HOTEL_ID}/reservations`} className="text-sm font-medium text-[var(--cb-blue)] hover:underline">← Về danh sách Đặt phòng</Link>
+        <Link href={`/${HOTEL_ID}/reservations`} className="text-sm font-medium text-primary hover:underline">← Về danh sách Đặt phòng</Link>
         <div className="cb-card mt-4 p-6 text-center">
-          <h1 className="text-xl font-bold text-[var(--cb-text)]">Không tìm thấy đơn này</h1>
-          <p className="mt-2 text-sm text-[var(--cb-muted)]">{loadError || `Không có đơn ${RES_ID} ở khách sạn này.`}</p>
+          <h1 className="text-xl font-bold text-ink">Không tìm thấy đơn này</h1>
+          <p className="mt-2 text-sm text-muted">{loadError || `Không có đơn ${RES_ID} ở khách sạn này.`}</p>
         </div>
       </div>
     );
@@ -501,26 +535,39 @@ export default function ReservationDetailPage() {
 
   return (
     <div>
-      <Link href={`/${HOTEL_ID}/reservations`} className="text-sm font-medium text-[var(--cb-blue)] hover:underline">← Về danh sách Đặt phòng</Link>
+      <Link href={`/${HOTEL_ID}/reservations`} className="text-sm font-medium text-primary hover:underline">← Về danh sách Đặt phòng</Link>
 
       {/* header — Cloudbeds: ten khach + trang thai + so con no + nut hanh dong chinh */}
-      <div className="cb-card mt-3 border-t-4 border-t-[var(--cb-blue)] p-5">
+      <div className="cb-card mt-3 border-t-4 border-t-primary p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-extrabold tracking-tight text-[var(--cb-text)]">{detail.guestName}</h1>
-              <span className="rounded-full bg-[var(--cb-bg)] px-3 py-1 text-xs font-semibold text-[var(--cb-text)]">
-                <span className={`mr-1.5 inline-block h-2 w-2 rounded-full ${STATUS_STYLES[detail.status].split(" ")[0]}`} />
-                {STATUS_LABELS[detail.status]}
-              </span>
+              <h1 className="text-2xl font-extrabold tracking-tight text-ink">{detail.guestName}</h1>
+              <div className="relative">
+                <button onClick={() => setStatusMenuOpen((v) => !v)} className="flex items-center gap-1.5 rounded-full bg-[var(--nui-bg)] px-3 py-1 text-xs font-semibold text-ink">
+                  <span className={`inline-block h-2 w-2 rounded-full ${STATUS_STYLES[detail.status].split(" ")[0]}`} />
+                  {STATUS_LABELS[detail.status]}
+                  <span className="text-muted">▾</span>
+                </button>
+                {statusMenuOpen && (
+                  <div className="absolute left-0 top-full z-40 mt-1 w-56 rounded-xl border border-line bg-surface py-1 shadow-lg">
+                    {statusOptions(detail.status).map((s) => (
+                      <button key={s} onClick={() => { setStatusMenuOpen(false); changeStatus(detail.id, s); }} className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-ink hover:bg-[var(--nui-bg)]">
+                        <span className={`inline-block h-2.5 w-2.5 rounded-full ${STATUS_STYLES[s].split(" ")[0]}`} />
+                        {STATUS_LABELS[s]}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               {balance > 0 && (
-                <span className="rounded-full bg-[#fdecec] px-3 py-1 text-xs font-semibold text-[#e5484d]">Còn nợ {fmt(balance)}₫</span>
+                <span className="rounded-full bg-danger-soft px-3 py-1 text-xs font-semibold text-danger">Còn nợ {fmt(balance)}₫</span>
               )}
               {balance <= 0 && detail.totalAmount > 0 && (
-                <span className="rounded-full bg-[#e6f7f1] px-3 py-1 text-xs font-semibold text-[#0e7a56]">Đã thanh toán đủ</span>
+                <span className="rounded-full bg-success-soft px-3 py-1 text-xs font-semibold text-success">Đã thanh toán đủ</span>
               )}
             </div>
-            <p className="mt-1 text-sm text-[var(--cb-muted)]">
+            <p className="mt-1 text-sm text-muted">
               Đơn {detail.id} · {getChannelName(detail.channelCode)} · {fmtDate(detail.checkIn)} → {fmtDate(detail.checkOut)} ({detailNights} đêm) · {roomTypeName(detail.roomTypeId)}
               {detail.roomNumbers.length > 0 ? ` · Phòng ${detail.roomNumbers.join(", ")}` : " · Chưa gán phòng"}
             </p>
@@ -542,22 +589,22 @@ export default function ReservationDetailPage() {
               <button onClick={() => changeStatus(detail.id, "no_show")} className="cb-btn-ghost px-4 py-2 text-sm">Khách không đến</button>
             )}
             {["pending", "confirmed"].includes(detail.status) && (
-              <button onClick={() => changeStatus(detail.id, "cancelled")} className="rounded-lg border border-[#e5484d] px-4 py-2 text-sm font-semibold text-[#e5484d] hover:bg-red-50">Huỷ đơn</button>
+              <button onClick={() => changeStatus(detail.id, "cancelled")} className="rounded-lg border border-danger px-4 py-2 text-sm font-semibold text-danger hover:bg-danger-soft">Huỷ đơn</button>
             )}
           </div>
         </div>
       </div>
 
       {/* tab bar — 8 tab nhu Cloudbeds */}
-      <div className="mt-4 flex flex-wrap gap-1 border-b border-[var(--cb-border)]">
+      <div className="mt-4 flex flex-wrap gap-1 border-b border-line">
         {TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
             className={`rounded-t-lg px-4 py-2.5 text-sm font-semibold ${
               tab === t.key
-                ? "border-b-2 border-[var(--cb-blue)] bg-white text-[var(--cb-blue)]"
-                : "text-[var(--cb-muted)] hover:bg-white hover:text-[var(--cb-text)]"
+                ? "border-b-2 border-primary bg-surface text-primary"
+                : "text-muted hover:bg-surface hover:text-ink"
             }`}
           >
             {t.label}
@@ -573,23 +620,23 @@ export default function ReservationDetailPage() {
             <div>
               <div className="mb-4 flex items-start justify-between">
                 <div>
-                  <div className="text-lg font-bold text-[var(--cb-text)]">Sửa đơn {detail.id}</div>
-                  <div className="text-sm text-[var(--cb-muted)]">{detail.guestName} · {getChannelName(detail.channelCode)}</div>
+                  <div className="text-lg font-bold text-ink">Sửa đơn {detail.id}</div>
+                  <div className="text-sm text-muted">{detail.guestName} · {getChannelName(detail.channelCode)}</div>
                 </div>
                 <button onClick={() => setEditing(false)} className="cb-btn-ghost flex h-8 w-8 items-center justify-center rounded-full text-sm">✕</button>
               </div>
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Tên khách *</label>
+                  <label className="mb-1 block text-xs font-medium text-muted">Tên khách *</label>
                   <input className={`${inputCls} w-full`} value={eName} onChange={(e) => setEName(e.target.value)} />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Số điện thoại</label>
+                  <label className="mb-1 block text-xs font-medium text-muted">Số điện thoại</label>
                   <input className={`${inputCls} w-full`} value={ePhone} onChange={(e) => setEPhone(e.target.value)} />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Ngày đến</label>
+                    <label className="mb-1 block text-xs font-medium text-muted">Ngày đến</label>
                     <DatePicker
                       value={eCheckIn}
                       onChange={(v) => {
@@ -600,12 +647,12 @@ export default function ReservationDetailPage() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Ngày đi</label>
+                    <label className="mb-1 block text-xs font-medium text-muted">Ngày đi</label>
                     <DatePicker value={eCheckOut} onChange={setECheckOut} min={eCheckIn ? addDays(eCheckIn, 1) : undefined} rangeStart={eCheckIn || undefined} fullWidth />
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Loại phòng</label>
+                  <label className="mb-1 block text-xs font-medium text-muted">Loại phòng</label>
                   <select className={`${inputCls} w-full`} value={eType} onChange={(e) => {
                     const nt = e.target.value;
                     setEType(nt);
@@ -616,7 +663,7 @@ export default function ReservationDetailPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Gói giá (của kênh {getChannelName(detail.channelCode)})</label>
+                  <label className="mb-1 block text-xs font-medium text-muted">Gói giá (của kênh {getChannelName(detail.channelCode)})</label>
                   <select className={`${inputCls} w-full`} value={ePlan} onChange={(e) => setEPlan(e.target.value)}>
                     {editPlans.map((p) => (<option key={p.id} value={p.id}>{p.name}{p.derivedFromId ? " (kế thừa)" : ""}</option>))}
                     {editPlans.length === 0 && <option value="">— chưa có gói giá —</option>}
@@ -624,51 +671,51 @@ export default function ReservationDetailPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Người lớn</label>
+                    <label className="mb-1 block text-xs font-medium text-muted">Người lớn</label>
                     <input type="number" min={1} className={`${inputCls} w-full`} value={eAdults} onChange={(e) => setEAdults(Number(e.target.value))} />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Trẻ em</label>
+                    <label className="mb-1 block text-xs font-medium text-muted">Trẻ em</label>
                     <input type="number" min={0} className={`${inputCls} w-full`} value={eChildren} onChange={(e) => setEChildren(Number(e.target.value))} />
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Ghi chú</label>
+                  <label className="mb-1 block text-xs font-medium text-muted">Ghi chú</label>
                   <input className={`${inputCls} w-full`} value={eNote} onChange={(e) => setENote(e.target.value)} placeholder="Yêu cầu đặc biệt..." />
                 </div>
                 {eType !== detail.roomTypeId && detail.roomNumbers.length > 0 && (
-                  <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-[#e5484d]">Đổi loại phòng sẽ huỷ các phòng đã gán ({detail.roomNumbers.join(", ")}) — cần gán lại trên Lịch phòng.</p>
+                  <p className="rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">Đổi loại phòng sẽ huỷ các phòng đã gán ({detail.roomNumbers.join(", ")}) — cần gán lại trên Lịch phòng.</p>
                 )}
-                <div className="space-y-1 rounded-xl bg-[var(--cb-blue-soft)] px-4 py-3">
+                <div className="space-y-1 rounded-xl bg-primary-soft px-4 py-3">
                   <div className="flex justify-between"><span>Tiền phòng + phụ thu — {editNights} đêm</span><span className="font-semibold">{fmt(editTotal)}₫</span></div>
-                  <div className="flex justify-between text-[var(--cb-muted)]"><span>Tổng hiện tại</span><span>{fmt(detail.totalAmount)}₫</span></div>
+                  <div className="flex justify-between text-muted"><span>Tổng hiện tại</span><span>{fmt(detail.totalAmount)}₫</span></div>
                 </div>
-                {editError && <p className="text-sm text-[#e5484d]">{editError}</p>}
+                {editError && <p className="text-sm text-danger">{editError}</p>}
                 <div className="flex gap-2">
                   <button onClick={saveEdit} className="cb-btn-primary flex-1 py-2.5 text-sm">Lưu thay đổi</button>
                   <button onClick={() => setEditing(false)} className="cb-btn-ghost px-5 py-2.5 text-sm">Huỷ</button>
                 </div>
-                <p className="text-xs text-[var(--cb-muted)]">Không sửa được ở đây: nguồn đơn, hình thức thu tiền, trạng thái (dùng nút Nhận/Trả/Huỷ bên trên) và tiền đã thu (sửa trong tab Folio).</p>
+                <p className="text-xs text-muted">Không sửa được ở đây: nguồn đơn, hình thức thu tiền, trạng thái (dùng nút Nhận/Trả/Huỷ bên trên) và tiền đã thu (sửa trong tab Folio).</p>
               </div>
             </div>
           ) : (
             <div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[640px] text-sm">
-                  <thead className="border-b-2 border-[var(--cb-border)]">
+                  <thead className="border-b-2 border-line">
                     <tr>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--cb-muted)]">Loại phòng</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--cb-muted)]">Phòng</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--cb-muted)]">Gói giá</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--cb-muted)]">Ngày đến</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--cb-muted)]">Ngày đi</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--cb-muted)]">Khách</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--cb-muted)]">Đêm</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--cb-muted)]">Tổng</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted">Loại phòng</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted">Phòng</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted">Gói giá</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted">Ngày đến</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted">Ngày đi</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted">Khách</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted">Đêm</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-muted">Tổng</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr className="border-t border-[var(--cb-bg)]">
+                    <tr className="border-t border-[var(--nui-bg)]">
                       <td className="px-3 py-3 font-medium">{roomTypeName(detail.roomTypeId)}</td>
                       <td className="px-3 py-3">{detail.roomNumbers.length ? detail.roomNumbers.join(", ") : "Chưa gán"}</td>
                       <td className="px-3 py-3">{detailPlan?.name ?? detail.ratePlanId}</td>
@@ -688,22 +735,22 @@ export default function ReservationDetailPage() {
                 {detail.note && <DetailRow label="Ghi chú" value={detail.note} />}
               </div>
               {["pending", "confirmed", "in_house"].includes(detail.status) && extending && (
-                <div className="mt-4 rounded-xl border border-[var(--cb-border)] p-4">
-                  <div className="font-semibold text-[var(--cb-text)]">Gia hạn — ngày đi hiện tại {fmtDate(detail.checkOut)}</div>
+                <div className="mt-4 rounded-xl border border-line p-4">
+                  <div className="font-semibold text-ink">Gia hạn — ngày đi hiện tại {fmtDate(detail.checkOut)}</div>
                   <div className="mt-3 flex flex-wrap items-end gap-2">
                     <div>
-                      <span className="text-xs text-[var(--cb-muted)]">Ngày đi mới</span>
+                      <span className="text-xs text-muted">Ngày đi mới</span>
                       <div className="mt-0.5"><DatePicker value={extCheckOut} onChange={setExtCheckOut} min={addDays(detail.checkOut, 1)} /></div>
                     </div>
                     <span className="pb-2 text-sm">Thêm {extNights} đêm · Tổng mới {fmt(extTotal)}₫ (hiện tại {fmt(detail.totalAmount)}₫)</span>
                   </div>
                   {detail.roomNumbers.length > 0 && (
-                    <p className="mt-2 text-xs text-[var(--cb-muted)]">Trước khi lưu sẽ kiểm tra phòng {detail.roomNumbers.join(", ")} còn trống các đêm thêm.</p>
+                    <p className="mt-2 text-xs text-muted">Trước khi lưu sẽ kiểm tra phòng {detail.roomNumbers.join(", ")} còn trống các đêm thêm.</p>
                   )}
                   {detail.roomNumbers.length === 0 && (
-                    <p className="mt-2 text-xs text-[var(--cb-muted)]">Đơn chưa gán phòng — trước khi lưu sẽ kiểm tra còn phòng trống loại {roomTypeName(detail.roomTypeId)} các đêm thêm.</p>
+                    <p className="mt-2 text-xs text-muted">Đơn chưa gán phòng — trước khi lưu sẽ kiểm tra còn phòng trống loại {roomTypeName(detail.roomTypeId)} các đêm thêm.</p>
                   )}
-                  {extError && <p className="mt-2 text-sm text-[#e5484d]">{extError}</p>}
+                  {extError && <p className="mt-2 text-sm text-danger">{extError}</p>}
                   <div className="mt-3 flex gap-2">
                     <button onClick={saveExtend} className="cb-btn-primary px-3 py-2 text-sm">Xác nhận gia hạn</button>
                     <button onClick={() => setExtending(false)} className="cb-btn-ghost px-3 py-2 text-sm">Huỷ</button>
@@ -718,13 +765,13 @@ export default function ReservationDetailPage() {
       {/* ---------- tab Folio ---------- */}
       {tab === "folio" && (
         <div className="cb-card mt-4 p-5 text-sm">
-          <div className="text-base font-bold text-[var(--cb-text)]">Folio — hoá đơn chi tiết</div>
+          <div className="text-base font-bold text-ink">Folio — hoá đơn chi tiết</div>
           <div className="mt-3 space-y-1.5">
             {detailBreakdown && detailBreakdown.unpriced.length === 0 ? (
               detailBreakdown.perNight.map((n) => (
                 <div key={n.date} className="flex justify-between gap-3">
-                  <span className="text-[var(--cb-muted)]">Tiền phòng — đêm {fmtDate(n.date)}{detail.roomNumbers.length > 1 ? ` (${detail.roomNumbers.length} phòng)` : ""}</span>
-                  <span className="font-medium text-[var(--cb-text)]">{n.price === null ? "Chưa có giá" : `${fmt(n.price)}₫`}</span>
+                  <span className="text-muted">Tiền phòng — đêm {fmtDate(n.date)}{detail.roomNumbers.length > 1 ? ` (${detail.roomNumbers.length} phòng)` : ""}</span>
+                  <span className="font-medium text-ink">{n.price === null ? "Chưa có giá" : `${fmt(n.price)}₫`}</span>
                 </div>
               ))
             ) : (
@@ -733,39 +780,39 @@ export default function ReservationDetailPage() {
                 const amount = i === detailNights - 1 ? detail.totalAmount - base * (detailNights - 1) : base;
                 return (
                   <div key={i} className="flex justify-between gap-3">
-                    <span className="text-[var(--cb-muted)]">Tiền phòng — đêm {fmtDate(addDays(detail.checkIn, i))}{detail.roomNumbers.length > 1 ? ` (${detail.roomNumbers.length} phòng)` : ""}</span>
-                    <span className="font-medium text-[var(--cb-text)]">{fmt(amount)}₫</span>
+                    <span className="text-muted">Tiền phòng — đêm {fmtDate(addDays(detail.checkIn, i))}{detail.roomNumbers.length > 1 ? ` (${detail.roomNumbers.length} phòng)` : ""}</span>
+                    <span className="font-medium text-ink">{fmt(amount)}₫</span>
                   </div>
                 );
               })
             )}
             {detailExtras.map((f) => (
               <div key={f.id} className="flex items-center justify-between gap-3">
-                <span className="text-[var(--cb-muted)]">{f.label} — {fmtDate(f.date)}</span>
+                <span className="text-muted">{f.label} — {fmtDate(f.date)}</span>
                 <span className="flex items-center gap-2">
-                  <span className="font-medium text-[var(--cb-text)]">{fmt(f.amount)}₫</span>
-                  <button onClick={() => deleteExtra(f.id)} className="text-[#e5484d]" title="Xoá khoản này">✕</button>
+                  <span className="font-medium text-ink">{fmt(f.amount)}₫</span>
+                  <button onClick={() => deleteExtra(f.id)} className="text-danger" title="Xoá khoản này">✕</button>
                 </span>
               </div>
             ))}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <input value={extraLabel} onChange={(e) => setExtraLabel(e.target.value)} placeholder="Dịch vụ thêm: giặt ủi, minibar..." className="min-w-0 flex-1 rounded-lg border border-[var(--cb-border)] px-2 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" />
-            <input type="number" value={extraAmount || ""} onChange={(e) => setExtraAmount(Number(e.target.value))} placeholder="Số tiền" className="w-28 rounded-lg border border-[var(--cb-border)] px-2 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" />
+            <input value={extraLabel} onChange={(e) => setExtraLabel(e.target.value)} placeholder="Dịch vụ thêm: giặt ủi, minibar..." className="min-w-0 flex-1 rounded-lg border border-line px-2 py-2 text-sm outline-none focus:border-primary" />
+            <input type="number" value={extraAmount || ""} onChange={(e) => setExtraAmount(Number(e.target.value))} placeholder="Số tiền" className="w-28 rounded-lg border border-line px-2 py-2 text-sm outline-none focus:border-primary" />
             <button onClick={addExtra} className="cb-btn-ghost px-3 py-2 text-sm">+ Thêm</button>
           </div>
-          <div className="mt-3 space-y-1.5 border-t border-[var(--cb-bg)] pt-3">
-            <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Tổng phải thu (phòng + dịch vụ)</span><span className="font-semibold text-[var(--cb-text)]">{fmt(totalDue)}₫</span></div>
-            <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Đã thanh toán{detail.paymentCollector === "channel_collect" ? " (kênh thu hộ)" : ""}</span><span className="font-semibold text-[var(--cb-text)]">{fmt(detail.paidAmount)}₫</span></div>
-            <div className="flex justify-between"><span className="font-semibold text-[var(--cb-text)]">Còn nợ</span><span className={`font-bold ${balance > 0 ? "text-[#e5484d]" : "text-[#1db584]"}`}>{balance > 0 ? fmt(balance) + "₫" : "Đã thanh toán đủ"}</span></div>
+          <div className="mt-3 space-y-1.5 border-t border-[var(--nui-bg)] pt-3">
+            <div className="flex justify-between"><span className="text-muted">Tổng phải thu (phòng + dịch vụ)</span><span className="font-semibold text-ink">{fmt(totalDue)}₫</span></div>
+            <div className="flex justify-between"><span className="text-muted">Đã thanh toán{detail.paymentCollector === "channel_collect" ? " (kênh thu hộ)" : ""}</span><span className="font-semibold text-ink">{fmt(detail.paidAmount)}₫</span></div>
+            <div className="flex justify-between"><span className="font-semibold text-ink">Còn nợ</span><span className={`font-bold ${balance > 0 ? "text-danger" : "text-success"}`}>{balance > 0 ? fmt(balance) + "₫" : "Đã thanh toán đủ"}</span></div>
             {detail.totalAmount === 0 && detailNights > 0 && !["cancelled", "no_show"].includes(detail.status) && (
-              <p className="rounded-lg bg-[#fdf3e3] px-3 py-2 text-xs text-[#9a6a12]">⚠ Tổng đơn đang là 0₫ — có thể do chưa nhập giá cho các đêm này ở Lịch giá. Kiểm tra giá theo kênh rồi sửa đơn.</p>
+              <p className="rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning">⚠ Tổng đơn đang là 0₫ — có thể do chưa nhập giá cho các đêm này ở Lịch giá. Kiểm tra giá theo kênh rồi sửa đơn.</p>
             )}
           </div>
           {balance > 0 && detail.paymentCollector === "hotel_collect" && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <input type="number" value={payAmount || ""} onChange={(e) => setPayAmount(Number(e.target.value))} placeholder="Số tiền khách trả" className="w-36 rounded-lg border border-[var(--cb-border)] px-2 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" />
-              <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className="rounded-lg border border-[var(--cb-border)] px-2 py-2 text-sm outline-none">
+              <input type="number" value={payAmount || ""} onChange={(e) => setPayAmount(Number(e.target.value))} placeholder="Số tiền khách trả" className="w-36 rounded-lg border border-line px-2 py-2 text-sm outline-none focus:border-primary" />
+              <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className="rounded-lg border border-line px-2 py-2 text-sm outline-none">
                 <option>Tiền mặt</option>
                 <option>Chuyển khoản</option>
                 <option>Thẻ</option>
@@ -774,7 +821,7 @@ export default function ReservationDetailPage() {
             </div>
           )}
           {detail.paymentCollector === "channel_collect" && (
-            <p className="mt-2 text-xs text-[var(--cb-muted)]">Đơn này do kênh thu hộ tiền của khách — khách sạn nhận tiền từ kênh sau, không thu thêm tại quầy.</p>
+            <p className="mt-2 text-xs text-muted">Đơn này do kênh thu hộ tiền của khách — khách sạn nhận tiền từ kênh sau, không thu thêm tại quầy.</p>
           )}
         </div>
       )}
@@ -782,7 +829,7 @@ export default function ReservationDetailPage() {
       {/* ---------- tab Khach ---------- */}
       {tab === "guest" && (
         <div className="cb-card mt-4 p-5 text-sm">
-          <div className="text-base font-bold text-[var(--cb-text)]">Thông tin khách</div>
+          <div className="text-base font-bold text-ink">Thông tin khách</div>
           <div className="mt-3 space-y-2">
             <DetailRow label="Họ tên" value={detail.guestName} />
             <DetailRow label="Số điện thoại" value={detail.guestPhone || "—"} />
@@ -798,8 +845,8 @@ export default function ReservationDetailPage() {
       {/* ---------- tab The ---------- */}
       {tab === "cards" && (
         <div className="cb-card mt-4 p-5 text-sm">
-          <div className="text-base font-bold text-[var(--cb-text)]">Thẻ thanh toán</div>
-          <p className="mt-3 rounded-lg bg-[var(--cb-bg)] px-3 py-3 text-[var(--cb-muted)]">
+          <div className="text-base font-bold text-ink">Thẻ thanh toán</div>
+          <p className="mt-3 rounded-lg bg-[var(--nui-bg)] px-3 py-3 text-muted">
             Chưa lưu thẻ cho đơn này — tính năng lưu thẻ sẽ làm cùng bước Payment (thu tiền đặt cọc / thanh toán online), không lưu số thẻ vào cơ sở dữ liệu.
           </p>
         </div>
@@ -808,18 +855,18 @@ export default function ReservationDetailPage() {
       {/* ---------- tab Ghi chu ---------- */}
       {tab === "notes" && (
         <div className="cb-card mt-4 p-5 text-sm">
-          <div className="text-base font-bold text-[var(--cb-text)]">Ghi chú ({allNotes.length})</div>
+          <div className="text-base font-bold text-ink">Ghi chú ({allNotes.length})</div>
           {allNotes.length === 0 ? (
-            <p className="mt-3 rounded-lg bg-[var(--cb-bg)] px-3 py-3 text-[var(--cb-muted)]">Chưa có ghi chú nào cho đơn này.</p>
+            <p className="mt-3 rounded-lg bg-[var(--nui-bg)] px-3 py-3 text-muted">Chưa có ghi chú nào cho đơn này.</p>
           ) : (
             <div className="mt-3 space-y-3">
               {allNotes.map((n) => (
-                <div key={n.id} className="rounded-xl border border-[var(--cb-border)] px-4 py-3">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--cb-muted)]">
-                    <b className="text-[var(--cb-text)]">{n.author}</b>
+                <div key={n.id} className="rounded-xl border border-line px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                    <b className="text-ink">{n.author}</b>
                     {n.createdAt && <span>{fmtDate(n.createdAt.slice(0, 10))}</span>}
                   </div>
-                  <p className="mt-1 whitespace-pre-wrap text-[var(--cb-text)]">{n.body}</p>
+                  <p className="mt-1 whitespace-pre-wrap text-ink">{n.body}</p>
                 </div>
               ))}
             </div>
@@ -830,7 +877,7 @@ export default function ReservationDetailPage() {
               onChange={(e) => setNoteBody(e.target.value)}
               placeholder="Ghi chú cho ca sau: khách đến muộn, cần thêm khăn..."
               rows={3}
-              className="w-full rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm outline-none focus:border-[var(--cb-blue)]"
+              className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-primary"
             />
             <button onClick={addNote} className="cb-btn-primary mt-2 px-4 py-2 text-sm">+ Thêm ghi chú</button>
           </div>
@@ -840,8 +887,8 @@ export default function ReservationDetailPage() {
       {/* ---------- tab Tai lieu ---------- */}
       {tab === "docs" && (
         <div className="cb-card mt-4 p-5 text-sm">
-          <div className="text-base font-bold text-[var(--cb-text)]">Tài liệu</div>
-          <p className="mt-3 rounded-lg bg-[var(--cb-bg)] px-3 py-3 text-[var(--cb-muted)]">
+          <div className="text-base font-bold text-ink">Tài liệu</div>
+          <p className="mt-3 rounded-lg bg-[var(--nui-bg)] px-3 py-3 text-muted">
             Chưa tải được tài liệu lên cho đơn này — cần kho lưu trữ file, sẽ làm sau (cùng đợt với tải ảnh khách sạn).
           </p>
         </div>
@@ -850,18 +897,34 @@ export default function ReservationDetailPage() {
       {/* ---------- tab Hoat dong ---------- */}
       {tab === "activity" && (
         <div className="cb-card mt-4 p-5 text-sm">
-          <div className="text-base font-bold text-[var(--cb-text)]">Hoạt động của đơn</div>
-          <p className="mt-3 rounded-lg bg-[var(--cb-bg)] px-3 py-3 text-[var(--cb-muted)]">
-            Chưa có nhật ký thao tác cho đơn này — nhật ký (ai sửa giá, huỷ đơn, đóng phòng lúc nào) sẽ làm ngày 19–20/11, trước buổi họp test giai đoạn 1.
-          </p>
+          <div className="text-base font-bold text-ink">Hoạt động của đơn</div>
+          {activityLogs.length === 0 ? (
+            <p className="mt-3 rounded-lg bg-[var(--nui-bg)] px-3 py-3 text-muted">
+              Chưa có hoạt động nào cho đơn này.
+            </p>
+          ) : (
+            <ul className="mt-3 space-y-3">
+              {activityLogs.map((log) => (
+                <li key={log.id} className="flex gap-3">
+                  <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
+                  <div className="min-w-0">
+                    <div className="text-ink">{log.summary}</div>
+                    <div className="mt-0.5 text-xs text-muted">
+                      {log.actorName} · {fmtDateTime(log.createdAt)}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
       {/* ---------- tab Email ---------- */}
       {tab === "email" && (
         <div className="cb-card mt-4 p-5 text-sm">
-          <div className="text-base font-bold text-[var(--cb-text)]">Email đã gửi</div>
-          <p className="mt-3 rounded-lg bg-[var(--cb-bg)] px-3 py-3 text-[var(--cb-muted)]">
+          <div className="text-base font-bold text-ink">Email đã gửi</div>
+          <p className="mt-3 rounded-lg bg-[var(--nui-bg)] px-3 py-3 text-muted">
             Chưa gửi email nào cho đơn này — khách sạn liên hệ khách qua điện thoại. Hạ tầng gửi email sẽ làm sau.
           </p>
         </div>
@@ -873,8 +936,8 @@ export default function ReservationDetailPage() {
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-4">
-      <span className="text-[var(--cb-muted)]">{label}</span>
-      <span className="text-right font-medium text-[var(--cb-text)]">{value}</span>
+      <span className="text-muted">{label}</span>
+      <span className="text-right font-medium text-ink">{value}</span>
     </div>
   );
 }

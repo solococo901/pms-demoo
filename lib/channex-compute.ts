@@ -7,8 +7,10 @@
 // Ton: theo loai phong (quy phong chung - don active - phong
 // hong out_of_order, ca block theo ngay lan trang thai don
 // phong). Loai phong tat ban (active = false) gui ton 0 +
-// stop-sell. Gia: theo goi OTA; goi ke thua chi gui
-// restrictions, Channex tu suy gia tu goi goc.
+// stop-sell. Gia: theo goi OTA; goi ke thua tu goi OTA khac
+// tren Channex chi gui restrictions, Channex tu suy gia tu goi
+// goc. Goi suy ra tu gia Website khong co tren Channex nen
+// PMS phai gui gia da tinh.
 // ============================================================
 
 import { supabase } from "@/lib/supabase";
@@ -190,10 +192,14 @@ export async function computeChannexValues(
     const channexId = channexPlanId.get(p.id);
     if (!channexId) continue;
     const planObj = planObjs.find((x) => x.id === p.id)!;
+    // Channex chi tu suy gia khi goi cha la goi OTA da co tren Channex.
+    // Goi suy ra tu gia Website khong co goi cha tren Channex.
+    const parent = p.derived_from_id ? planRows.find((x) => x.id === p.derived_from_id) : undefined;
+    const channexDerivesPrice = !!parent && OTA_CHANNELS.includes(parent.channel_code) && !!parent.channex_id;
     for (const date of uniqueDates) {
       const v: RestrictionValue = { rate_plan_id: channexId, date };
       let hasValue = false;
-      if (!p.derived_from_id) {
+      if (!channexDerivesPrice) {
         const price = resolvePlanPrice(planObj, date, planObjs, overrides);
         if (price != null && price > 0) {
           v.rate = price.toFixed(2);
@@ -222,7 +228,7 @@ export async function computeChannexValues(
       // thieu truong, Channex giu gia tri cu — viec TAT trong
       // PMS se khong bao gio an sang Channex. Loai phong tat
       // ban thi stop-sell luon, ke ca khong co dong gia nao.
-      if (!p.derived_from_id || row) {
+      if (!channexDerivesPrice || row) {
         v.stop_sell = !!(row?.stopSell || blocked || typeActive.get(p.room_type_id) === false);
         v.closed_to_arrival = !!row?.cta;
         v.closed_to_departure = !!row?.ctd;

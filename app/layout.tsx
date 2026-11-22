@@ -1,6 +1,15 @@
 "use client";
 
 // ============================================================
+// FILE NATEUI2 — app/layout.tsx (khung Cloudbeds, đổi sang
+// token tối giản kiểu NateUI — 2026-11-21, bước 2 sau NATEUI1)
+// CHỈ đổi class màu/viền sang token (bg-primary, text-ink,
+// text-muted, bg-surface, bg-primary-soft, border-line...);
+// KHÔNG đổi cấu trúc, không đổi logic, không đổi thứ tự menu.
+// Màu sắc giữ nguyên giá trị cũ nên khung nhìn gần như cũ —
+// bước này dọn code về 1 bộ token chung để các màn hình sau
+// sửa theo token đó. Width vẫn w-[80%] (chờ anh bấm chọn
+// Hẹp/Vừa/Rộng trên bản demo rồi đổi sau, 1 lượt riêng).
 // FILE CBLAYOUT5 — app/layout.tsx (Cloudbeds-style shell)
 // CBLAYOUT5 (2026-11-17): logo PMS Hotel van chi hien 1 lan,
 // nhung chuyen cho: mo menu thi logo nam o dau aside, dong
@@ -52,7 +61,7 @@ import { Suspense, useEffect, useState, type ReactNode } from "react";
 import AuthGate from "@/components/AuthGate";
 import UserBox from "@/components/UserBox";
 import ChannexOutbox from "@/components/ChannexOutbox";
-import { IconBed, IconBell, IconCalendar, IconPlus } from "@/components/icons";
+import { IconBed, IconBell, IconCalendar, IconDroplet, IconPlus } from "@/components/icons";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId, DEFAULT_HOTEL_ID, HOTEL_STORAGE_KEY } from "@/lib/current-hotel";
 import { useCurrentRole } from "@/lib/current-role";
@@ -77,6 +86,7 @@ const MENU = [
   { label: "Tổng quan", href: "/dashboard", icon: "dashboard", group: "Vận hành" },
   { label: "Lịch phòng", href: "/calendar", icon: "calendar", group: "Vận hành" },
   { label: "Đặt phòng", href: "/reservations", icon: "reservations", group: "Vận hành" },
+  { label: "Buồng phòng", href: "/housekeeping", icon: "housekeeping", group: "Vận hành" },
   { label: "Báo cáo", href: "/reports", icon: "reports", group: "Quản lí", adminOnly: true },
   { label: "Cài đặt", href: "/settings", icon: "settings", group: "Quản lí", adminOnly: true },
   { label: "Người dùng", href: "/settings/users", icon: "user", group: "Quản lí", adminOnly: true },
@@ -101,6 +111,7 @@ const ICONS: Record<string, string> = {
   layers: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
   archive: "M21 8v13H3V8M1 3h22v5H1zM10 12h4",
   user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
+  housekeeping: "M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z",
 };
 function MenuIcon({ name }: { name: string }) {
   return (
@@ -159,7 +170,7 @@ function HotelSwitcher() {
           window.location.reload();
         }
       }}
-      className="shrink-0 cursor-pointer rounded-lg border border-[var(--cb-border)] bg-white px-2 py-1.5 text-sm font-semibold text-[var(--cb-text)]"
+      className="shrink-0 cursor-pointer rounded-lg border border-line bg-surface px-2 py-1.5 text-sm font-semibold text-ink"
       title="Đổi khách sạn"
     >
       {hotels.length === 0 && <option value={pageHotel ?? current}>{pageHotel ?? current}</option>}
@@ -178,7 +189,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <Suspense
           fallback={
-            <div className="flex min-h-screen items-center justify-center text-sm text-[var(--cb-muted)]">
+            <div className="flex min-h-screen items-center justify-center text-sm text-muted">
               Đang tải...
             </div>
           }
@@ -220,6 +231,35 @@ function Shell({ children }: { children: ReactNode }) {
     window.sessionStorage.setItem(HOTEL_STORAGE_KEY, pageHotel);
   }
   const menuHotel = urlHotel ?? detailHotel ?? storedHotel;
+
+  // So phong chua don xong (Chua don + Dang don) de hien huy hieu tren
+  // nut Buong phong o thanh tren (HKBOARD1). Tai lai khi doi khach san
+  // va khi cua so duoc bam vao lai (doi trang thai o trang Buong phong
+  // xong quay ve thi so cap nhat). Loi thi im lang — huy hieu chi an di.
+  const [dirtyCount, setDirtyCount] = useState(0);
+  useEffect(() => {
+    if (!menuHotel) {
+      setDirtyCount(0);
+      return;
+    }
+    let cancelled = false;
+    const loadDirtyCount = () => {
+      supabase
+        .from("rooms")
+        .select("id", { count: "exact", head: true })
+        .eq("hotel_id", menuHotel)
+        .in("housekeeping_status", ["dirty", "in_progress"])
+        .then(({ count, error }) => {
+          if (!cancelled && !error) setDirtyCount(count ?? 0);
+        });
+    };
+    loadDirtyCount();
+    window.addEventListener("focus", loadDirtyCount);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", loadDirtyCount);
+    };
+  }, [menuHotel]);
 
   // Chua chon khach san nao thi day ve danh sach (trang danh sach
   // /hotels va login duoc mien). Chi chay sau khi mount nen khong
@@ -288,7 +328,7 @@ function Shell({ children }: { children: ReactNode }) {
   if (pathname === "/" || pathname === "/hotels") {
     return (
       <AuthGate>
-        <main className="mx-auto min-h-screen w-[80%] bg-[var(--cb-bg)] p-6">{children}</main>
+        <main className="mx-auto min-h-screen w-[80%] bg-[var(--nui-bg)] px-6 pb-2.5 pt-6">{children}</main>
       </AuthGate>
     );
   }
@@ -296,23 +336,23 @@ function Shell({ children }: { children: ReactNode }) {
 
   return (
     <AuthGate>
-      <div className="flex min-h-screen bg-[var(--cb-bg)]">
+      <div className="flex min-h-screen bg-[var(--nui-bg)]">
         {/* ============ ASIDE (push: mo thi day noi dung sang phai) ============ */}
         <aside
-          className={`sticky top-0 flex h-screen shrink-0 flex-col overflow-hidden border-r border-[var(--cb-border)] bg-white transition-all duration-300 ease-in-out ${menuOpen ? "w-72" : "w-0 border-r-0"}`}
+          className={`sticky top-0 flex h-screen shrink-0 flex-col overflow-hidden border-r border-line bg-surface transition-all duration-300 ease-in-out ${menuOpen ? "w-72" : "w-0 border-r-0"}`}
         >
           <div className="flex w-72 shrink-0 flex-1 flex-col">
-            <div className="flex items-center justify-between border-b border-[var(--cb-border)] px-5 py-2.5">
+            <div className="flex items-center justify-between border-b border-line px-5 py-2.5">
               <Link
                 href="/hotels"
                 onClick={() => setMenuOpen(false)}
                 title="Về danh sách khách sạn"
                 className="flex items-center gap-2.5"
               >
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--cb-blue)] text-base font-bold text-white">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-base font-bold text-white">
                   P
                 </div>
-                <div className="text-[15px] font-bold leading-tight text-[var(--cb-text)]">
+                <div className="text-[15px] font-bold leading-tight text-ink">
                   PMS Hotel
                 </div>
               </Link>
@@ -320,7 +360,7 @@ function Shell({ children }: { children: ReactNode }) {
                 onClick={() => setMenuOpen(false)}
                 title="Đóng menu"
                 aria-label="Đóng menu"
-                className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--cb-text)] hover:bg-[#f5f7fb]"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-ink hover:bg-surface-muted"
               >
                 <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
                   <path d="M6 6l12 12M18 6L6 18" />
@@ -338,7 +378,7 @@ function Shell({ children }: { children: ReactNode }) {
                     <button
                       onClick={() => toggleGroup(group)}
                       aria-expanded={open}
-                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--cb-muted)] hover:bg-[#f5f7fb]"
+                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted hover:bg-surface-muted"
                     >
                       <span>{group}</span>
                       <svg className={`h-4 w-4 shrink-0 transition-transform ${open ? "" : "rotate-180"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -357,8 +397,8 @@ function Shell({ children }: { children: ReactNode }) {
                             aria-current={active ? "page" : undefined}
                             className={
                               active
-                                ? "relative flex items-center gap-3 rounded-lg bg-[var(--cb-blue-soft)] px-3 py-2 text-sm font-semibold text-[var(--cb-blue)] before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:bg-[var(--cb-blue)]"
-                                : "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-[var(--cb-text)] hover:bg-[#f5f7fb]"
+                                ? "relative flex items-center gap-3 rounded-lg bg-primary-soft px-3 py-2 text-sm font-semibold text-primary before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:bg-primary"
+                                : "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-ink hover:bg-surface-muted"
                             }
                           >
                             <MenuIcon name={item.icon} />
@@ -373,7 +413,7 @@ function Shell({ children }: { children: ReactNode }) {
               })}
             </nav>
 
-            <div className="border-t border-[var(--cb-border)] px-5 py-3 text-xs text-[var(--cb-muted)]">
+            <div className="border-t border-line px-5 py-3 text-xs text-muted">
               cityhousePMS — {menuHotel || "Chưa chọn khách sạn"}
             </div>
           </div>
@@ -382,12 +422,12 @@ function Shell({ children }: { children: ReactNode }) {
         {/* ============ CONTENT COLUMN (dich theo aside) ============ */}
         <div className="flex min-h-screen min-w-0 flex-1 flex-col">
           {/* ============ TOP BAR (white, sticky) ============ */}
-          <header className="sticky top-0 z-40 flex items-center gap-3 border-b border-[var(--cb-border)] bg-white px-4 py-2.5">
+          <header className="sticky top-0 z-40 flex items-center gap-3 border-b border-line bg-surface px-4 py-2.5">
             <button
               onClick={() => setMenuOpen((v) => !v)}
               title="Mở/đóng menu"
               aria-label="Mở/đóng menu"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--cb-text)] hover:bg-[#f5f7fb]"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-ink hover:bg-surface-muted"
             >
               <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
                 <path d="M4 7h16M4 12h16M4 17h16" />
@@ -396,14 +436,14 @@ function Shell({ children }: { children: ReactNode }) {
 
             {!menuOpen && (
             <Link href="/hotels" title="Về danh sách khách sạn" className="flex shrink-0 items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--cb-blue)] text-base font-bold text-white">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-base font-bold text-white">
                 P
               </div>
               <div className="hidden sm:block">
-                <div className="text-[15px] font-bold leading-tight text-[var(--cb-text)]">
+                <div className="text-[15px] font-bold leading-tight text-ink">
                   PMS Hotel
                 </div>
-                <div className="text-[11px] leading-tight text-[var(--cb-muted)]">
+                <div className="text-[11px] leading-tight text-muted">
                   Quản lí khách sạn
                 </div>
               </div>
@@ -432,20 +472,34 @@ function Shell({ children }: { children: ReactNode }) {
             <Link
               href={menuHotel ? `/${menuHotel}/calendar` : "/"}
               title="Lịch phòng"
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${pathname?.endsWith("/calendar") ? "bg-[var(--cb-blue-soft)] text-[var(--cb-blue)]" : "text-[var(--cb-text)] hover:bg-[var(--cb-bg)]"}`}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${pathname?.endsWith("/calendar") ? "bg-primary-soft text-primary" : "text-ink hover:bg-[var(--nui-bg)]"}`}
             >
               <IconCalendar className="h-5 w-5" />
             </Link>
             <Link
               href={menuHotel ? `/${menuHotel}/reservations` : "/"}
               title="Đặt phòng"
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${pathname?.endsWith("/reservations") ? "bg-[var(--cb-blue-soft)] text-[var(--cb-blue)]" : "text-[var(--cb-text)] hover:bg-[var(--cb-bg)]"}`}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${pathname?.endsWith("/reservations") ? "bg-primary-soft text-primary" : "text-ink hover:bg-[var(--nui-bg)]"}`}
             >
               <IconBed className="h-5 w-5" />
             </Link>
 
+            {/* Housekeeping shortcut with dirty-rooms badge (HKBOARD1) */}
+            <Link
+              href={menuHotel ? `/${menuHotel}/housekeeping` : "/"}
+              title={dirtyCount > 0 ? `Buồng phòng — ${dirtyCount} phòng chưa dọn xong` : "Buồng phòng"}
+              className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${pathname?.endsWith("/housekeeping") ? "bg-primary-soft text-primary" : "text-ink hover:bg-[var(--nui-bg)]"}`}
+            >
+              <IconDroplet className="h-5 w-5" />
+              {dirtyCount > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold leading-none text-white">
+                  {dirtyCount > 99 ? "99+" : dirtyCount}
+                </span>
+              )}
+            </Link>
+
             {/* Bell with red dot */}
-            <button className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--cb-text)] hover:bg-[var(--cb-bg)]" title="Thông báo">
+            <button className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-ink hover:bg-[var(--nui-bg)]" title="Thông báo">
               <IconBell className="h-5 w-5" />
               <span className="cb-dot absolute right-1 top-1 h-2.5 w-2.5 border-2 border-white" />
             </button>
@@ -453,13 +507,13 @@ function Shell({ children }: { children: ReactNode }) {
             <UserBox />
           </header>
 
-          <main className="flex-1 p-6">
+          <main className="flex-1 px-6 pb-2.5 pt-6">
             <div className="mx-auto w-[80%]">
               {blockedForStaff ? (
                 <div className="cb-card mx-auto mt-10 max-w-md p-6 text-center">
-                  <div className="text-base font-bold text-[var(--cb-text)]">Trang dành cho quản trị viên</div>
-                  <p className="mt-2 text-sm text-[var(--cb-muted)]">
-                    Tài khoản nhân viên chỉ dùng được Tổng quan, Lịch phòng, Đặt phòng
+                  <div className="text-base font-bold text-ink">Trang dành cho quản trị viên</div>
+                  <p className="mt-2 text-sm text-muted">
+                    Tài khoản nhân viên chỉ dùng được Tổng quan, Lịch phòng, Đặt phòng, Buồng phòng
                     và danh sách Khách sạn.
                     Nếu bạn cần quyền quản trị, hãy nhờ quản trị viên cấp lại vai trò.
                   </p>

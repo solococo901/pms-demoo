@@ -1,26 +1,8 @@
 "use client";
-// ============================================================
-// components/NewReservationWizard.tsx — Tao don moi kieu Cloudbeds
-// Trang rieng 4 buoc (Payment chen sau thanh buoc 5):
-//   1 Availability — chon nguon + ngay + so khach, bam SEARCH,
-//     bam ADD de them tung phong vao gio (co the them nhieu phong,
-//     nhieu loai — moi phong la 1 don rieng). Bam ADD khong chuyen
-//     buoc: phong vua them chi hien o cot trai ACCOMMODATIONS, o
-//     lai buoc 1 de them tiep. Chan trang hien tong tien + nut
-//     BOOKING DETAILS de sang buoc 2 (chi bat khi da them it nhat
-//     1 phong). Doi nguon / ngay thi gio bi xoa (gia + ton theo
-//     ngay/nguon moi).
-//   2 Details — xac nhan tung phong: so khach, goi gia, gan phong,
-//     trang thai. Ghi chu chung cho tat ca don.
-//   3 Guests — ten + SDT khach (chung cho tat ca don).
-//   4 Add-ons — dich vu them (ap dung cho moi don) + tao don.
-//
-// Moi buoc kiem tra deu chay qua lib/booking-rules.ts truoc khi
-// luu (validateCreate chay lai o buoc 2 va buoc 4 voi du lieu moi
-// nhat, nen phong vua bi nguoi khac dat xen vao cung khong lot).
-// Chua co buoc Payment: don tao xong co paidAmount = 0, thu tien
-// sau o folio hoac khi buoc Payment duoc chen vao.
-// ============================================================
+// PRICE4 — components/NewReservationWizard.tsx (Tao don 5 buoc)
+// Chon goi chuan nhu luoi gia: goi goc room_only truoc, roi goi suy ra theo cong thuc kenh.
+// Buoc 1 them tung phong vao gio (moi phong = 1 don rieng); buoc 2-4 xac nhan, khach, dich vu them; buoc 5 Payment chua lam.
+// Doi sang token toi gian 2026-11-21; moi buoc kiem tra qua lib/booking-rules.ts truoc khi luu.
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -28,6 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { queueChannexDates, stayDates } from "@/lib/channex-outbox";
 import {
   CHANNELS,
+  CHANNEL_FORMULA,
   getChannelName,
   type InventoryBlock,
   type RatePlan,
@@ -159,7 +142,9 @@ export default function NewReservationWizard({
     const list = plansFor(channelCode, roomTypeId);
     return (
       list.find((p) => !p.derivedFromId && p.mealPlan === "room_only") ??
-      list.find((p) => !p.derivedFromId) ??
+      // Goi suy ra chuan: ke thua tu gia Website theo cong thuc cua kenh.
+      list.find((p) => p.derivedFromId && p.formulaId === CHANNEL_FORMULA[channelCode]) ??
+      list.find((p) => p.derivedFromId) ??
       list[0]
     );
   };
@@ -411,10 +396,9 @@ export default function NewReservationWizard({
   }
 
   const inputCls =
-    "rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm text-[var(--cb-text)] outline-none focus:border-[var(--cb-blue)]";
+    "rounded-lg border border-line px-3 py-2 text-sm text-ink outline-none focus:border-primary";
 
-  // Phong trong gio (dung cho form gan phong o buoc 2 — tru phong
-  // da gan cho phong khac trong gio).
+  // Phong trong gio cho form gan phong o buoc 2 (tru phong da gan cho phong khac).
   const fitFor = (item: CartItem) => {
     const taken = new Set(
       cart.filter((o) => o.key !== item.key && o.roomNumber).map((o) => o.roomNumber),
@@ -431,28 +415,28 @@ export default function NewReservationWizard({
   if (createdCodes.length > 0) {
     return (
       <div className="mx-auto max-w-2xl">
-        <div className="rounded-xl border border-[#bfe9d9] bg-[#eafaf3] p-6 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#bfe9d9] text-[#0e7a56]"><IconCheck className="h-7 w-7" /></div>
-          <h2 className="mt-2 text-xl font-bold text-[var(--cb-text)]">
+        <div className="rounded-xl border border-line bg-success-soft p-6 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-success-soft text-success"><IconCheck className="h-7 w-7" /></div>
+          <h2 className="mt-2 text-xl font-bold text-ink">
             {createdCodes.length > 1 ? `Tạo ${createdCodes.length} đơn thành công!` : "Tạo đơn thành công!"}
           </h2>
-          <p className="mt-1 text-sm text-[var(--cb-muted)]">Mã đặt phòng</p>
+          <p className="mt-1 text-sm text-muted">Mã đặt phòng</p>
           <div className="mt-2 space-y-2">
             {createdCodes.map((code) => (
               <div key={code} className="flex flex-wrap items-center justify-center gap-3">
-                <span className="text-2xl font-bold tracking-widest text-[var(--cb-text)]">{code}</span>
-                <Link href={`/${hotelId}/reservations/${code}`} className="text-sm font-medium text-[var(--cb-blue)] hover:underline">
+                <span className="text-2xl font-bold tracking-widest text-ink">{code}</span>
+                <Link href={`/${hotelId}/reservations/${code}`} className="text-sm font-medium text-primary hover:underline">
                   Mở trang chi tiết ↗
                 </Link>
               </div>
             ))}
           </div>
-          <div className="mx-auto mt-4 max-w-md space-y-1 rounded-xl border border-[var(--cb-border)] bg-white p-4 text-left text-sm">
-            <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Khách</span><b className="text-[var(--cb-text)]">{guestName} · {guestPhone}</b></div>
-            <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Phòng</span><b className="text-[var(--cb-text)]">{cart.map((i) => `${roomTypes.find((x) => x.id === i.roomTypeId)?.name ?? i.roomTypeId}${i.roomNumber ? ` (${i.roomNumber})` : ""}`).join(", ")}</b></div>
-            <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Thời gian</span><b className="text-[var(--cb-text)]">{fmtDate(checkIn)} → {fmtDate(checkOut)} ({nights} đêm)</b></div>
-            <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Tổng tiền</span><b className="text-[var(--cb-text)]">{money(grandTotal)}</b></div>
-            <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Đã thu</span><b className="text-[var(--cb-text)]">0₫ — thu tại quầy</b></div>
+          <div className="mx-auto mt-4 max-w-md space-y-1 rounded-xl border border-line bg-surface p-4 text-left text-sm">
+            <div className="flex justify-between"><span className="text-muted">Khách</span><b className="text-ink">{guestName} · {guestPhone}</b></div>
+            <div className="flex justify-between"><span className="text-muted">Phòng</span><b className="text-ink">{cart.map((i) => `${roomTypes.find((x) => x.id === i.roomTypeId)?.name ?? i.roomTypeId}${i.roomNumber ? ` (${i.roomNumber})` : ""}`).join(", ")}</b></div>
+            <div className="flex justify-between"><span className="text-muted">Thời gian</span><b className="text-ink">{fmtDate(checkIn)} → {fmtDate(checkOut)} ({nights} đêm)</b></div>
+            <div className="flex justify-between"><span className="text-muted">Tổng tiền</span><b className="text-ink">{money(grandTotal)}</b></div>
+            <div className="flex justify-between"><span className="text-muted">Đã thu</span><b className="text-ink">0₫ — thu tại quầy</b></div>
           </div>
           <div className="mt-5 flex flex-wrap justify-center gap-2">
             <Link href={`/${hotelId}/reservations`} className="cb-btn-ghost px-4 py-2.5 text-sm">
@@ -469,7 +453,7 @@ export default function NewReservationWizard({
     <div>
       {/* tieu de + 5 buoc (buoc 5 Payment chua lam — hien mo, de chen sau) */}
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <h1 className="text-2xl font-bold text-[var(--cb-text)]">New Reservation</h1>
+        <h1 className="text-2xl font-bold text-ink">New Reservation</h1>
         <div className="flex flex-wrap items-center gap-2">
           {STEPS.map((s) => {
             const active = step === s.n;
@@ -483,16 +467,16 @@ export default function NewReservationWizard({
                 onClick={() => goTo(s.n)}
                 className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-sm ${
                   active
-                    ? "bg-[var(--cb-blue)] font-semibold text-white"
+                    ? "bg-primary font-semibold text-white"
                     : done
-                      ? "bg-[#e6f7f1] font-medium text-[#0e7a56]"
-                      : "bg-[var(--cb-bg)] text-[var(--cb-muted)]"
+                      ? "bg-success-soft font-medium text-success"
+                      : "bg-[var(--nui-bg)] text-muted"
                 } ${disabled ? "opacity-70" : ""}`}
                 title={disabled ? "Bước Payment sẽ chèn vào sau" : undefined}
               >
                 <span
                   className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold ${
-                    active ? "bg-white text-[var(--cb-blue)]" : done ? "bg-[#0e7a56] text-white" : "bg-white text-[var(--cb-muted)]"
+                    active ? "bg-surface text-primary" : done ? "bg-success text-white" : "bg-surface text-muted"
                   }`}
                 >
                   {s.n}
@@ -508,7 +492,7 @@ export default function NewReservationWizard({
       {/* hang tim kiem — buoc 1 (kieu Cloudbeds) */}
       {step === 1 && (
         <div className="cb-card mt-4 flex flex-wrap items-end gap-3 p-4">
-          <label className="text-sm text-[var(--cb-text)]">
+          <label className="text-sm text-ink">
             Select Source *
             <select
               value={source}
@@ -526,17 +510,14 @@ export default function NewReservationWizard({
               ))}
             </select>
           </label>
-          <label className="text-sm text-[var(--cb-text)]">
+          <label className="text-sm text-ink">
             Check-In
             <span className="mt-1 block">
               <DatePicker
                 value={checkIn}
                 onChange={(v) => {
                   setCheckIn(v);
-                  // Chon ngay den >= ngay di hien tai thi tu doi ngay di
-                  // sang hom sau — cap ngay luon hop le ma khong khoa
-                  // chet o ngay den (nhu truoc: max = ngay di - 1 lam
-                  // khong the chon ngay den muon hon neu chua doi ngay di).
+                  // Chon ngay den >= ngay di thi ngay di tu nhay sang hom sau (khong khoa chet o ngay den).
                   if (v && checkOut && v >= checkOut) setCheckOut(addDays(v, 1));
                   clearCartForNewSearch();
                 }}
@@ -544,7 +525,7 @@ export default function NewReservationWizard({
               />
             </span>
           </label>
-          <label className="text-sm text-[var(--cb-text)]">
+          <label className="text-sm text-ink">
             Check-Out
             <span className="mt-1 block">
               <DatePicker
@@ -558,7 +539,7 @@ export default function NewReservationWizard({
               />
             </span>
           </label>
-          <label className="text-sm text-[var(--cb-text)]">
+          <label className="text-sm text-ink">
             Người lớn
             <input
               type="number" min={1} value={adults}
@@ -569,7 +550,7 @@ export default function NewReservationWizard({
               className={`${inputCls} mt-1 block w-20`}
             />
           </label>
-          <label className="text-sm text-[var(--cb-text)]">
+          <label className="text-sm text-ink">
             Trẻ em
             <input
               type="number" min={0} value={children}
@@ -580,10 +561,10 @@ export default function NewReservationWizard({
               className={`${inputCls} mt-1 block w-20`}
             />
           </label>
-          <button onClick={runSearch} className="inline-flex items-center gap-2 rounded-lg bg-[#1db584] px-6 py-2.5 text-sm font-bold text-white hover:brightness-95">
+          <button onClick={runSearch} className="inline-flex items-center gap-2 rounded-lg bg-success px-6 py-2.5 text-sm font-bold text-white hover:brightness-95">
             <IconSearch className="h-4 w-4" /> SEARCH
           </button>
-          <span className="pb-2 text-xs text-[var(--cb-muted)]">
+          <span className="pb-2 text-xs text-muted">
             Nguồn đơn quyết định giá theo kênh và bên thu tiền: kênh OTA do kênh thu hộ, Lễ tân / Website do khách sạn tự thu.
           </span>
         </div>
@@ -591,12 +572,12 @@ export default function NewReservationWizard({
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[260px_1fr]">
         {/* cot trai: ACCOMMODATIONS — phong da chon */}
-        <div className="h-fit overflow-hidden rounded-xl border border-[var(--cb-border)] bg-white">
-          <div className="bg-[var(--cb-blue)] px-4 py-3 text-sm font-bold text-white">ACCOMMODATIONS</div>
+        <div className="h-fit overflow-hidden rounded-xl border border-line bg-surface">
+          <div className="bg-primary px-4 py-3 text-sm font-bold text-white">ACCOMMODATIONS</div>
           {cart.length === 0 ? (
             <div className="p-5 text-center">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[var(--cb-bg)]"><IconBed className="h-7 w-7 text-[var(--cb-muted)]" /></div>
-              <p className="mt-3 text-sm text-[var(--cb-muted)]">Add accommodations to start your reservation</p>
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[var(--nui-bg)]"><IconBed className="h-7 w-7 text-muted" /></div>
+              <p className="mt-3 text-sm text-muted">Add accommodations to start your reservation</p>
             </div>
           ) : (
             <div className="space-y-3 p-4 text-sm">
@@ -605,37 +586,37 @@ export default function NewReservationWizard({
                 const bd = breakdownFor(item);
                 const plan = ratePlans.find((p) => p.id === item.planId);
                 return (
-                  <div key={item.key} className="rounded-lg border border-[var(--cb-border)] p-3">
+                  <div key={item.key} className="rounded-lg border border-line p-3">
                     <div className="flex items-start justify-between gap-2">
-                      <b className="text-[var(--cb-text)]">{t?.name ?? item.roomTypeId}</b>
-                      <button onClick={() => removeFromCart(item.key)} className="text-[#e5484d] hover:underline" title="Xoá phòng này khỏi đơn">✕</button>
+                      <b className="text-ink">{t?.name ?? item.roomTypeId}</b>
+                      <button onClick={() => removeFromCart(item.key)} className="text-danger hover:underline" title="Xoá phòng này khỏi đơn">✕</button>
                     </div>
-                    <div className="mt-1 text-[var(--cb-muted)]">
+                    <div className="mt-1 text-muted">
                       {fmtDate(checkIn)} → {fmtDate(checkOut)} · {nights} đêm · {item.adults + item.children} khách
                     </div>
-                    <div className="text-[var(--cb-muted)]">Gói: {plan?.name ?? "—"}</div>
-                    <div className="text-[var(--cb-muted)]">Phòng: {item.roomNumber ? `Phòng ${item.roomNumber}` : "Chưa gán — gán sau trên lịch"}</div>
+                    <div className="text-muted">Gói: {plan?.name ?? "—"}</div>
+                    <div className="text-muted">Phòng: {item.roomNumber ? `Phòng ${item.roomNumber}` : "Chưa gán — gán sau trên lịch"}</div>
                     <div className="mt-1 flex justify-between">
-                      <span className="text-[var(--cb-muted)]">Tiền phòng + phụ thu</span>
-                      <b className="text-[var(--cb-text)]">{bd ? money(bd.roomTotal + bd.feesTotal) : "—"}</b>
+                      <span className="text-muted">Tiền phòng + phụ thu</span>
+                      <b className="text-ink">{bd ? money(bd.roomTotal + bd.feesTotal) : "—"}</b>
                     </div>
                   </div>
                 );
               })}
-              <div className="space-y-1 border-t border-[var(--cb-bg)] pt-2">
+              <div className="space-y-1 border-t border-[var(--nui-bg)] pt-2">
                 <div className="flex justify-between">
-                  <span className="text-[var(--cb-muted)]">Tiền phòng + phụ thu</span>
-                  <b className="text-[var(--cb-text)]">{money(cartRoomSum)}</b>
+                  <span className="text-muted">Tiền phòng + phụ thu</span>
+                  <b className="text-ink">{money(cartRoomSum)}</b>
                 </div>
                 {addOnsAll > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-[var(--cb-muted)]">Dịch vụ thêm</span>
-                    <b className="text-[var(--cb-text)]">{money(addOnsAll)}</b>
+                    <span className="text-muted">Dịch vụ thêm</span>
+                    <b className="text-ink">{money(addOnsAll)}</b>
                   </div>
                 )}
                 <div className="flex justify-between">
-                  <span className="font-semibold text-[var(--cb-text)]">Tổng</span>
-                  <b className="text-[var(--cb-text)]">{money(grandTotal)}</b>
+                  <span className="font-semibold text-ink">Tổng</span>
+                  <b className="text-ink">{money(grandTotal)}</b>
                 </div>
               </div>
             </div>
@@ -647,22 +628,22 @@ export default function NewReservationWizard({
           {step === 1 && (
             <div className="cb-card p-4">
               <div className="flex flex-wrap items-center gap-3 text-sm">
-                <span className="font-semibold text-[var(--cb-text)]">Select accommodations:</span>
-                <span className="rounded bg-[var(--cb-bg)] px-3 py-1.5 text-[var(--cb-muted)]">
+                <span className="font-semibold text-ink">Select accommodations:</span>
+                <span className="rounded bg-[var(--nui-bg)] px-3 py-1.5 text-muted">
                   {cart.length > 0 ? `Đã thêm ${cart.length} phòng` : "ALL ROOM TYPES"}
                 </span>
-                <span className="text-[var(--cb-muted)]">
+                <span className="text-muted">
                   {nights > 0 ? `${nights} đêm · ${fmtDate(checkIn)} → ${fmtDate(checkOut)} · ${adults + children} khách` : "Chọn ngày đến / ngày đi rồi bấm SEARCH."}
                 </span>
               </div>
 
               {!searched ? (
                 <div className="py-16 text-center">
-                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[var(--cb-bg)]"><IconCalendar className="h-8 w-8 text-[var(--cb-muted)]" /></div>
-                  <p className="mt-4 text-sm text-[var(--cb-muted)]">Select check-in and check-out dates to search for availability</p>
+                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[var(--nui-bg)]"><IconCalendar className="h-8 w-8 text-muted" /></div>
+                  <p className="mt-4 text-sm text-muted">Select check-in and check-out dates to search for availability</p>
                 </div>
               ) : roomTypes.filter((t) => t.active !== false).length === 0 ? (
-                <p className="py-10 text-center text-sm text-[var(--cb-muted)]">
+                <p className="py-10 text-center text-sm text-muted">
                   Khách sạn chưa có loại phòng nào — tạo loại phòng ở Thiết lập khách sạn trước.
                 </p>
               ) : (
@@ -681,34 +662,34 @@ export default function NewReservationWizard({
                         : null;
                     const cap = Math.max(o.type.maxOccupancy, 1);
                     return (
-                      <div key={o.type.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--cb-border)] px-4 py-3">
+                      <div key={o.type.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line px-4 py-3">
                         <div>
-                          <div className="font-bold text-[var(--cb-text)]">{o.type.name}</div>
-                          <div className="text-xs text-[var(--cb-muted)]">
+                          <div className="font-bold text-ink">{o.type.name}</div>
+                          <div className="text-xs text-muted">
                             {o.type.bedConfig ? `${o.type.bedConfig} · ` : ""}tối đa {o.type.maxOccupancy} khách
                             {o.plan ? ` · gói ${o.plan.name}` : ""}
                           </div>
                           {noPlan && (
-                            <div className="mt-1 text-xs text-[#92600a]">Kênh này chưa có gói giá cho loại phòng này — tạo gói giá ở Kênh bán.</div>
+                            <div className="mt-1 text-xs text-warning">Kênh này chưa có gói giá cho loại phòng này — tạo gói giá ở Kênh bán.</div>
                           )}
                           {unpriced && o.bd && (
-                            <div className="mt-1 text-xs text-[#92600a]">
+                            <div className="mt-1 text-xs text-warning">
                               Chưa có giá đêm {o.bd.unpriced.map(fmtDate).join(", ")} — nhập giá ở Lịch giá.
                             </div>
                           )}
                           {soldOut && !noPlan && !unpriced && (
-                            <div className="mt-1 text-xs text-[#e5484d]">
+                            <div className="mt-1 text-xs text-danger">
                               {already > 0
                                 ? `Đã thêm hết ${o.left} phòng còn trống của loại này.`
                                 : `Hết phòng${o.worstDate ? ` đêm ${fmtDate(o.worstDate)}` : ""} — không tạo được đơn.`}
                             </div>
                           )}
                           {overCapacity && (
-                            <div className="mt-1 text-xs text-[#e5484d]">Quá sức chứa loại phòng này.</div>
+                            <div className="mt-1 text-xs text-danger">Quá sức chứa loại phòng này.</div>
                           )}
                         </div>
                         <div className="flex flex-wrap items-center gap-3">
-                          <label className="text-xs text-[var(--cb-muted)]">
+                          <label className="text-xs text-muted">
                             Người lớn
                             <select
                               value={g.adults}
@@ -718,7 +699,7 @@ export default function NewReservationWizard({
                               {Array.from({ length: cap }, (_, i) => i + 1).map((n) => (<option key={n} value={n}>{n}</option>))}
                             </select>
                           </label>
-                          <label className="text-xs text-[var(--cb-muted)]">
+                          <label className="text-xs text-muted">
                             Trẻ em
                             <select
                               value={g.children}
@@ -729,13 +710,13 @@ export default function NewReservationWizard({
                             </select>
                           </label>
                           <div className="text-right">
-                            <span className={`rounded-full px-3 py-1 text-xs font-medium ${soldOut ? "bg-[#fdecec] text-[#e5484d]" : "bg-[#e6f7f1] text-[#0e7a56]"}`}>
+                            <span className={`rounded-full px-3 py-1 text-xs font-medium ${soldOut ? "bg-danger-soft text-danger" : "bg-success-soft text-success"}`}>
                               {soldOut ? "Hết phòng" : `Còn ${o.left - already} phòng`}
                             </span>
                             {o.bd && !unpriced && minNight !== null && Number.isFinite(minNight) && (
                               <div className="mt-1 text-sm">
-                                <b className="text-[var(--cb-text)]">{money(o.bd.grandTotal)}</b>
-                                <span className="text-[var(--cb-muted)]"> / {nights} đêm · từ {money(minNight)}/đêm</span>
+                                <b className="text-ink">{money(o.bd.grandTotal)}</b>
+                                <span className="text-muted"> / {nights} đêm · từ {money(minNight)}/đêm</span>
                               </div>
                             )}
                           </div>
@@ -757,8 +738,8 @@ export default function NewReservationWizard({
 
           {step === 2 && (
             <div className="cb-card space-y-4 p-5 text-sm">
-              <h2 className="text-base font-bold text-[var(--cb-text)]">Details — xác nhận thông tin từng phòng</h2>
-              <p className="text-[var(--cb-muted)]">
+              <h2 className="text-base font-bold text-ink">Details — xác nhận thông tin từng phòng</h2>
+              <p className="text-muted">
                 {cart.length} phòng · {fmtDate(checkIn)} → {fmtDate(checkOut)} · {nights} đêm · nguồn {getChannelName(source)}
               </p>
               {cart.map((item) => {
@@ -767,21 +748,21 @@ export default function NewReservationWizard({
                 const fit = fitFor(item);
                 const warns = warningsFor(item);
                 return (
-                  <div key={item.key} className="space-y-3 rounded-xl border border-[var(--cb-border)] p-4">
+                  <div key={item.key} className="space-y-3 rounded-xl border border-line p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <b className="text-[var(--cb-text)]">{t?.name ?? item.roomTypeId}</b>
-                      <b className="text-[var(--cb-text)]">{bd ? money(bd.roomTotal + bd.feesTotal) : "—"}</b>
+                      <b className="text-ink">{t?.name ?? item.roomTypeId}</b>
+                      <b className="text-ink">{bd ? money(bd.roomTotal + bd.feesTotal) : "—"}</b>
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="text-[var(--cb-text)]">
+                      <label className="text-ink">
                         Người lớn
                         <input type="number" min={1} value={item.adults} onChange={(e) => updateCartItem(item.key, { adults: Number(e.target.value) })} className={`${inputCls} mt-1 block w-full`} />
                       </label>
-                      <label className="text-[var(--cb-text)]">
+                      <label className="text-ink">
                         Trẻ em
                         <input type="number" min={0} value={item.children} onChange={(e) => updateCartItem(item.key, { children: Number(e.target.value) })} className={`${inputCls} mt-1 block w-full`} />
                       </label>
-                      <label className="text-[var(--cb-text)]">
+                      <label className="text-ink">
                         Gói giá (kênh {getChannelName(source)})
                         <select value={item.planId} onChange={(e) => updateCartItem(item.key, { planId: e.target.value })} className={`${inputCls} mt-1 block w-full`}>
                           {plansFor(source, item.roomTypeId).map((p) => (
@@ -792,7 +773,7 @@ export default function NewReservationWizard({
                           {plansFor(source, item.roomTypeId).length === 0 && <option value="">— chưa có gói giá —</option>}
                         </select>
                       </label>
-                      <label className="text-[var(--cb-text)]">
+                      <label className="text-ink">
                         Gán phòng ngay
                         <select value={item.roomNumber} onChange={(e) => updateCartItem(item.key, { roomNumber: e.target.value })} className={`${inputCls} mt-1 block w-full`}>
                           <option value="">Chưa gán — gán sau trên lịch</option>
@@ -806,28 +787,28 @@ export default function NewReservationWizard({
                       </label>
                     </div>
                     {fit.length === 0 && (
-                      <p className="rounded-lg bg-[#fff8ec] px-3 py-2 text-xs text-[#92600a]">
+                      <p className="rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning">
                         Không còn phòng trống phù hợp để gán ngay — cứ tạo đơn chưa gán, gán sau trên lịch khi có phòng.
                       </p>
                     )}
                     {warns.length > 0 && (
-                      <p className="rounded-lg bg-[#fff8ec] px-3 py-2 text-xs text-[#92600a]">{warns.join(" ")}</p>
+                      <p className="rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning">{warns.join(" ")}</p>
                     )}
                     <div>
-                      <span className="text-[var(--cb-text)]">Trạng thái đơn</span>
+                      <span className="text-ink">Trạng thái đơn</span>
                       <span className="mt-1 flex gap-4">
                         <label className="flex cursor-pointer items-center gap-2">
-                          <input type="radio" checked={item.status === "confirmed"} onChange={() => updateCartItem(item.key, { status: "confirmed" })} className="accent-[var(--cb-blue)]" />
+                          <input type="radio" checked={item.status === "confirmed"} onChange={() => updateCartItem(item.key, { status: "confirmed" })} className="accent-primary" />
                           Đã xác nhận
                         </label>
                         <label className="flex cursor-pointer items-center gap-2">
-                          <input type="radio" checked={item.status === "pending"} onChange={() => updateCartItem(item.key, { status: "pending" })} className="accent-[var(--cb-blue)]" />
+                          <input type="radio" checked={item.status === "pending"} onChange={() => updateCartItem(item.key, { status: "pending" })} className="accent-primary" />
                           Chờ xác nhận (duyệt sau)
                         </label>
                       </span>
                     </div>
                     {bd && (
-                      <div className="space-y-1 rounded-xl bg-[var(--cb-blue-soft)] px-4 py-3">
+                      <div className="space-y-1 rounded-xl bg-primary-soft px-4 py-3">
                         {bd.perNight.map((n) => (
                           <div key={n.date} className="flex justify-between">
                             <span>Tiền phòng — đêm {fmtDate(n.date)}</span>
@@ -837,19 +818,19 @@ export default function NewReservationWizard({
                         {bd.feesTotal > 0 && (
                           <div className="flex justify-between"><span>Phụ thu thêm khách × {nights} đêm</span><span className="font-medium">{money(bd.feesTotal)}</span></div>
                         )}
-                        <div className="flex justify-between border-t border-[var(--cb-border)] pt-2 font-bold">
+                        <div className="flex justify-between border-t border-line pt-2 font-bold">
                           <span>Tổng tiền phòng</span><span>{money(bd.roomTotal + bd.feesTotal)}</span>
                         </div>
                       </div>
                     )}
                     <div className="flex justify-end">
-                      <button onClick={() => removeFromCart(item.key)} className="text-sm text-[#e5484d] hover:underline">Xoá phòng này</button>
+                      <button onClick={() => removeFromCart(item.key)} className="text-sm text-danger hover:underline">Xoá phòng này</button>
                     </div>
                   </div>
                 );
               })}
               <div>
-                <label className="text-[var(--cb-text)]">
+                <label className="text-ink">
                   Ghi chú / yêu cầu đặc biệt (áp dụng cho tất cả đơn)
                   <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Tầng cao, phòng yên tĩnh..." className={`${inputCls} mt-1 block w-full`} />
                 </label>
@@ -863,22 +844,22 @@ export default function NewReservationWizard({
 
           {step === 3 && (
             <div className="cb-card space-y-4 p-5 text-sm">
-              <h2 className="text-base font-bold text-[var(--cb-text)]">Guests — thông tin khách</h2>
-              <p className="text-[var(--cb-muted)]">
+              <h2 className="text-base font-bold text-ink">Guests — thông tin khách</h2>
+              <p className="text-muted">
                 {cart.length} phòng · {fmtDate(checkIn)} → {fmtDate(checkOut)} · {nights} đêm · {cart.reduce((s, i) => s + i.adults + i.children, 0)} khách
                 {cart.some((i) => i.roomNumber) ? ` · phòng ${cart.filter((i) => i.roomNumber).map((i) => i.roomNumber).join(", ")}` : " · chưa gán phòng"}
               </p>
               <div className="grid gap-3 sm:grid-cols-2">
-                <label className="text-[var(--cb-text)]">
+                <label className="text-ink">
                   Họ tên *
                   <input value={guestName} onChange={(e) => setGuestName(e.target.value)} placeholder="VD: Nguyễn Văn A" className={`${inputCls} mt-1 block w-full`} />
                 </label>
-                <label className="text-[var(--cb-text)]">
+                <label className="text-ink">
                   Số điện thoại *
                   <input value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} placeholder="VD: 0901234567" className={`${inputCls} mt-1 block w-full`} />
                 </label>
               </div>
-              <p className="text-xs text-[var(--cb-muted)]">
+              <p className="text-xs text-muted">
                 Email khách chưa nhập ở đây — cần thêm 1 cột vào cơ sở dữ liệu, sẽ làm cùng bước Payment sau.
               </p>
               <div className="flex gap-2">
@@ -890,18 +871,18 @@ export default function NewReservationWizard({
 
           {step === 4 && (
             <div className="cb-card space-y-4 p-5 text-sm">
-              <h2 className="text-base font-bold text-[var(--cb-text)]">Add-ons — dịch vụ thêm</h2>
-              <p className="text-[var(--cb-muted)]">
-                Khách: <b className="text-[var(--cb-text)]">{guestName}</b> · {guestPhone} · {cart.length} phòng · {fmtDate(checkIn)} → {fmtDate(checkOut)}
+              <h2 className="text-base font-bold text-ink">Add-ons — dịch vụ thêm</h2>
+              <p className="text-muted">
+                Khách: <b className="text-ink">{guestName}</b> · {guestPhone} · {cart.length} phòng · {fmtDate(checkIn)} → {fmtDate(checkOut)}
               </p>
               {addOns.length === 0 && (
-                <p className="rounded-lg bg-[var(--cb-bg)] px-3 py-2 text-[var(--cb-muted)]">
+                <p className="rounded-lg bg-[var(--nui-bg)] px-3 py-2 text-muted">
                   Không bắt buộc — bấm “+ Thêm dịch vụ” nếu khách dùng thêm, không thì tạo đơn luôn.
                 </p>
               )}
               {addOns.map((a) => (
-                <div key={a.id} className="flex flex-wrap items-end gap-2 rounded-xl border border-[var(--cb-border)] p-3">
-                  <label className="text-[var(--cb-text)]">
+                <div key={a.id} className="flex flex-wrap items-end gap-2 rounded-xl border border-line p-3">
+                  <label className="text-ink">
                     Dịch vụ
                     <select
                       value={a.name}
@@ -913,7 +894,7 @@ export default function NewReservationWizard({
                       ))}
                     </select>
                   </label>
-                  <label className="text-[var(--cb-text)]">
+                  <label className="text-ink">
                     Tính theo
                     <select
                       value={a.basis}
@@ -924,7 +905,7 @@ export default function NewReservationWizard({
                       <option value="stay">Cả kỳ ở</option>
                     </select>
                   </label>
-                  <label className="text-[var(--cb-text)]">
+                  <label className="text-ink">
                     Số lượng
                     <input
                       type="number" min={1} value={a.qty}
@@ -932,7 +913,7 @@ export default function NewReservationWizard({
                       className={`${inputCls} mt-1 block w-20`}
                     />
                   </label>
-                  <label className="text-[var(--cb-text)]">
+                  <label className="text-ink">
                     Đơn giá
                     <input
                       type="number" min={0} value={a.unitPrice}
@@ -940,10 +921,10 @@ export default function NewReservationWizard({
                       className={`${inputCls} mt-1 block w-32`}
                     />
                   </label>
-                  <span className="pb-2 font-semibold text-[var(--cb-text)]">{money(addonAmount(a))}</span>
+                  <span className="pb-2 font-semibold text-ink">{money(addonAmount(a))}</span>
                   <button
                     onClick={() => setAddOns((prev) => prev.filter((x) => x.id !== a.id))}
-                    className="pb-2 text-[#e5484d]"
+                    className="pb-2 text-danger"
                     title="Xoá dịch vụ này"
                   >
                     ✕
@@ -951,11 +932,11 @@ export default function NewReservationWizard({
                 </div>
               ))}
               <button onClick={addAddOn} className="cb-btn-ghost px-4 py-2 text-sm">+ Thêm dịch vụ</button>
-              <div className="space-y-1 rounded-xl bg-[var(--cb-blue-soft)] px-4 py-3">
+              <div className="space-y-1 rounded-xl bg-primary-soft px-4 py-3">
                 <div className="flex justify-between"><span>Tiền phòng + phụ thu ({cart.length} phòng)</span><span className="font-medium">{money(cartRoomSum)}</span></div>
                 <div className="flex justify-between"><span>Dịch vụ thêm (áp dụng cho mỗi phòng)</span><span className="font-medium">{money(addOnsAll)}</span></div>
-                <div className="flex justify-between border-t border-[var(--cb-border)] pt-2 font-bold"><span>Tổng cộng</span><span>{money(grandTotal)}</span></div>
-                <div className="text-xs text-[var(--cb-muted)]">Chưa thu tiền — thu tại quầy hoặc ở bước Payment (sẽ chèn sau).</div>
+                <div className="flex justify-between border-t border-line pt-2 font-bold"><span>Tổng cộng</span><span>{money(grandTotal)}</span></div>
+                <div className="text-xs text-muted">Chưa thu tiền — thu tại quầy hoặc ở bước Payment (sẽ chèn sau).</div>
               </div>
               <div className="flex gap-2">
                 <button onClick={() => goTo(3)} className="cb-btn-ghost px-4 py-2.5 text-sm">← Quay lại</button>
@@ -968,13 +949,13 @@ export default function NewReservationWizard({
         </div>
       </div>
 
-      {error && <p className="mt-3 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">{error}</p>}
+      {error && <p className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">{error}</p>}
 
       {/* dai tong tien — kieu Cloudbeds, dinh duoi trang */}
-      <div className="sticky bottom-0 mt-4 flex flex-wrap items-center justify-end gap-6 rounded-xl border border-[var(--cb-border)] bg-white px-5 py-3 text-sm shadow-lg">
-        <span className="text-[var(--cb-muted)]">Subtotal <b className="ml-1 text-[var(--cb-text)]">{money(subtotal)}</b></span>
-        <span className="text-[var(--cb-muted)]">Grand Total <b className="ml-1 text-[var(--cb-text)]">{money(grandTotal)}</b></span>
-        <span className="rounded bg-[var(--cb-bg)] px-3 py-1.5 font-semibold text-[var(--cb-text)]">
+      <div className="sticky bottom-0 mt-4 flex flex-wrap items-center justify-end gap-6 rounded-xl border border-line bg-surface px-5 py-3 text-sm shadow-lg">
+        <span className="text-muted">Subtotal <b className="ml-1 text-ink">{money(subtotal)}</b></span>
+        <span className="text-muted">Grand Total <b className="ml-1 text-ink">{money(grandTotal)}</b></span>
+        <span className="rounded bg-[var(--nui-bg)] px-3 py-1.5 font-semibold text-ink">
           Balance Due {money(balanceDue)}
         </span>
         {step === 1 && (

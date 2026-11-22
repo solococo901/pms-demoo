@@ -93,6 +93,10 @@ export function queueChannexDates(dates: string[], hotelId: string = currentHote
       added = true;
     }
   }
+  // Bao chip dong bo ngay co thay doi moi (truoc ca 1,5 giay cho
+  // gom ngay): chip chuyen sang "dang cho gui" thay vi van hien
+  // "da dong bo" cua lan dong bo truoc.
+  if (added) window.dispatchEvent(new Event("channex-pending"));
   if (!added || flushTimer) return;
   flushTimer = setTimeout(() => {
     flushTimer = null;

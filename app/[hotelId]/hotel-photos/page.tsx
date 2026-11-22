@@ -1,15 +1,8 @@
 "use client";
 
-// ============================================================
-// FILE HOTELPHOTOS2 — app/[hotelId]/hotel-photos/page.tsx
-// Trang THU VIEN ANH rieng biet (buoc 2 trong luong thiet lap
-// khach san moi): truoc day chi la vo boc 8 dong mo component
-// HotelDetailPage (1.088 dong) dung muc con "Hinh anh".
-// Trang nay TU CHUA moi thu: nap anh tu profile.photos cua
-// khach san, them bang link, sua chu thich, dat anh bia, xoa,
-// luu that vao DB. Khong dung HotelDetailPage nua — sau khi
-// dan file nay, khong con cho nao import HotelDetailPage nua.
-// ============================================================
+// NATEUI15 — app/[hotelId]/hotel-photos/page.tsx (Thu vien anh)
+// Trang rieng: nap anh tu profile.photos, them bang link, sua chu thich, dat anh bia, xoa, luu that vao DB.
+// Doi sang token toi gian 2026-11-21.
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -19,9 +12,9 @@ import { currentHotelId } from "@/lib/current-hotel";
 import type { HotelPhoto } from "@/lib/mock-data";
 
 const inputCls =
-  "w-full rounded-lg border border-[#dde3ea] bg-white px-3 py-2 text-sm outline-none focus:border-[#2563eb]";
+  "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
 const rowInputCls =
-  "rounded-lg border border-[#dde3ea] bg-white px-3 py-2 text-sm outline-none focus:border-[#2563eb]";
+  "rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
 
 export default function HotelPhotosPage() {
   const params = useParams();
@@ -29,8 +22,7 @@ export default function HotelPhotosPage() {
 
   const [hotelName, setHotelName] = useState("Đang tải...");
   const [hotelCode, setHotelCode] = useState<string | undefined>(undefined);
-  // Giu nguyen toan bo profile goc — khi luu chi thay photos, cac
-  // phan khac (thong tin, tien ich, dia diem...) khong bi mat.
+  // Giu nguyen toan bo profile goc — khi luu chi thay photos, phan khac khong bi mat.
   const [profile, setProfile] = useState<Record<string, any> | null>(null);
   const [photos, setPhotos] = useState<HotelPhoto[]>([]);
   const [newPhotoUrl, setNewPhotoUrl] = useState("");
@@ -70,26 +62,26 @@ export default function HotelPhotosPage() {
 
   return (
     <div>
-      <Link href="/" className="text-sm font-medium text-[#2563eb] hover:underline">
+      <Link href="/" className="text-sm font-medium text-primary hover:underline">
         ← Tất cả khách sạn
       </Link>
       <div className="mt-2 flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-bold text-[#17293e]">{hotelName}</h1>
+        <h1 className="text-2xl font-bold text-ink">{hotelName}</h1>
         {hotelCode && (
-          <span className="rounded-md bg-[#f0f3f7] px-2 py-0.5 text-xs font-semibold text-[#68707a]">{hotelCode}</span>
+          <span className="rounded-md bg-primary-soft px-2 py-0.5 text-xs font-semibold text-muted">{hotelCode}</span>
         )}
       </div>
-      <p className="mt-1 text-sm text-[#68707a]">
+      <p className="mt-1 text-sm text-muted">
         Thư viện ảnh của khách sạn này — ảnh đầu tiên là ảnh bìa, hiện ở trang đặt phòng.
-        Đang có <b className="text-[#17293e]">{photos.length}</b> ảnh.
+        Đang có <b className="text-ink">{photos.length}</b> ảnh.
       </p>
-      {loading && <p className="mt-3 text-sm text-[#68707a]">Đang tải dữ liệu từ Supabase...</p>}
-      {dbError && <p className="mt-3 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">Lỗi cơ sở dữ liệu: {dbError}</p>}
+      {loading && <p className="mt-3 text-sm text-muted">Đang tải dữ liệu từ Supabase...</p>}
+      {dbError && <p className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">Lỗi cơ sở dữ liệu: {dbError}</p>}
 
       <div className="cb-card mt-5 p-5">
-        <div className="rounded-xl border border-[#dde3ea] bg-[#f7f9fb] px-4 py-4">
-          <div className="font-medium text-[#17293e]">Thêm ảnh bằng link</div>
-          <div className="mt-1 text-sm text-[#68707a]">
+        <div className="rounded-xl border border-line bg-primary-soft px-4 py-4">
+          <div className="font-medium text-ink">Thêm ảnh bằng link</div>
+          <div className="mt-1 text-sm text-muted">
             Dán link ảnh (https://...) — ảnh lưu vào hồ sơ khách sạn khi bấm Lưu bên dưới. Tải file ảnh trực tiếp từ máy lên sẽ có ở bước kho ảnh sau.
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -111,24 +103,24 @@ export default function HotelPhotosPage() {
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {photos.map((ph, i) => (
-            <div key={ph.id} className="group relative overflow-hidden rounded-xl border border-[#dde3ea]">
+            <div key={ph.id} className="group relative overflow-hidden rounded-xl border border-line">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={ph.url} alt={ph.caption} className="h-40 w-full object-cover" />
               {i === 0 && (
-                <span className="absolute left-2 top-2 rounded-full bg-[#2563eb] px-2.5 py-0.5 text-[11px] font-semibold text-white">
+                <span className="absolute left-2 top-2 rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-semibold text-white">
                   Ảnh bìa
                 </span>
               )}
               <button
                 onClick={() => setPhotos((p) => p.filter((x) => x.id !== ph.id))}
-                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-sm text-[#e5484d] opacity-0 shadow transition group-hover:opacity-100"
+                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-surface/90 text-sm text-danger opacity-0 shadow transition group-hover:opacity-100"
                 title="Xoá ảnh"
               >
                 ✕
               </button>
               <div className="px-3 py-2">
                 <input
-                  className="w-full rounded-md border border-transparent px-1 py-0.5 text-[13px] text-[#17293e] outline-none focus:border-[#2563eb]"
+                  className="w-full rounded-md border border-transparent px-1 py-0.5 text-[13px] text-ink outline-none focus:border-primary"
                   value={ph.caption}
                   placeholder="Chú thích ảnh"
                   onChange={(e) => setPhotos((p) => p.map((x) => (x.id === ph.id ? { ...x, caption: e.target.value } : x)))}
@@ -136,7 +128,7 @@ export default function HotelPhotosPage() {
                 {i > 0 && (
                   <button
                     onClick={() => setPhotos((p) => [ph, ...p.filter((x) => x.id !== ph.id)])}
-                    className="mt-0.5 text-xs font-medium text-[#2563eb] hover:underline"
+                    className="mt-0.5 text-xs font-medium text-primary hover:underline"
                   >
                     Đặt làm ảnh bìa
                   </button>
@@ -145,22 +137,22 @@ export default function HotelPhotosPage() {
             </div>
           ))}
           {photos.length === 0 && (
-            <div className="py-6 text-sm text-[#68707a] sm:col-span-2 lg:col-span-3">
+            <div className="py-6 text-sm text-muted sm:col-span-2 lg:col-span-3">
               Chưa có ảnh nào — thêm ảnh đầu tiên bằng link ở trên.
             </div>
           )}
         </div>
 
-        <div className="mt-4 text-[13px] text-[#68707a]">
-          Kênh bán áp dụng: <b className="text-[#17293e]">Website (Booking Engine)</b> — ảnh chỉ phục vụ
+        <div className="mt-4 text-[13px] text-muted">
+          Kênh bán áp dụng: <b className="text-ink">Website (Booking Engine)</b> — ảnh chỉ phục vụ
           trang đặt phòng của khách sạn, không đẩy lên các OTA.
         </div>
 
-        <div className="mt-5 flex items-center gap-3 border-t border-[#eef1f5] pt-4">
+        <div className="mt-5 flex items-center gap-3 border-t border-[var(--nui-bg)] pt-4">
           <button onClick={save} className="cb-btn-primary px-5 py-2 text-sm">
             Lưu
           </button>
-          {savedMsg && <span className="text-sm text-[#1db584]">{savedMsg}</span>}
+          {savedMsg && <span className="text-sm text-success">{savedMsg}</span>}
         </div>
       </div>
     </div>

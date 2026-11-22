@@ -1,11 +1,8 @@
 "use client";
 
-// ============================================================
-// CHANNEX SYNC — components/ChannexSync.tsx
-// The "Đồng bộ ARI" card (full sync thu cong): tinh gia tri
-// bang lib/channex-compute (dung chung voi hang doi tu dong)
-// cho cua so 30 ngay tu hom nay, gui qua /api/channex/sync.
-// ============================================================
+// NATEUI22 — components/ChannexSync.tsx (the "Dong bo ARI" — full sync thu cong)
+// Tinh gia tri bang lib/channex-compute (dung chung voi hang doi tu dong) cho cua so 30 ngay tu hom nay, gui qua /api/channex/sync.
+// Doi sang token toi gian 2026-11-21.
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -16,8 +13,7 @@ import { patchChannelSettings } from "@/lib/channex-outbox";
 
 
 export default function ChannexSync() {
-  // Khach san lay tu URL /h/[hotelId] khi co; neu khong (duong dan cu)
-  // thi dung khach san da luu theo tab.
+  // Khach san lay tu URL khi co, khong thi dung khach san da luu theo tab.
   const params = useParams();
   const HOTEL_ID = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
   const [propertyId, setPropertyId] = useState<string | null>(null);
@@ -78,17 +74,17 @@ export default function ChannexSync() {
 
   return (
     <div className="cb-card mt-5 p-5">
-      <h2 className="font-bold text-[#17293e]">Đồng bộ ARI lên Channex</h2>
-      <p className="mt-1 text-sm text-[#68707a]">
+      <h2 className="font-bold text-ink">Đồng bộ ARI lên Channex</h2>
+      <p className="mt-1 text-sm text-muted">
         Đẩy <b>tồn phòng</b> (theo loại phòng) và <b>giá + restrictions</b> (theo gói giá OTA) cho số ngày tới được chọn bên dưới.
         Hai loại dữ liệu đi bằng hai lệnh riêng đúng chuẩn Channex. Gói kế thừa chỉ gửi restrictions — giá của chúng
         do Channex tự suy từ gói gốc. Thay đổi lẻ trong PMS nay đã tự động gửi qua hàng đợi (chip Channex ở góc màn hình);
         nút này dùng khi cần đồng bộ lại toàn bộ.
       </p>
       {loading ? (
-        <p className="mt-3 text-sm text-[#68707a]">Đang tải...</p>
+        <p className="mt-3 text-sm text-muted">Đang tải...</p>
       ) : !propertyId ? (
-        <p className="mt-3 rounded-lg bg-[#fdf3e3] px-3 py-2 text-sm text-[#9a6a12]">
+        <p className="mt-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">
           Cần tạo cấu trúc trên Channex (thẻ phía trên) trước khi đồng bộ.
         </p>
       ) : (
@@ -96,7 +92,7 @@ export default function ChannexSync() {
           <select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
-            className="rounded-lg border border-[#dde3ea] bg-white px-2 py-2 text-sm text-[#17293e]"
+            className="rounded-lg border border-line bg-surface px-2 py-2 text-sm text-ink"
             title="Số ngày đồng bộ"
           >
             <option value={30}>30 ngày tới</option>
@@ -105,13 +101,13 @@ export default function ChannexSync() {
           <button onClick={runSync} disabled={busy} className="cb-btn-primary px-4 py-2 text-sm disabled:opacity-60">
             {busy ? "Đang đồng bộ..." : "Đồng bộ ngay"}
           </button>
-          <span className="text-xs text-[#68707a]">Đồng bộ toàn bộ (full sync) — an toàn khi bấm lại nhiều lần.</span>
+          <span className="text-xs text-muted">Đồng bộ toàn bộ (full sync) — an toàn khi bấm lại nhiều lần.</span>
         </div>
       )}
-      {msg && <p className="mt-3 rounded-lg bg-[#e6f7f1] px-3 py-2 text-sm text-[#0e7a56]">{msg}</p>}
-      {error && <p className="mt-3 rounded-lg bg-[#fdecec] px-3 py-2 text-sm text-[#e5484d]">{error}</p>}
+      {msg && <p className="mt-3 rounded-lg bg-success-soft px-3 py-2 text-sm text-success">{msg}</p>}
+      {error && <p className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">{error}</p>}
       {warnings.length > 0 && (
-        <div className="mt-3 rounded-lg bg-[#fdf3e3] px-3 py-2 text-sm text-[#9a6a12]">
+        <div className="mt-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">
           <p className="font-medium">Channex trả về cảnh báo cho một số giá trị:</p>
           {warnings.map((w, i) => <p key={i} className="mt-1 break-all text-xs">{w}</p>)}
         </div>

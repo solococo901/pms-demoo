@@ -6,13 +6,9 @@ import { currentHotelId } from "@/lib/current-hotel";
 import { useParams } from "next/navigation";
 import { queueChannexDates, stayDates } from "@/lib/channex-outbox";
 
-// ============================================================
-// NHAN DON TU CHANNEX (Buoc C4)
-// Luong: Keo "phien ban don" (revision) tu Channex -> doi chieu
-// mapping (loai phong / goi gia qua channex_id) -> ghi don vao
-// Supabase -> ghi nhat ky revision -> bao da nhan (ack).
-// Don moi -> confirmed; sua -> cap nhat don cu; huy -> cancelled.
-// ============================================================
+// NATEUI24 — components/ChannexBookings.tsx (nhan don tu Channex)
+// Keo revision tu Channex → doi chieu mapping → ghi don vao Supabase → ghi nhat ky revision → ack; don moi = confirmed, sua = cap nhat, huy = cancelled.
+// Doi sang token toi gian 2026-11-21.
 
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -74,8 +70,7 @@ function addDaysStr(base: Date, days: number): string {
 
 type TestVariant = "offline" | "bookingcom" | "expedia" | "airbnb" | "agoda";
 
-// Them ngay 2026-10-23: 3 nut test cho tung OTA rieng (Expedia / Airbnb /
-// Agoda), giong het nut Booking.com — kenh thu ho (payment_collect = "ota"),
+// 3 nut test cho tung OTA rieng (Expedia / Airbnb / Agoda), giong het nut Booking.com — kenh thu ho (payment_collect = "ota"),
 // chi khac ten OTA de PMS gan dung kenh khi keo ve.
 const TEST_VARIANTS: Record<TestVariant, { ota: string; label: string; btn: string }> = {
   offline: { ota: "Offline", label: "đơn trực tiếp", btn: "Tạo đơn test trên Channex" },
@@ -87,8 +82,7 @@ const TEST_VARIANTS: Record<TestVariant, { ota: string; label: string; btn: stri
 const OTA_VARIANTS: TestVariant[] = ["bookingcom", "expedia", "airbnb", "agoda"];
 
 export default function ChannexBookings() {
-  // Khach san lay tu URL /h/[hotelId] khi co; neu khong (duong dan cu)
-  // thi dung khach san da luu theo tab.
+  // Khach san lay tu URL khi co, khong thi dung khach san da luu theo tab.
   const params = useParams();
   const HOTEL_ID = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
   const [propertyId, setPropertyId] = useState<string | null>(null);
@@ -258,8 +252,7 @@ export default function ChannexBookings() {
           money(a.amount) ||
           rooms.reduce((s, r) => s + money(r.amount), 0);
         const collector = a.payment_collect === "ota" ? "channel_collect" : "hotel_collect";
-        // Don Offline (CRS): nguon con nam o meta.source (website /
-        // walk-in / telephone / email), ota_name chi ghi "Offline".
+        // Don Offline (CRS): nguon nam o meta.source (website / walk-in / telephone / email), ota_name chi ghi "Offline".
         const sourceName =
           a.ota_name && a.ota_name.toLowerCase() !== "offline"
             ? a.ota_name
@@ -374,12 +367,12 @@ export default function ChannexBookings() {
   return (
     <div className="cb-card" style={{ padding: 16 }}>
       <div style={{ fontWeight: 700, fontSize: 15 }}>Nhận đơn từ Channex</div>
-      <p style={{ color: "#68707a", fontSize: 13, margin: "6px 0 12px" }}>
+      <p style={{ color: "var(--nui-text-muted)", fontSize: 13, margin: "6px 0 12px" }}>
         Đơn đặt trên các kênh bán (qua Channex) sẽ được kéo về PMS tại đây. Đơn đã lưu thành công
         mới được báo đã nhận cho Channex, kéo lại không bị trùng.
       </p>
       {!propertyId ? (
-        <div style={{ color: "#b45309", fontSize: 13 }}>
+        <div style={{ color: "var(--nui-warning)", fontSize: 13 }}>
           Chưa kết nối Channex — hãy chạy Bước 1 ở thẻ phía trên trước.
         </div>
       ) : (
@@ -417,8 +410,8 @@ export default function ChannexBookings() {
         <div
           style={{
             marginTop: 12,
-            background: "#e8f7f1",
-            color: "#0d7a55",
+            background: "var(--nui-success-soft)",
+            color: "var(--nui-success)",
             borderRadius: 8,
             padding: "8px 10px",
             fontSize: 13,
@@ -428,7 +421,7 @@ export default function ChannexBookings() {
         </div>
       )}
       {lines.length > 0 && (
-        <div style={{ marginTop: 8, fontSize: 13, color: "#17293e", lineHeight: 1.7 }}>
+        <div style={{ marginTop: 8, fontSize: 13, color: "var(--nui-text)", lineHeight: 1.7 }}>
           {lines.map((l, i) => (
             <div key={i}>{l}</div>
           ))}
@@ -438,8 +431,8 @@ export default function ChannexBookings() {
         <div
           style={{
             marginTop: 12,
-            background: "#fdecec",
-            color: "#b42318",
+            background: "var(--nui-danger-soft)",
+            color: "var(--nui-danger)",
             borderRadius: 8,
             padding: "8px 10px",
             fontSize: 13,

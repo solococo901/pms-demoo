@@ -1,20 +1,6 @@
 "use client";
-// ============================================================
-// FILE 8a — app/reservations/page.tsx (Cloudbeds style)
-// The reservations LIST page, following the Cloudbeds layout
-// (screenshot from Vos, 2026-10-21):
-//   header + export/print -> search -> count + bulk action +
-//   filter chips -> table -> pagination
-//
-// Same data as the Calendar page, different view:
-// calendar = "by day, to arrange rooms", list = "to search,
-// filter and process many bookings at once".
-// Logic unchanged from the first version — colors only.
-// RESLAYOUT1 (2026-11-17): restyle giong Cloudbeds that — tieu de lon,
-// nut icon vuong, card vien xanh tren, search co kinh lup + nut loc,
-// chip loc xam, thead trang, highlight ma don trung tim kiem.
-// Chi doi giao dien, khong doi logic (loc, sap xep, bulk, drawer).
-// ============================================================
+// CLOUDBED3 — app/[hotelId]/reservations/page.tsx (Dat phong, vien trang thai du muc kieu Cloudbeds)
+// Vien trang thai bam ra du 5 muc con lai (tru trang thai hien tai), gom ca Da huy — doi khong hop le van bi changeStatus chan.
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -33,6 +19,8 @@ import {
 import { supabase } from "@/lib/supabase";
 import { queueChannexDates, stayDates } from "@/lib/channex-outbox";
 import { currentHotelId } from "@/lib/current-hotel";
+import { markRoomsDirtyAfterCheckout } from "@/lib/checkout-housekeeping";
+import { writeAuditLog } from "@/lib/audit-log";
 import { useParams } from "next/navigation";
 
 // Round B: this page reads/writes the REAL database. Until the
@@ -64,6 +52,21 @@ const nightsOf = (r: Reservation) =>
   Math.round((new Date(r.checkOut + "T00:00:00Z").getTime() - new Date(r.checkIn + "T00:00:00Z").getTime()) / DAY_MS);
 const fmt = (n: number) => n.toLocaleString("vi-VN");
 const fmtDate = (d: string) => d.split("-").reverse().join("/");
+// Chu cai dau ten khach cho avatar tron (vd "le hong an" -> "LA").
+const guestInitials = (name: string) => {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? "";
+  const last = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "";
+  return (first + last).toUpperCase() || "?";
+};
+// Tat ca trang thai kieu Cloudbeds (tru trang thai hien tai) — vien trang thai bam ra doi duoc bat ky muc nao.
+// Cac chuyen doi khong hop le van bi chan boi changeStatus (vd huy don da tra, nhan phong chua gan phong).
+const ALL_STATUSES: ReservationStatus[] = ["pending", "confirmed", "in_house", "checked_out", "no_show", "cancelled"];
+const statusOptions = (s: ReservationStatus): ReservationStatus[] => ALL_STATUSES.filter((x) => x !== s);
+// Buoc hien tai cua timeline: 0 = moi dat, 1 = da nhan phong, 2 = da tra phong.
+const timelineStage = (s: ReservationStatus) => (s === "in_house" ? 1 : s === "checked_out" ? 2 : 0);
+const HK_LABEL: Record<string, string> = { clean: "Sạch", dirty: "Chưa dọn", in_progress: "Đang dọn", out_of_order: "Ngừng bán" };
+const HK_CHIP: Record<string, string> = { clean: "bg-success-soft text-success", dirty: "bg-danger-soft text-danger", in_progress: "bg-warning-soft text-warning", out_of_order: "bg-muted text-white" };
 const localToday = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -71,6 +74,13 @@ const localToday = () => {
 
 type SortKey = "guestName" | "checkIn" | "totalAmount" | "createdAt";
 type Note = { id: string; author: string; body: string; createdAt: string };
+type AuditLog = { id: string; actorName: string; action: string; summary: string; createdAt: string };
+// dd/MM/yyyy HH:mm (gio dia phuong cua trinh duyet).
+const fmtDateTime = (iso: string) => {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 
 export default function ReservationsPage() {
   // Khach san lay tu URL /h/[hotelId] khi co; neu khong (duong dan cu)
@@ -95,8 +105,10 @@ export default function ReservationsPage() {
 
   // ---------- reservation detail + folio ----------
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [detailTab, setDetailTab] = useState<"stay" | "folio" | "notes">("stay");
+  const [detailTab, setDetailTab] = useState<"stay" | "folio" | "notes" | "activity">("stay");
   const [detailNotes, setDetailNotes] = useState<Note[]>([]);
+  const [detailActivity, setDetailActivity] = useState<AuditLog[]>([]);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
   const [folioItems, setFolioItems] = useState<FolioItem[]>([]);
   const [extraLabel, setExtraLabel] = useState("");
@@ -135,6 +147,7 @@ export default function ReservationsPage() {
   const roomTypeName = (id: string) => catalog.roomTypes.find((t) => t.id === id)?.name ?? id;
 
   const detail = reservations.find((r) => r.id === detailId) ?? null;
+  const detailRoom = detail && detail.roomNumbers.length > 0 ? catalog.rooms.find((x) => x.number === detail.roomNumbers[0]) : undefined;
   const detailNights = detail ? nightsOf(detail) : 0;
   const detailExtras = detail ? folioItems.filter((f) => f.reservationId === detail.id) : [];
   const extrasTotal = detailExtras.reduce((a, f) => a + f.amount, 0);
@@ -147,16 +160,30 @@ export default function ReservationsPage() {
 
   // Mo panel chi tiet kieu Cloudbeds: ten khach -> tab Cho o,
   // icon Ghi chu / Folio o bang -> mo thang tab do.
-  function openDetail(id: string, tab: "stay" | "folio" | "notes") {
+  function openDetail(id: string, tab: "stay" | "folio" | "notes" | "activity") {
     setDetailId(id);
     setDetailTab(tab);
     setEditing(false);
     setExtending(false);
   }
 
-  // Ghi chu cua don dang mo trong panel — nap khi doi don.
+  // Nap lai nhat ky hoat dong cua don dang mo trong panel (goi sau khi doi trang thai).
+  async function loadDetailActivity(resId: string) {
+    const { data: logs } = await supabase
+      .from("audit_logs")
+      .select("id, actor_name, action, summary, created_at")
+      .eq("hotel_id", HOTEL_ID)
+      .eq("entity_type", "reservation")
+      .eq("entity_id", resId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    setDetailActivity((logs ?? []).map((l) => ({ id: l.id, actorName: l.actor_name ?? "—", action: l.action, summary: l.summary, createdAt: l.created_at })));
+  }
+
+  // Ghi chu + nhat ky hoat dong cua don dang mo trong panel — nap khi doi don.
   useEffect(() => {
-    if (!detailId) { setDetailNotes([]); return; }
+    setStatusMenuOpen(false);
+    if (!detailId) { setDetailNotes([]); setDetailActivity([]); return; }
     (async () => {
       const { data } = await supabase
         .from("reservation_notes")
@@ -164,6 +191,7 @@ export default function ReservationsPage() {
         .eq("reservation_id", detailId)
         .order("created_at", { ascending: true });
       setDetailNotes((data ?? []).map((n) => ({ id: n.id, author: n.author, body: n.body, createdAt: n.created_at })));
+      await loadDetailActivity(detailId);
     })();
   }, [detailId]);
 
@@ -432,7 +460,25 @@ export default function ReservationsPage() {
       if (r.status !== "confirmed") return alert("Chỉ đánh dấu không đến cho đơn đã xác nhận.");
       if (!window.confirm(`Đánh dấu khách không đến cho đơn ${r.id} của ${r.guestName}?`)) return;
     }
-    await patchReservation(id, { status });
+    const ok = await patchReservation(id, { status });
+    if (ok) {
+      // Ghi log doi trang thai don (AUDIT) roi nap lai tab Hoat dong cua panel (cho ghi xong moi nap de thay dong moi ngay).
+      const logAction = status === "cancelled" ? "booking_cancelled" : status === "in_house" ? "booking_checked_in" : status === "checked_out" ? "booking_checked_out" : "booking_updated";
+      const logLabel = status === "cancelled" ? "Huỷ đơn" : status === "in_house" ? "Nhận phòng" : status === "checked_out" ? "Trả phòng" : status === "no_show" ? "Đánh dấu không đến" : "Đổi trạng thái";
+      const dShort = (d: string) => d.split("-").reverse().join("/");
+      await writeAuditLog({
+        hotelId: HOTEL_ID,
+        accountId: ACCOUNT_ID,
+        action: logAction,
+        entityType: "reservation",
+        entityId: id,
+        summary: `${logLabel} ${r.guestName} · ${dShort(r.checkIn)} → ${dShort(r.checkOut)}${r.roomNumbers.length > 0 ? ` · phòng ${r.roomNumbers.join(", ")}` : ""}`,
+        details: { reservationId: id, guestName: r.guestName, checkIn: r.checkIn, checkOut: r.checkOut, roomNumbers: r.roomNumbers, oldStatus: r.status, newStatus: status, totalAmount: r.totalAmount },
+      });
+      if (detailId === id) await loadDetailActivity(id);
+    }
+    // Tra phong xong: phong dang Sach tu chuyen Chua don (helper khong bao gio lam hong viec tra phong).
+    if (ok && status === "checked_out") void markRoomsDirtyAfterCheckout(HOTEL_ID, r.roomNumbers);
   }
 
   async function saveEdit() {
@@ -593,14 +639,26 @@ export default function ReservationsPage() {
       setReservations((prev) =>
         prev.map((r) => (okRows.some((x) => x.id === r.id) ? { ...r, status: "cancelled" as ReservationStatus } : r))
       );
+      // Ghi log cho tung don vua huy (AUDIT) roi nap lai tab Hoat dong cua panel.
+      const dShort = (d: string) => d.split("-").reverse().join("/");
+      await Promise.all(okRows.map((r) => writeAuditLog({
+        hotelId: HOTEL_ID,
+        accountId: ACCOUNT_ID,
+        action: "booking_cancelled",
+        entityType: "reservation",
+        entityId: r.id,
+        summary: `Huỷ đơn ${r.guestName} · ${dShort(r.checkIn)} → ${dShort(r.checkOut)}${r.roomNumbers.length > 0 ? ` · phòng ${r.roomNumbers.join(", ")}` : ""}`,
+        details: { reservationId: r.id, guestName: r.guestName, checkIn: r.checkIn, checkOut: r.checkOut, roomNumbers: r.roomNumbers, oldStatus: r.status, newStatus: "cancelled", totalAmount: r.totalAmount },
+      })));
+      if (detailId && okRows.some((r) => r.id === detailId)) await loadDetailActivity(detailId);
       queueChannexDates(okRows.flatMap((r) => stayDates(r.checkIn, r.checkOut)));
       setSelected(new Set());
     }
   }
 
   const filtersActive = statusFilter !== "all" || channelFilter !== "all" || roomTypeFilter !== "all" || checkInFilter !== "";
-  const chipCls = "rounded-full border border-[var(--cb-border)] bg-[#f1f5f9] px-3 py-1.5 text-xs font-medium text-[var(--cb-text)]";
-  const thCls = "whitespace-nowrap px-3 py-3 text-left text-xs font-semibold text-[var(--cb-muted)] cursor-pointer select-none";
+  const chipCls = "rounded-full border border-line bg-surface-muted px-3 py-1.5 text-xs font-medium text-ink";
+  const thCls = "whitespace-nowrap px-3 py-3 text-left text-xs font-semibold text-muted cursor-pointer select-none";
 
   return (
     <div>
@@ -608,46 +666,45 @@ export default function ReservationsPage() {
           Khong co nut Tao dat phong o day — tao don chi bang dau + tren thanh tren
           (giong Cloudbeds), mo trang tao don 5 buoc. */}
       <div className="flex items-center justify-between">
-        <h1 className="text-[28px] font-extrabold tracking-tight text-[var(--cb-text)]">Đặt phòng</h1>
+        <h1 className="text-[28px] font-extrabold tracking-tight text-ink">Đặt phòng</h1>
         <div className="flex items-center gap-2">
-          <button onClick={() => exportCsv(filtered)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--cb-border)] bg-white text-base text-[var(--cb-text)] shadow-sm hover:bg-[var(--cb-bg)]" title="Xuất toàn bộ danh sách đang lọc ra file CSV"><IconDownload className="h-4 w-4" /></button>
-          <button onClick={() => window.print()} className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--cb-border)] bg-white text-base text-[var(--cb-text)] shadow-sm hover:bg-[var(--cb-bg)]" title="In danh sách"><IconPrinter className="h-4 w-4" /></button>
+          <button onClick={() => exportCsv(filtered)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-base text-ink shadow-sm hover:bg-[var(--nui-bg)]" title="Xuất toàn bộ danh sách đang lọc ra file CSV"><IconDownload className="h-4 w-4" /></button>
+          <button onClick={() => window.print()} className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-base text-ink shadow-sm hover:bg-[var(--nui-bg)]" title="In danh sách"><IconPrinter className="h-4 w-4" /></button>
         </div>
       </div>
 
-      {loading && <p className="mt-4 text-sm text-[var(--cb-muted)]">Đang tải dữ liệu từ Supabase...</p>}
-      {loadError && <p className="mt-4 text-sm text-[#e5484d]">Không đọc được dữ liệu từ Supabase: {loadError}</p>}
+      {loading && <p className="mt-4 text-sm text-muted">Đang tải dữ liệu từ Supabase...</p>}
+      {loadError && <p className="mt-4 text-sm text-danger">Không đọc được dữ liệu từ Supabase: {loadError}</p>}
 
-      <div className="cb-card mt-5 overflow-hidden border-t-4 border-t-[var(--cb-blue)] p-5">
+      <div className="cb-card mt-5 overflow-hidden border-t-4 border-t-primary p-5">
         {/* search — Cloudbeds: magnifier inside, clear button, filter toggle */}
         <div className="flex items-center gap-2">
           <div className="relative w-full max-w-md">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--cb-muted)]"><IconSearch className="h-4 w-4" /></span>
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"><IconSearch className="h-4 w-4" /></span>
             <input
               value={query}
               onChange={(e) => { setQuery(e.target.value); setPage(1); }}
               placeholder="Tìm theo tên khách, email, số điện thoại, mã đơn..."
-              className="w-full rounded-lg border border-[var(--cb-border)] py-2 pl-9 pr-8 text-sm text-[var(--cb-text)] outline-none focus:border-[var(--cb-blue)]"
+              className="w-full rounded-lg border border-line py-2 pl-9 pr-8 text-sm text-ink outline-none focus:border-primary"
             />
             {query && (
-              <button onClick={() => { setQuery(""); setPage(1); }} className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-xs text-[var(--cb-muted)] hover:bg-[var(--cb-bg)]" title="Xoá tìm kiếm">✕</button>
+              <button onClick={() => { setQuery(""); setPage(1); }} className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-xs text-muted hover:bg-[var(--nui-bg)]" title="Xoá tìm kiếm">✕</button>
             )}
           </div>
-          <button onClick={() => setShowFilters((v) => !v)} className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--cb-border)] bg-white text-base text-[var(--cb-text)] shadow-sm hover:bg-[var(--cb-bg)]" title="Hiện / ẩn bộ lọc">
+          <button onClick={() => setShowFilters((v) => !v)} className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-base text-ink shadow-sm hover:bg-[var(--nui-bg)]" title="Hiện / ẩn bộ lọc">
             <IconSliders className="h-4 w-4" />
-            {filtersActive && <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[var(--cb-blue)]" />}
+            {filtersActive && <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary" />}
           </button>
         </div>
 
         {/* count + bulk action — Cloudbeds: bold count, blue Bulk Action pill */}
         <div className="mt-5 flex flex-wrap items-center gap-3">
-          <span className="text-base font-bold text-[var(--cb-text)]">{filtered.length} đặt phòng</span>
-          <span className="mx-1 hidden h-5 w-px bg-[var(--cb-border)] sm:block" />
-          <select value={bulkAction} onChange={(e) => setBulkAction(e.target.value as typeof bulkAction)} className="rounded-full bg-[var(--cb-blue)] px-4 py-2 text-xs font-semibold text-white outline-none">
+          <span className="text-base font-bold text-ink">{filtered.length} đặt phòng</span>
+          <span className="mx-1 hidden h-5 w-px bg-line sm:block" />
+          <select value={bulkAction} onChange={(e) => setBulkAction(e.target.value as typeof bulkAction)} className="rounded-full bg-primary px-4 py-2 text-xs font-semibold text-white outline-none">
             <option value="export">Bulk Action: Xuất file các đơn đã chọn</option>
-            <option value="cancel">Bulk Action: Huỷ các đơn đã chọn</option>
           </select>
-          <button onClick={applyBulk} className="rounded-full bg-[var(--cb-blue)] px-4 py-2 text-xs font-semibold text-white hover:bg-[#1e4fd8]">Thực hiện ({selected.size})</button>
+          <button onClick={applyBulk} className="rounded-full bg-primary px-4 py-2 text-xs font-semibold text-white hover:bg-primary-hover">Thực hiện ({selected.size})</button>
         </div>
 
         {/* filter chips — Cloudbeds: one row of grey pills */}
@@ -668,16 +725,16 @@ export default function ReservationsPage() {
               {catalog.roomTypes.map((t) => (<option key={t.id} value={t.id}>{t.name}</option>))}
             </select>
             <DatePicker value={checkInFilter} onChange={(v) => { setCheckInFilter(v); setPage(1); }} placeholder="Ngày đến" clearable variant="chip" />
-            <button onClick={resetFilters} className="rounded-full bg-[var(--cb-bg)] px-3 py-1.5 text-xs font-medium text-[var(--cb-text)] hover:bg-[#e8edf3]">Reset Filters</button>
+            <button onClick={resetFilters} className="rounded-full bg-[var(--nui-bg)] px-3 py-1.5 text-xs font-medium text-ink hover:bg-surface-muted">Reset Filters</button>
           </div>
         )}
 
         {/* table — Cloudbeds: clean white header, grey semibold labels */}
         <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[1050px] text-sm text-[var(--cb-text)]">
-            <thead className="border-b-2 border-[var(--cb-border)] bg-white">
+          <table className="w-full min-w-[1050px] text-sm text-ink">
+            <thead className="border-b-2 border-line bg-surface">
               <tr>
-                <th className="px-3 py-3"><input type="checkbox" className="accent-[var(--cb-blue)]" checked={pageRows.length > 0 && pageRows.every((r) => selected.has(r.id))} onChange={(e) => {
+                <th className="px-3 py-3"><input type="checkbox" className="accent-primary" checked={pageRows.length > 0 && pageRows.every((r) => selected.has(r.id))} onChange={(e) => {
                   setSelected((prev) => {
                     const next = new Set(prev);
                     pageRows.forEach((r) => (e.target.checked ? next.add(r.id) : next.delete(r.id)));
@@ -700,12 +757,12 @@ export default function ReservationsPage() {
             </thead>
             <tbody>
               {pageRows.map((r) => (
-                <tr key={r.id} className="border-t border-[var(--cb-bg)] hover:bg-[var(--cb-blue-soft)]">
-                  <td className="px-3 py-3"><input type="checkbox" className="accent-[var(--cb-blue)]" checked={selected.has(r.id)} onChange={() => toggleSelect(r.id)} /></td>
+                <tr key={r.id} className="border-t border-[var(--nui-bg)] hover:bg-primary-soft">
+                  <td className="px-3 py-3"><input type="checkbox" className="accent-primary" checked={selected.has(r.id)} onChange={() => toggleSelect(r.id)} /></td>
                   <td className="px-3 py-3 font-medium">
-                    <span className={query.trim() && r.id.toLowerCase().includes(query.trim().toLowerCase()) ? "rounded bg-[#fef3c7] px-1 py-0.5" : ""}>{r.id}</span>
+                    <span className={query.trim() && r.id.toLowerCase().includes(query.trim().toLowerCase()) ? "rounded bg-warning-soft px-1 py-0.5" : ""}>{r.id}</span>
                   </td>
-                  <td className="px-3 py-3 font-medium text-[var(--cb-blue)] cursor-pointer hover:underline" title="Bấm để mở bảng chi tiết" onClick={() => openDetail(r.id, "stay")}>{r.guestName}</td>
+                  <td className="px-3 py-3 font-medium text-primary cursor-pointer hover:underline" title="Bấm để mở bảng chi tiết" onClick={() => openDetail(r.id, "stay")}>{r.guestName}</td>
                   <td className="px-3 py-3">{fmtDate(r.createdAt)}</td>
                   <td className="px-3 py-3">{r.roomNumbers.join(", ") || "—"}</td>
                   <td className="px-3 py-3">{roomTypeName(r.roomTypeId)}</td>
@@ -715,87 +772,111 @@ export default function ReservationsPage() {
                   <td className="px-3 py-3">
                     ₫{fmt(r.totalAmount)}
                     {r.totalAmount === 0 && nightsOf(r) > 0 && !["cancelled", "no_show"].includes(r.status) && (
-                      <span className="ml-1.5 whitespace-nowrap rounded-full bg-[#fdf3e3] px-2 py-0.5 text-xs font-semibold text-[#9a6a12]" title="Tổng 0₫ — có thể do chưa nhập giá cho các đêm này ở Lịch giá. Kiểm tra giá theo kênh rồi sửa đơn.">⚠ chưa có giá</span>
+                      <span className="ml-1.5 whitespace-nowrap rounded-full bg-warning-soft px-2 py-0.5 text-xs font-semibold text-warning" title="Tổng 0₫ — có thể do chưa nhập giá cho các đêm này ở Lịch giá. Kiểm tra giá theo kênh rồi sửa đơn.">⚠ chưa có giá</span>
                     )}
                   </td>
                   <td className="px-3 py-3">
                     <span className={`mr-1.5 inline-block h-2.5 w-2.5 rounded-full ${STATUS_STYLES[r.status].split(" ")[0]}`} />
                     {STATUS_LABELS[r.status]}
                   </td>
-                  <td className="px-3 py-3 text-[var(--cb-muted)]">
+                  <td className="px-3 py-3 text-muted">
                     {getChannelName(r.channelCode)}
                     {["booking_com", "agoda", "expedia", "airbnb"].includes(r.channelCode) && (
-                      <span className="text-[var(--cb-muted)]"> ({r.paymentCollector === "channel_collect" ? "Channel Collect" : "Hotel Collect"})</span>
+                      <span className="text-muted"> ({r.paymentCollector === "channel_collect" ? "Channel Collect" : "Hotel Collect"})</span>
                     )}
-                    {r.channelCode === "frontdesk" && <span className="text-[var(--cb-muted)]"> (Walk-In)</span>}
-                    {r.channelCode === "website" && <span className="text-[var(--cb-muted)]"> (Booking Engine)</span>}
+                    {r.channelCode === "frontdesk" && <span className="text-muted"> (Walk-In)</span>}
+                    {r.channelCode === "website" && <span className="text-muted"> (Booking Engine)</span>}
                   </td>
                   <td className="px-3 py-3">
                     <span className="flex gap-1">
-                      <button onClick={() => openDetail(r.id, "notes")} className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--cb-border)] bg-white text-sm hover:bg-[var(--cb-bg)]" title="Ghi chú — mở bảng chi tiết ở tab Ghi chú"><IconFileText className="h-4 w-4" /></button>
-                      <button onClick={() => openDetail(r.id, "folio")} className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--cb-border)] bg-white text-sm hover:bg-[var(--cb-bg)]" title="Folio — mở bảng chi tiết ở tab Folio"><IconReceipt className="h-4 w-4" /></button>
+                      <button onClick={() => openDetail(r.id, "notes")} className="flex h-7 w-7 items-center justify-center rounded-md border border-line bg-surface text-sm hover:bg-[var(--nui-bg)]" title="Ghi chú — mở bảng chi tiết ở tab Ghi chú"><IconFileText className="h-4 w-4" /></button>
+                      <button onClick={() => openDetail(r.id, "folio")} className="flex h-7 w-7 items-center justify-center rounded-md border border-line bg-surface text-sm hover:bg-[var(--nui-bg)]" title="Folio — mở bảng chi tiết ở tab Folio"><IconReceipt className="h-4 w-4" /></button>
                     </span>
                   </td>
                 </tr>
               ))}
               {pageRows.length === 0 && (
-                <tr><td colSpan={13} className="px-3 py-10 text-center text-[var(--cb-muted)]">Không có đơn nào khớp bộ lọc.</td></tr>
+                <tr><td colSpan={13} className="px-3 py-10 text-center text-muted">Không có đơn nào khớp bộ lọc.</td></tr>
               )}
             </tbody>
           </table>
         </div>
 
         {/* pagination — Cloudbeds: "Showing X to Y of Z entries • View up to N" */}
-        <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--cb-bg)] pt-3 text-xs text-[var(--cb-muted)]">
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--nui-bg)] pt-3 text-xs text-muted">
           <span>
             Hiển thị {filtered.length === 0 ? 0 : (currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filtered.length)} trong {filtered.length} đơn • Mỗi trang
           </span>
-          <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} className="rounded-md border border-[var(--cb-border)] bg-white px-1.5 py-1 font-medium text-[var(--cb-text)]">
+          <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} className="rounded-md border border-line bg-surface px-1.5 py-1 font-medium text-ink">
             {[5, 10, 20].map((n) => (<option key={n} value={n}>{n}</option>))}
           </select>
-          <span className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--cb-border)] bg-white font-semibold text-[var(--cb-blue)]">{currentPage}</span>
-          <button disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--cb-border)] bg-white disabled:opacity-40">‹</button>
-          <button disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)} className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--cb-border)] bg-white disabled:opacity-40">›</button>
+          <span className="flex h-7 w-7 items-center justify-center rounded-md border border-line bg-surface font-semibold text-primary">{currentPage}</span>
+          <button disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} className="flex h-7 w-7 items-center justify-center rounded-md border border-line bg-surface disabled:opacity-40">‹</button>
+          <button disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)} className="flex h-7 w-7 items-center justify-center rounded-md border border-line bg-surface disabled:opacity-40">›</button>
         </div>
       </div>
 
       {/* ---------- reservation detail drawer + folio ---------- */}
       {detail && (
         <>
-          <div className="fixed inset-0 z-20 bg-[var(--cb-text)]/30" onClick={() => { setDetailId(null); setEditing(false); setExtending(false); }} />
-          <div className="fixed inset-y-0 right-0 z-30 flex w-[26rem] max-w-[92vw] flex-col bg-white shadow-2xl">
-            <div className="flex items-start justify-between border-b border-[var(--cb-bg)] p-5">
-              <div>
-                <div className="text-lg font-bold text-[var(--cb-text)]">{detail.guestName}</div>
-                <div className="text-sm text-[var(--cb-muted)]">
-                  Đơn {detail.id} · {getChannelName(detail.channelCode)} · {STATUS_LABELS[detail.status]}
+          <div className="fixed inset-0 z-20 bg-ink/30" onClick={() => { setDetailId(null); setEditing(false); setExtending(false); }} />
+          <div className="fixed inset-y-0 right-0 z-50 flex w-[26rem] max-w-[92vw] flex-col bg-surface shadow-2xl">
+            <div className="border-b border-[var(--nui-bg)] p-5">
+              <div className="flex items-start gap-3">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[var(--nui-bg)] text-base font-bold text-ink">{guestInitials(detail.guestName)}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xl font-bold text-ink">{detail.guestName}</div>
+                  <div className="truncate text-sm text-muted">{detail.id}</div>
                 </div>
-                <Link href={`/${HOTEL_ID}/reservations/${detail.id}`} className="mt-1 inline-block text-sm font-medium text-[var(--cb-blue)] hover:underline">Mở trang chi tiết ↗</Link>
+                <button onClick={() => { setDetailId(null); setEditing(false); setExtending(false); }} className="cb-btn-ghost flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm">✕</button>
               </div>
-              <button onClick={() => { setDetailId(null); setEditing(false); setExtending(false); }} className="cb-btn-ghost flex h-8 w-8 items-center justify-center rounded-full text-sm">✕</button>
+              <div className="relative mt-3">
+                <button onClick={() => setStatusMenuOpen((v) => !v)} className="flex w-full items-center justify-between rounded-full border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink">
+                  <span className="flex items-center gap-2">
+                    <span className={`inline-block h-2.5 w-2.5 rounded-full ${STATUS_STYLES[detail.status].split(" ")[0]}`} />
+                    {STATUS_LABELS[detail.status]}
+                  </span>
+                  <span className="text-muted">▾</span>
+                </button>
+                {statusMenuOpen && (
+                  <div className="absolute left-0 right-0 top-full z-40 mt-1 rounded-xl border border-line bg-surface py-1 shadow-lg">
+                    {statusOptions(detail.status).length === 0 ? (
+                      <div className="px-4 py-2 text-sm text-muted">Đơn này không còn đổi trạng thái được.</div>
+                    ) : (
+                      statusOptions(detail.status).map((s) => (
+                        <button key={s} onClick={() => { setStatusMenuOpen(false); changeStatus(detail.id, s); }} className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-ink hover:bg-[var(--nui-bg)]">
+                          <span className={`inline-block h-2.5 w-2.5 rounded-full ${STATUS_STYLES[s].split(" ")[0]}`} />
+                          {STATUS_LABELS[s]}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+              <Link href={`/${HOTEL_ID}/reservations/${detail.id}`} className="mt-2 inline-block text-sm font-medium text-primary hover:underline">Mở trang chi tiết ↗</Link>
             </div>
 
             {editing && (
-              <div className="absolute inset-0 z-10 overflow-y-auto bg-white p-5 text-sm">
+              <div className="absolute inset-0 z-10 overflow-y-auto bg-surface p-5 text-sm">
                 <div className="mb-4 flex items-start justify-between">
                   <div>
-                    <div className="text-lg font-bold text-[var(--cb-text)]">Sửa đơn {detail.id}</div>
-                    <div className="text-sm text-[var(--cb-muted)]">{detail.guestName} · {getChannelName(detail.channelCode)}</div>
+                    <div className="text-lg font-bold text-ink">Sửa đơn {detail.id}</div>
+                    <div className="text-sm text-muted">{detail.guestName} · {getChannelName(detail.channelCode)}</div>
                   </div>
                   <button onClick={() => setEditing(false)} className="cb-btn-ghost flex h-8 w-8 items-center justify-center rounded-full text-sm">✕</button>
                 </div>
                 <div className="space-y-3">
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Tên khách *</label>
-                    <input className="w-full rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" value={eName} onChange={(e) => setEName(e.target.value)} />
+                    <label className="mb-1 block text-xs font-medium text-muted">Tên khách *</label>
+                    <input className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-primary" value={eName} onChange={(e) => setEName(e.target.value)} />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Số điện thoại</label>
-                    <input className="w-full rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" value={ePhone} onChange={(e) => setEPhone(e.target.value)} />
+                    <label className="mb-1 block text-xs font-medium text-muted">Số điện thoại</label>
+                    <input className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-primary" value={ePhone} onChange={(e) => setEPhone(e.target.value)} />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Ngày đến</label>
+                      <label className="mb-1 block text-xs font-medium text-muted">Ngày đến</label>
                       <DatePicker
                         value={eCheckIn}
                         onChange={(v) => {
@@ -806,13 +887,13 @@ export default function ReservationsPage() {
                       />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Ngày đi</label>
+                      <label className="mb-1 block text-xs font-medium text-muted">Ngày đi</label>
                       <DatePicker value={eCheckOut} onChange={setECheckOut} min={eCheckIn ? addDays(eCheckIn, 1) : undefined} rangeStart={eCheckIn || undefined} fullWidth />
                     </div>
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Loại phòng</label>
-                    <select className="w-full rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" value={eType} onChange={(e) => {
+                    <label className="mb-1 block text-xs font-medium text-muted">Loại phòng</label>
+                    <select className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-primary" value={eType} onChange={(e) => {
                       const nt = e.target.value;
                       setEType(nt);
                       const first = catalog.ratePlans.find((p) => p.channelCode === detail.channelCode && p.roomTypeId === nt);
@@ -822,52 +903,52 @@ export default function ReservationsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Gói giá (của kênh {getChannelName(detail.channelCode)})</label>
-                    <select className="w-full rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" value={ePlan} onChange={(e) => setEPlan(e.target.value)}>
+                    <label className="mb-1 block text-xs font-medium text-muted">Gói giá (của kênh {getChannelName(detail.channelCode)})</label>
+                    <select className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-primary" value={ePlan} onChange={(e) => setEPlan(e.target.value)}>
                       {editPlans.map((p) => (<option key={p.id} value={p.id}>{p.name}{p.derivedFromId ? " (kế thừa)" : ""}</option>))}
                       {editPlans.length === 0 && <option value="">— chưa có gói giá —</option>}
                     </select>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Người lớn</label>
-                      <input type="number" min={1} className="w-full rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" value={eAdults} onChange={(e) => setEAdults(Number(e.target.value))} />
+                      <label className="mb-1 block text-xs font-medium text-muted">Người lớn</label>
+                      <input type="number" min={1} className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-primary" value={eAdults} onChange={(e) => setEAdults(Number(e.target.value))} />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Trẻ em</label>
-                      <input type="number" min={0} className="w-full rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" value={eChildren} onChange={(e) => setEChildren(Number(e.target.value))} />
+                      <label className="mb-1 block text-xs font-medium text-muted">Trẻ em</label>
+                      <input type="number" min={0} className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-primary" value={eChildren} onChange={(e) => setEChildren(Number(e.target.value))} />
                     </div>
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-[var(--cb-muted)]">Ghi chú</label>
-                    <input className="w-full rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" value={eNote} onChange={(e) => setENote(e.target.value)} placeholder="Yêu cầu đặc biệt..." />
+                    <label className="mb-1 block text-xs font-medium text-muted">Ghi chú</label>
+                    <input className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-primary" value={eNote} onChange={(e) => setENote(e.target.value)} placeholder="Yêu cầu đặc biệt..." />
                   </div>
                   {eType !== detail.roomTypeId && detail.roomNumbers.length > 0 && (
-                    <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-[#e5484d]">Đổi loại phòng sẽ huỷ các phòng đã gán ({detail.roomNumbers.join(", ")}) — cần gán lại trên Lịch phòng.</p>
+                    <p className="rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">Đổi loại phòng sẽ huỷ các phòng đã gán ({detail.roomNumbers.join(", ")}) — cần gán lại trên Lịch phòng.</p>
                   )}
-                  <div className="space-y-1 rounded-xl bg-[var(--cb-blue-soft)] px-4 py-3">
+                  <div className="space-y-1 rounded-xl bg-primary-soft px-4 py-3">
                     <div className="flex justify-between"><span>Tiền phòng + phụ thu — {editNights} đêm</span><span className="font-semibold">{fmt(editTotal)}₫</span></div>
-                    <div className="flex justify-between text-[var(--cb-muted)]"><span>Tổng hiện tại</span><span>{fmt(detail.totalAmount)}₫</span></div>
+                    <div className="flex justify-between text-muted"><span>Tổng hiện tại</span><span>{fmt(detail.totalAmount)}₫</span></div>
                   </div>
-                  {editError && <p className="text-sm text-[#e5484d]">{editError}</p>}
+                  {editError && <p className="text-sm text-danger">{editError}</p>}
                   <div className="flex gap-2">
                     <button onClick={saveEdit} className="cb-btn-primary flex-1 py-2.5 text-sm">Lưu thay đổi</button>
                     <button onClick={() => setEditing(false)} className="cb-btn-ghost px-5 py-2.5 text-sm">Huỷ</button>
                   </div>
-                  <p className="text-xs text-[var(--cb-muted)]">Không sửa được ở đây: nguồn đơn, hình thức thu tiền, trạng thái (dùng nút Nhận/Trả/Huỷ bên ngoài) và tiền đã thu (sửa trong folio).</p>
+                  <p className="text-xs text-muted">Không sửa được ở đây: nguồn đơn, hình thức thu tiền, trạng thái (dùng nút Nhận/Trả/Huỷ bên ngoài) và tiền đã thu (sửa trong folio).</p>
                 </div>
               </div>
             )}
 
             {/* tab bar — Cloudbeds: panel chi tiet co tab, icon o bang mo thang tab */}
-            <div className="flex gap-4 border-b border-[var(--cb-bg)] px-5 pt-3 text-sm">
-              {(["stay", "folio", "notes"] as const).map((t) => (
+            <div className="flex gap-4 border-b border-[var(--nui-bg)] px-5 pt-3 text-sm">
+              {(["stay", "folio", "notes", "activity"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setDetailTab(t)}
-                  className={`pb-2 font-semibold ${detailTab === t ? "border-b-2 border-[var(--cb-blue)] text-[var(--cb-blue)]" : "text-[var(--cb-muted)]"}`}
+                  className={`pb-2 font-semibold ${detailTab === t ? "border-b-2 border-primary text-primary" : "text-muted"}`}
                 >
-                  {t === "stay" ? "Chỗ ở" : t === "folio" ? "Folio" : `Ghi chú (${detailAllNotes.length})`}
+                  {t === "stay" ? "Chỗ ở" : t === "folio" ? "Folio" : t === "notes" ? `Ghi chú (${detailAllNotes.length})` : "Hoạt động"}
                 </button>
               ))}
             </div>
@@ -875,56 +956,109 @@ export default function ReservationsPage() {
             <div className="flex-1 space-y-4 overflow-y-auto p-5 text-sm">
               {detailTab === "stay" && (
                 <>
-              <div className="space-y-2">
-                <DetailRow label="Số điện thoại" value={detail.guestPhone || "—"} />
-                <DetailRow label="Ngày đến → đi" value={`${fmtDate(detail.checkIn)} → ${fmtDate(detail.checkOut)} (${detailNights} đêm)`} />
-                <DetailRow label="Phòng" value={detail.roomNumbers.length ? detail.roomNumbers.join(", ") : "Chưa gán"} />
-                <DetailRow label="Loại phòng" value={roomTypeName(detail.roomTypeId)} />
-                <DetailRow label="Gói giá" value={catalog.ratePlans.find((p) => p.id === detail.ratePlanId)?.name ?? detail.ratePlanId} />
-                <DetailRow label="Số khách" value={`${detail.adults ?? detail.guests} người lớn${(detail.children ?? 0) > 0 ? `, ${detail.children} trẻ em` : ""}`} />
-                <DetailRow label="Thu tiền bởi" value={detail.paymentCollector === "channel_collect" ? "Kênh thu hộ" : "Khách sạn tự thu"} />
-                <DetailRow label="Ngày đặt" value={fmtDate(detail.createdAt)} />
-                {detail.note && <DetailRow label="Ghi chú" value={detail.note} />}
-              </div>
+                  {/* Timeline — Cloudbeds: Da dat -> Nhan phong -> Tra phong */}
+                  <div className="rounded-xl border border-line p-4">
+                    <div className="relative">
+                      <div className="absolute left-2 right-2 top-2 h-0.5 bg-line" />
+                      <div className="absolute left-2 top-2 h-0.5 bg-primary" style={{ width: `calc(${(timelineStage(detail.status) / 2) * 100}% - ${(timelineStage(detail.status) / 2)}rem)` }} />
+                      <div className="relative flex justify-between">
+                        {[
+                          { label: "Đã đặt", date: fmtDate(detail.createdAt), done: true },
+                          { label: "Nhận phòng", date: fmtDate(detail.checkIn), done: timelineStage(detail.status) >= 1 },
+                          { label: "Trả phòng", date: fmtDate(detail.checkOut), done: timelineStage(detail.status) >= 2 },
+                        ].map((s, i) => (
+                          <div key={s.label} className={`flex flex-col ${i === 0 ? "items-start" : i === 2 ? "items-end" : "items-center"}`}>
+                            <span className={`flex h-4 w-4 items-center justify-center rounded-full border-2 ${s.done ? "border-primary bg-primary" : "border-line bg-surface"}`}>{s.done && <span className="text-[9px] font-bold text-white">✓</span>}</span>
+                            <span className="mt-1.5 text-xs text-muted">{s.date}</span>
+                            <span className="text-xs font-semibold text-ink">{s.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
 
-              <div className="flex flex-wrap gap-2">
-                {detail.status === "confirmed" && (
-                  <button onClick={() => changeStatus(detail.id, "in_house")} className="cb-btn-primary px-3 py-2 text-sm">Nhận phòng</button>
-                )}
-                {detail.status === "in_house" && (
-                  <button onClick={() => changeStatus(detail.id, "checked_out")} className="cb-btn-primary px-3 py-2 text-sm">Trả phòng</button>
-                )}
-                {detail.status === "confirmed" && (
-                  <button onClick={() => changeStatus(detail.id, "no_show")} className="cb-btn-ghost px-3 py-2 text-sm">Khách không đến (no-show)</button>
-                )}
-                {["pending", "confirmed"].includes(detail.status) && (
-                  <button onClick={() => changeStatus(detail.id, "cancelled")} className="rounded-lg border border-[#e5484d] px-3 py-2 text-sm font-semibold text-[#e5484d] hover:bg-red-50">Huỷ đơn</button>
-                )}
-                {!["cancelled", "no_show", "checked_out"].includes(detail.status) && (
-                  <button onClick={openEdit} className="cb-btn-ghost px-3 py-2 text-sm">Sửa đơn</button>
-                )}
-                {["pending", "confirmed", "in_house"].includes(detail.status) && (
-                  <button onClick={openExtend} className="cb-btn-ghost px-3 py-2 text-sm">Gia hạn</button>
-                )}
-              </div>
+                  {/* The Kenh */}
+                  <div className="rounded-xl border border-line p-4">
+                    <div className="text-base font-bold text-ink">{getChannelName(detail.channelCode)}</div>
+                    <div className="mt-0.5 text-xs text-muted">Mã đơn {detail.id}</div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <span className="rounded-full bg-[var(--nui-bg)] px-2.5 py-1 text-xs font-medium text-ink">{detail.paymentCollector === "channel_collect" ? "Kênh thu hộ" : "Khách sạn tự thu"}</span>
+                      <span className="rounded-full bg-[var(--nui-bg)] px-2.5 py-1 text-xs font-medium text-ink">{roomTypeName(detail.roomTypeId)}</span>
+                    </div>
+                    {detail.note && (
+                      <div className="mt-3 rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning">
+                        <span className="font-semibold">⚠ Ghi chú đặc biệt: </span>{detail.note}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* The Tien */}
+                  <div className="rounded-xl border border-line p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-lg font-bold text-ink">{fmt(detail.totalAmount - detail.paidAmount)}₫</div>
+                        <div className="text-xs text-muted">Còn nợ · Đã thu {fmt(detail.paidAmount)}₫ / Tổng {fmt(detail.totalAmount)}₫</div>
+                      </div>
+                      <button onClick={() => setDetailTab("folio")} className="shrink-0 rounded-full border border-primary px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary-soft">+ Thu tiền</button>
+                    </div>
+                  </div>
+
+                  {/* The Phong */}
+                  <div className="rounded-xl border border-line p-4">
+                    {detail.roomNumbers.length > 0 ? (
+                      <>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg font-bold text-ink">{detail.roomNumbers[0]}</span>
+                            {detailRoom && <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${HK_CHIP[detailRoom.housekeepingStatus]}`}>{HK_LABEL[detailRoom.housekeepingStatus]}</span>}
+                          </div>
+                          {detail.roomNumbers.length > 1 && <span className="text-xs font-medium text-primary">+{detail.roomNumbers.length - 1} phòng</span>}
+                        </div>
+                        <div className="mt-1 text-sm text-muted">{roomTypeName(detail.roomTypeId)}</div>
+                        <div className="text-xs text-muted">{catalog.ratePlans.find((p) => p.id === detail.ratePlanId)?.name ?? detail.ratePlanId}</div>
+                      </>
+                    ) : (
+                      <div>
+                        <div className="text-base font-bold text-ink">Chưa gán phòng</div>
+                        <div className="mt-1 text-sm text-muted">Gán phòng trên Lịch phòng để nhận phòng được.</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Chi tiet */}
+                  <div className="space-y-2">
+                    <DetailRow label="Số điện thoại" value={detail.guestPhone || "—"} />
+                    <DetailRow label="Ngày đến → đi" value={`${fmtDate(detail.checkIn)} → ${fmtDate(detail.checkOut)} (${detailNights} đêm)`} />
+                    <DetailRow label="Số khách" value={`${detail.adults ?? detail.guests} người lớn${(detail.children ?? 0) > 0 ? `, ${detail.children} trẻ em` : ""}`} />
+                    <DetailRow label="Ngày đặt" value={fmtDate(detail.createdAt)} />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {!["cancelled", "no_show", "checked_out"].includes(detail.status) && (
+                      <button onClick={openEdit} className="cb-btn-ghost px-3 py-2 text-sm">Sửa đơn</button>
+                    )}
+                    {["pending", "confirmed", "in_house"].includes(detail.status) && (
+                      <button onClick={openExtend} className="cb-btn-ghost px-3 py-2 text-sm">Gia hạn</button>
+                    )}
+                  </div>
 
               {["pending", "confirmed", "in_house"].includes(detail.status) && extending && (
-                <div className="rounded-xl border border-[var(--cb-border)] p-4">
-                  <div className="font-semibold text-[var(--cb-text)]">Gia hạn — ngày đi hiện tại {fmtDate(detail.checkOut)}</div>
+                <div className="rounded-xl border border-line p-4">
+                  <div className="font-semibold text-ink">Gia hạn — ngày đi hiện tại {fmtDate(detail.checkOut)}</div>
                   <div className="mt-3 flex flex-wrap items-end gap-2">
                     <div>
-                      <span className="text-xs text-[var(--cb-muted)]">Ngày đi mới</span>
+                      <span className="text-xs text-muted">Ngày đi mới</span>
                       <div className="mt-0.5"><DatePicker value={extCheckOut} onChange={setExtCheckOut} min={addDays(detail.checkOut, 1)} /></div>
                     </div>
                     <span className="pb-2 text-sm">Thêm {extNights} đêm · Tổng mới {fmt(extTotal)}₫ (hiện tại {fmt(detail.totalAmount)}₫)</span>
                   </div>
                   {detail.roomNumbers.length > 0 && (
-                    <p className="mt-2 text-xs text-[var(--cb-muted)]">Trước khi lưu sẽ kiểm tra phòng {detail.roomNumbers.join(", ")} còn trống các đêm thêm.</p>
+                    <p className="mt-2 text-xs text-muted">Trước khi lưu sẽ kiểm tra phòng {detail.roomNumbers.join(", ")} còn trống các đêm thêm.</p>
                   )}
                   {detail.roomNumbers.length === 0 && (
-                    <p className="mt-2 text-xs text-[var(--cb-muted)]">Đơn chưa gán phòng — trước khi lưu sẽ kiểm tra còn phòng trống loại {roomTypeName(detail.roomTypeId)} các đêm thêm.</p>
+                    <p className="mt-2 text-xs text-muted">Đơn chưa gán phòng — trước khi lưu sẽ kiểm tra còn phòng trống loại {roomTypeName(detail.roomTypeId)} các đêm thêm.</p>
                   )}
-                  {extError && <p className="mt-2 text-sm text-[#e5484d]">{extError}</p>}
+                  {extError && <p className="mt-2 text-sm text-danger">{extError}</p>}
                   <div className="mt-3 flex gap-2">
                     <button onClick={saveExtend} className="cb-btn-primary px-3 py-2 text-sm">Xác nhận gia hạn</button>
                     <button onClick={() => setExtending(false)} className="cb-btn-ghost px-3 py-2 text-sm">Huỷ</button>
@@ -936,13 +1070,13 @@ export default function ReservationsPage() {
               )}
               {detailTab === "folio" && (
               <div>
-                <div className="text-sm font-bold text-[var(--cb-text)]">Folio — hoá đơn chi tiết</div>
+                <div className="text-sm font-bold text-ink">Folio — hoá đơn chi tiết</div>
                 <div className="mt-2 space-y-1.5">
                   {detailBreakdown && detailBreakdown.unpriced.length === 0 ? (
                     detailBreakdown.perNight.map((n) => (
                       <div key={n.date} className="flex justify-between gap-3">
-                        <span className="text-[var(--cb-muted)]">Tiền phòng — đêm {fmtDate(n.date)}{detail.roomNumbers.length > 1 ? ` (${detail.roomNumbers.length} phòng)` : ""}</span>
-                        <span className="font-medium text-[var(--cb-text)]">{n.price === null ? "Chưa có giá" : `${fmt(n.price)}₫`}</span>
+                        <span className="text-muted">Tiền phòng — đêm {fmtDate(n.date)}{detail.roomNumbers.length > 1 ? ` (${detail.roomNumbers.length} phòng)` : ""}</span>
+                        <span className="font-medium text-ink">{n.price === null ? "Chưa có giá" : `${fmt(n.price)}₫`}</span>
                       </div>
                     ))
                   ) : (
@@ -951,42 +1085,42 @@ export default function ReservationsPage() {
                       const amount = i === detailNights - 1 ? detail.totalAmount - base * (detailNights - 1) : base;
                       return (
                         <div key={i} className="flex justify-between gap-3">
-                          <span className="text-[var(--cb-muted)]">Tiền phòng — đêm {fmtDate(addDays(detail.checkIn, i))}{detail.roomNumbers.length > 1 ? ` (${detail.roomNumbers.length} phòng)` : ""}</span>
-                          <span className="font-medium text-[var(--cb-text)]">{fmt(amount)}₫</span>
+                          <span className="text-muted">Tiền phòng — đêm {fmtDate(addDays(detail.checkIn, i))}{detail.roomNumbers.length > 1 ? ` (${detail.roomNumbers.length} phòng)` : ""}</span>
+                          <span className="font-medium text-ink">{fmt(amount)}₫</span>
                         </div>
                       );
                     })
                   )}
                   {detailExtras.map((f) => (
                     <div key={f.id} className="flex items-center justify-between gap-3">
-                      <span className="text-[var(--cb-muted)]">{f.label} — {fmtDate(f.date)}</span>
+                      <span className="text-muted">{f.label} — {fmtDate(f.date)}</span>
                       <span className="flex items-center gap-2">
-                        <span className="font-medium text-[var(--cb-text)]">{fmt(f.amount)}₫</span>
-                        <button onClick={() => deleteExtra(f.id)} className="text-[#e5484d]" title="Xoá khoản này">✕</button>
+                        <span className="font-medium text-ink">{fmt(f.amount)}₫</span>
+                        <button onClick={() => deleteExtra(f.id)} className="text-danger" title="Xoá khoản này">✕</button>
                       </span>
                     </div>
                   ))}
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <input value={extraLabel} onChange={(e) => setExtraLabel(e.target.value)} placeholder="Dịch vụ thêm: giặt ủi, minibar..." className="min-w-0 flex-1 rounded-lg border border-[var(--cb-border)] px-2 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" />
-                  <input type="number" value={extraAmount || ""} onChange={(e) => setExtraAmount(Number(e.target.value))} placeholder="Số tiền" className="w-28 rounded-lg border border-[var(--cb-border)] px-2 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" />
+                  <input value={extraLabel} onChange={(e) => setExtraLabel(e.target.value)} placeholder="Dịch vụ thêm: giặt ủi, minibar..." className="min-w-0 flex-1 rounded-lg border border-line px-2 py-2 text-sm outline-none focus:border-primary" />
+                  <input type="number" value={extraAmount || ""} onChange={(e) => setExtraAmount(Number(e.target.value))} placeholder="Số tiền" className="w-28 rounded-lg border border-line px-2 py-2 text-sm outline-none focus:border-primary" />
                   <button onClick={addExtra} className="cb-btn-ghost px-3 py-2 text-sm">+ Thêm</button>
                 </div>
 
-                <div className="mt-3 space-y-1.5 border-t border-[var(--cb-bg)] pt-3">
-                  <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Tổng phải thu (phòng + dịch vụ)</span><span className="font-semibold text-[var(--cb-text)]">{fmt(totalDue)}₫</span></div>
-                  <div className="flex justify-between"><span className="text-[var(--cb-muted)]">Đã thanh toán{detail.paymentCollector === "channel_collect" ? " (kênh thu hộ)" : ""}</span><span className="font-semibold text-[var(--cb-text)]">{fmt(detail.paidAmount)}₫</span></div>
-                  <div className="flex justify-between"><span className="font-semibold text-[var(--cb-text)]">Còn nợ</span><span className={`font-bold ${balance > 0 ? "text-[#e5484d]" : "text-[#1db584]"}`}>{balance > 0 ? fmt(balance) + "₫" : "Đã thanh toán đủ"}</span></div>
+                <div className="mt-3 space-y-1.5 border-t border-[var(--nui-bg)] pt-3">
+                  <div className="flex justify-between"><span className="text-muted">Tổng phải thu (phòng + dịch vụ)</span><span className="font-semibold text-ink">{fmt(totalDue)}₫</span></div>
+                  <div className="flex justify-between"><span className="text-muted">Đã thanh toán{detail.paymentCollector === "channel_collect" ? " (kênh thu hộ)" : ""}</span><span className="font-semibold text-ink">{fmt(detail.paidAmount)}₫</span></div>
+                  <div className="flex justify-between"><span className="font-semibold text-ink">Còn nợ</span><span className={`font-bold ${balance > 0 ? "text-danger" : "text-success"}`}>{balance > 0 ? fmt(balance) + "₫" : "Đã thanh toán đủ"}</span></div>
                   {detail.totalAmount === 0 && detailNights > 0 && !["cancelled", "no_show"].includes(detail.status) && (
-                    <p className="rounded-lg bg-[#fdf3e3] px-3 py-2 text-xs text-[#9a6a12]">⚠ Tổng đơn đang là 0₫ — có thể do chưa nhập giá cho các đêm này ở Lịch giá. Kiểm tra giá theo kênh rồi sửa đơn.</p>
+                    <p className="rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning">⚠ Tổng đơn đang là 0₫ — có thể do chưa nhập giá cho các đêm này ở Lịch giá. Kiểm tra giá theo kênh rồi sửa đơn.</p>
                   )}
                 </div>
 
                 {balance > 0 && detail.paymentCollector === "hotel_collect" && (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <input type="number" value={payAmount || ""} onChange={(e) => setPayAmount(Number(e.target.value))} placeholder="Số tiền khách trả" className="w-36 rounded-lg border border-[var(--cb-border)] px-2 py-2 text-sm outline-none focus:border-[var(--cb-blue)]" />
-                    <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className="rounded-lg border border-[var(--cb-border)] px-2 py-2 text-sm outline-none">
+                    <input type="number" value={payAmount || ""} onChange={(e) => setPayAmount(Number(e.target.value))} placeholder="Số tiền khách trả" className="w-36 rounded-lg border border-line px-2 py-2 text-sm outline-none focus:border-primary" />
+                    <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className="rounded-lg border border-line px-2 py-2 text-sm outline-none">
                       <option>Tiền mặt</option>
                       <option>Chuyển khoản</option>
                       <option>Thẻ</option>
@@ -995,24 +1129,24 @@ export default function ReservationsPage() {
                   </div>
                 )}
                 {detail.paymentCollector === "channel_collect" && (
-                  <p className="mt-2 text-xs text-[var(--cb-muted)]">Đơn này do kênh thu hộ tiền của khách — khách sạn nhận tiền từ kênh sau, không thu thêm tại quầy.</p>
+                  <p className="mt-2 text-xs text-muted">Đơn này do kênh thu hộ tiền của khách — khách sạn nhận tiền từ kênh sau, không thu thêm tại quầy.</p>
                 )}
               </div>
               )}
               {detailTab === "notes" && (
                 <div>
-                  <div className="text-sm font-bold text-[var(--cb-text)]">Ghi chú ({detailAllNotes.length})</div>
+                  <div className="text-sm font-bold text-ink">Ghi chú ({detailAllNotes.length})</div>
                   {detailAllNotes.length === 0 ? (
-                    <p className="mt-3 rounded-lg bg-[var(--cb-bg)] px-3 py-3 text-[var(--cb-muted)]">Chưa có ghi chú nào cho đơn này.</p>
+                    <p className="mt-3 rounded-lg bg-[var(--nui-bg)] px-3 py-3 text-muted">Chưa có ghi chú nào cho đơn này.</p>
                   ) : (
                     <div className="mt-3 space-y-3">
                       {detailAllNotes.map((n) => (
-                        <div key={n.id} className="rounded-xl border border-[var(--cb-border)] px-4 py-3">
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--cb-muted)]">
-                            <b className="text-[var(--cb-text)]">{n.author}</b>
+                        <div key={n.id} className="rounded-xl border border-line px-4 py-3">
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                            <b className="text-ink">{n.author}</b>
                             {n.createdAt && <span>{fmtDate(n.createdAt.slice(0, 10))}</span>}
                           </div>
-                          <p className="mt-1 whitespace-pre-wrap text-[var(--cb-text)]">{n.body}</p>
+                          <p className="mt-1 whitespace-pre-wrap text-ink">{n.body}</p>
                         </div>
                       ))}
                     </div>
@@ -1023,10 +1157,32 @@ export default function ReservationsPage() {
                       onChange={(e) => setNoteDraft(e.target.value)}
                       placeholder="Ghi chú cho ca sau: khách đến muộn, cần thêm khăn..."
                       rows={3}
-                      className="w-full rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm outline-none focus:border-[var(--cb-blue)]"
+                      className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-primary"
                     />
                     <button onClick={addDetailNote} className="cb-btn-primary mt-2 px-4 py-2 text-sm">+ Thêm ghi chú</button>
                   </div>
+                </div>
+              )}
+              {detailTab === "activity" && (
+                <div>
+                  <div className="text-sm font-bold text-ink">Hoạt động của đơn</div>
+                  {detailActivity.length === 0 ? (
+                    <p className="mt-3 rounded-lg bg-[var(--nui-bg)] px-3 py-3 text-muted">Chưa có hoạt động nào cho đơn này.</p>
+                  ) : (
+                    <ul className="mt-3 space-y-3">
+                      {detailActivity.map((log) => (
+                        <li key={log.id} className="flex gap-3">
+                          <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
+                          <div className="min-w-0">
+                            <div className="text-ink">{log.summary}</div>
+                            <div className="mt-0.5 text-xs text-muted">
+                              {log.actorName} · {fmtDateTime(log.createdAt)}
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
             </div>
@@ -1041,8 +1197,8 @@ export default function ReservationsPage() {
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-4">
-      <span className="text-[var(--cb-muted)]">{label}</span>
-      <span className="text-right font-medium text-[var(--cb-text)]">{value}</span>
+      <span className="text-muted">{label}</span>
+      <span className="text-right font-medium text-ink">{value}</span>
     </div>
   );
 }

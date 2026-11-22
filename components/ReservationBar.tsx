@@ -1,34 +1,25 @@
-// ============================================================
-// FILE 7a — components/ReservationBar.tsx (Cloudbeds style)
-// ONE booking bar on the staff calendar.
-// It only knows how to DRAW itself (color by status, guest name,
-// channel). All drag & drop logic lives in StaffCalendar —
-// this component just reports events upward via callbacks.
-// ============================================================
+// CALTIDY9 — components/ReservationBar.tsx (thanh don tren Lich phong)
+// Chi biet VE (mau theo trang thai, ten khach, kenh); keo-tha nam o StaffCalendar, component nay chi bao len bang callback.
+// Doi sang token toi gian 2026-11-21.
 
 import type { Reservation, ReservationStatus } from "@/lib/mock-data";
 import { getChannelName } from "@/lib/mock-data";
 
-// Bar color per status — theo dung legend chinh thuc cua
-// Cloudbeds (Classic calendar):
-//   xanh la dam  = In-House (dang o)
-//   xanh duong nhat = Confirmed (da xac nhan)
-//   xanh ngoc nhat  = Confirmation Pending (cho xac nhan)
-//   xam dam     = Checked Out (da tra phong)
-// Full class names (Tailwind needs them written out in full, it
-// cannot build class names dynamically). Mau nen de dau tien
-// vi trang danh sach don chi lay token dau tien lam cham mau.
+// Mau thanh theo dung legend chinh thuc cua Cloudbeds (Classic calendar): la dam = In-House,
+// duong nhat = Confirmed, ngoc nhat = Confirmation Pending, xam dam = Checked Out.
+// Ten class viet day du (Tailwind khong tu ghep ten class dong). Mau nen de dau tien
+// vi trang danh sach don chi lay token dau tien lam cham mau. Cac ma mau legend GIU NGUYEN,
+// khong doi sang token — chi #e5484d doi sang bg-danger (cung gia tri).
 export const STATUS_STYLES: Record<ReservationStatus, string> = {
   pending: "bg-[#8fd0c5] text-[#134e4a]",
   confirmed: "bg-[#4aa8de] text-white",
   in_house: "bg-[#2aa76d] text-white",
   checked_out: "bg-[#757c85] text-white",
-  cancelled: "bg-[#e5484d] text-white line-through opacity-80",
-  no_show: "bg-[var(--cb-muted)] text-white",
+  cancelled: "bg-danger text-white line-through opacity-80",
+  no_show: "bg-muted text-white",
 };
 
-// Status labels shown to users (Vietnamese UI text for now —
-// these move to language files when the i18n switcher is added)
+// Nhan trang thai hien cho nguoi dung (tieng Viet; chuyen sang file ngon ngu khi co i18n).
 export const STATUS_LABELS: Record<ReservationStatus, string> = {
   pending: "Chờ xác nhận",
   confirmed: "Đã xác nhận",
@@ -42,11 +33,9 @@ type Props = {
   reservation: Reservation;
   /** how many day-cells the bar spans visually (can be fractional) */
   span: number;
-  /** true when the real check-in day is visible: the bar starts
-   *  at the MIDDLE of that cell (Cloudbeds style — check-in is
-   *  in the afternoon, check-out at noon, so a bar runs from the
-   *  middle of the arrival cell to the middle of the departure
-   *  cell, leaving a visible half-cell turnover gap) */
+  /** true khi ngay nhan phong that hien: thanh bat dau tu GIUA o do
+   *  (kieu Cloudbeds — nhan phong buoi chieu, tra phong buoi trua, nen
+   *  thanh chay tu giua o den den giua o di, de lai nua o trong doi phong) */
   startHalf?: boolean;
   /** true when the booking has any note (yellow dot, Cloudbeds legend) */
   hasNotes?: boolean;
@@ -70,8 +59,8 @@ export default function ReservationBar({ reservation, span, startHalf, hasNotes,
       style={{
         left: startHalf ? "calc(50% + 2px)" : "4px",
         width: `calc(${span * 100}% - ${startHalf ? 6 : 8}px)`,
-        // Cloudbeds slant: both ends cut diagonally (parallelogram)
-        clipPath: "polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%)",
+        // Cloudbeds: dau thanh nhon 2 dau (mui ten 2 dau)
+        clipPath: "polygon(10px 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 10px 100%, 0 50%)",
       }}
     >
       <div className={`min-w-0 flex-1 truncate font-semibold ${hasDots ? "pr-8" : ""}`}>
@@ -79,7 +68,7 @@ export default function ReservationBar({ reservation, span, startHalf, hasNotes,
       </div>
       {hasDots && (
         <div className="absolute right-2.5 top-1/2 flex -translate-y-1/2 items-center gap-1">
-          {balance > 0 && <span title="Còn nợ tiền" className="h-2 w-2 rounded-full bg-[#e5484d]" />}
+          {balance > 0 && <span title="Còn nợ tiền" className="h-2 w-2 rounded-full bg-danger" />}
           {hasNotes && <span title="Có ghi chú" className="h-2 w-2 rounded-full bg-[#facc15]" />}
         </div>
       )}
