@@ -300,8 +300,15 @@ export const CHANNEL_FORMULA: Record<string, string> = {
   agoda: "f-plus16",
 };
 
-export const getFormula = (id?: string): PriceFormula | undefined =>
-  PRICE_FORMULAS.find((f) => f.id === id);
+export const getFormula = (id?: string): PriceFormula | undefined => {
+  if (!id) return undefined;
+  const found = PRICE_FORMULAS.find((f) => f.id === id);
+  if (found) return found;
+  const m = /^f-(plus|minus)(\d+)$/.exec(id);
+  if (!m) return undefined;
+  const value = m[1] === "plus" ? Number(m[2]) : -Number(m[2]);
+  return { id, name: value >= 0 ? `Cao hơn gói gốc ${value}%` : `Rẻ hơn gói gốc ${-value}%`, kind: "percent", value };
+};
 
 export const applyFormula = (price: number, formula: PriceFormula): number => {
   const raw = formula.kind === "percent" ? price * (1 + formula.value / 100) : price + formula.value;

@@ -1,9 +1,9 @@
 "use client";
-// CLOUDBED3 — app/[hotelId]/reservations/[id]/page.tsx (Chi tiet don, vien trang thai du muc kieu Cloudbeds)
-// Vien trang thai o dau trang bam ra du 5 muc con lai (tru trang thai hien tai), gom ca Da huy — doi khong hop le van bi changeStatus chan.
+// ALERT2 — app/[hotelId]/reservations/[id]/page.tsx (Chi tiet don, sua loi kieu check.error)
+// check.error la string | undefined, setAlertMsg chi nhan string | null — them ?? "Có lỗi xảy ra." de het gach do.
 // Nut Nhan/Tra/Huy/Khong den tren trang chi tiet ghi vao audit_logs + nap lai tab Hoat dong.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -24,6 +24,7 @@ import { currentHotelId } from "@/lib/current-hotel";
 import { markRoomsDirtyAfterCheckout } from "@/lib/checkout-housekeeping";
 import { writeAuditLog } from "@/lib/audit-log";
 import { STATUS_LABELS, STATUS_STYLES } from "@/components/ReservationBar";
+import AlertDialog from "@/components/AlertDialog";
 import { DatePicker } from "@/components/DatePicker";
 import {
   canCancel,
@@ -103,6 +104,16 @@ export default function ReservationDetailPage() {
   // Sua don + gia han.
   const [editing, setEditing] = useState(false);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  const [alertMsg, setAlertMsg] = useState<string | null>(null);
+  const statusMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!statusMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (statusMenuRef.current && !statusMenuRef.current.contains(e.target as Node)) setStatusMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [statusMenuOpen]);
   const [editError, setEditError] = useState("");
   const [eName, setEName] = useState("");
   const [ePhone, setEPhone] = useState("");
@@ -330,20 +341,24 @@ export default function ReservationDetailPage() {
   async function changeStatus(id: string, status: ReservationStatus) {
     const r = reservations.find((x) => x.id === id);
     if (!r) return;
+    if (["checked_out", "cancelled", "no_show"].includes(r.status)) {
+      setAlertMsg("Đơn đã trả phòng / đã huỷ / khách không đến không đổi trạng thái được.");
+      return;
+    }
     if (status === "in_house") {
       const check = canCheckIn(availData, r);
-      if (!check.ok) return alert(check.error);
+      if (!check.ok) { setAlertMsg(check.error ?? "Có lỗi xảy ra."); return; }
       if (check.warnings.length > 0 && !window.confirm(`${check.warnings.join("\n")}\nVẫn nhận phòng?`)) return;
     } else if (status === "checked_out") {
       const check = canCheckOut(r);
-      if (!check.ok) return alert(check.error);
+      if (!check.ok) { setAlertMsg(check.error ?? "Có lỗi xảy ra."); return; }
       if (check.warnings.length > 0 && !window.confirm(check.warnings.join("\n"))) return;
     } else if (status === "cancelled") {
       const check = canCancel(r);
-      if (!check.ok) return alert(check.error);
+      if (!check.ok) { setAlertMsg(check.error ?? "Có lỗi xảy ra."); return; }
       if (!window.confirm(`Huỷ đơn ${r.id} của ${r.guestName}?`)) return;
     } else if (status === "no_show") {
-      if (r.status !== "confirmed") return alert("Chỉ đánh dấu không đến cho đơn đã xác nhận.");
+      if (r.status !== "confirmed") { setAlertMsg("Chỉ đánh dấu không đến cho đơn đã xác nhận."); return; }
       if (!window.confirm(`Đánh dấu khách không đến cho đơn ${r.id} của ${r.guestName}?`)) return;
     }
     const ok = await patchReservation(id, { status });
@@ -543,7 +558,7 @@ export default function ReservationDetailPage() {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-2xl font-extrabold tracking-tight text-ink">{detail.guestName}</h1>
-              <div className="relative">
+              <div ref={statusMenuRef} className="relative">
                 <button onClick={() => setStatusMenuOpen((v) => !v)} className="flex items-center gap-1.5 rounded-full bg-[var(--nui-bg)] px-3 py-1 text-xs font-semibold text-ink">
                   <span className={`inline-block h-2 w-2 rounded-full ${STATUS_STYLES[detail.status].split(" ")[0]}`} />
                   {STATUS_LABELS[detail.status]}
@@ -929,6 +944,7 @@ export default function ReservationDetailPage() {
           </p>
         </div>
       )}
+      {alertMsg && <AlertDialog message={alertMsg} onClose={() => setAlertMsg(null)} />}
     </div>
   );
 }

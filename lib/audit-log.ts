@@ -1,5 +1,5 @@
-
-// AUDIT1 — lib/audit-log.ts (nhat ky kiem tra, SQL 24)
+// AUDIT8 — lib/audit-log.ts (nhat ky kiem tra, SQL 24)
+// Them action "booking_pulled" (keo don tu Channex ve) de ghi log moi lan keo don.
 // Viet 1 dong log vao bang audit_logs. Ham nay KHONG BAO GIO nem loi:
 // ghi log that bai chi tra ve { ok: false } — thao tac chinh van xong.
 import { supabase } from "@/lib/supabase";
@@ -10,6 +10,7 @@ export type AuditAction =
   | "booking_checked_in"
   | "booking_checked_out"
   | "booking_updated"
+  | "booking_pulled"
   | "price_updated"
   | "room_blocked"
   | "room_unblocked"

@@ -1,5 +1,7 @@
 "use client";
-// RATES9 — components/RatesCalendar.tsx (Lich gia)
+// RATES12 — components/RatesCalendar.tsx (Lich gia, popup doi % cong them)
+// Bấm huy hiệu % ở đầu hàng giá mở popup xác nhận; nút Xác nhận chỉ bật khi % mới khác % hiện tại.
+// Bo nut "⚡ Sửa nhanh" o dau moi loai phong (Vos yeu cau 23/11) — nut "Cập nhật hàng loạt" tren thanh cong cu giu nguyen.
 // Gia goc = gia Website; gia kenh suy ra theo % hoa hong, sua tay duoc tung o (override).
 // Popup Cap nhat nhanh: nut Cap nhat chi bat khi co thay doi that (gia / ngung ban / so dem toi thieu khac gia tri hien tai cua it nhat 1 ngay trong khoang).
 
@@ -14,6 +16,7 @@ import {
   ROOM_TYPES,
   ROOMS,
   TODAY,
+  applyFormula,
   getFormula,
   getHotelData,
   inventoryBlockOn,
@@ -97,6 +100,17 @@ export default function RatesCalendar() {
   const [quMinStay, setQuMinStay] = useState("1");
   const [quError, setQuError] = useState("");
   const [quSaving, setQuSaving] = useState(false);
+  // Popup doi % cong them cua kenh (RATES12): kenh nao dang doi, % hien tai, gia tri dang go, trang thai luu/loi.
+  const [markup, setMarkup] = useState<{ channelCode: string; currentPct: number } | null>(null);
+  const [markupDraft, setMarkupDraft] = useState("");
+  const [markupSaving, setMarkupSaving] = useState(false);
+  const [markupError, setMarkupError] = useState("");
+  // Man hinh tao gia cho kenh (RATES14, theo layout moi): kenh + loai phong chua co goi gia thi mo panel 1 buoc
+  // (kenh, loai phong, suy ra tu gia goc, % cong them, xem truoc bang tien that) thay vi tu dong tao khi bam o.
+  const [creator, setCreator] = useState<{ channelCode: string; roomTypeId: string; date: string } | null>(null);
+  const [creatorPct, setCreatorPct] = useState("");
+  const [creatorSaving, setCreatorSaving] = useState(false);
+  const [creatorError, setCreatorError] = useState("");
 
 
   // Phan hoi sau khi luu: thong bao + hoan tac + o vua sua sang xanh + nhat ky thay doi.
@@ -490,7 +504,7 @@ export default function RatesCalendar() {
 
   // Chua co goi chuan thi tao goi chuan (ten kenh, huy linh hoat, chi phong) roi moi ghi gia.
   // Goi cua kenh OTA / Le tan tao san la goi suy ra tu gia Website (Le tan khong cong them: gia = gia goc).
-  async function ensureStandardPlan(channelCode: string, roomTypeId: string): Promise<RatePlan | undefined> {
+  async function ensureStandardPlan(channelCode: string, roomTypeId: string, formulaIdOverride?: string | null): Promise<RatePlan | undefined> {
     const existing = standardPlanFor(channelCode, roomTypeId);
     if (existing) return existing;
     const key = `${channelCode}|${roomTypeId}`;
@@ -505,7 +519,13 @@ export default function RatesCalendar() {
         const webPlan = await ensureStandardPlan("website", roomTypeId);
         if (!webPlan) return undefined;
         derivedFromId = webPlan.id;
-        formulaId = CHANNEL_FORMULA[channelCode];
+        // Gói moi phai dung % kenh DANG DUNG (tu goi da co), khong phai % mac dinh — neu khong, goi moi se lech % so voi cac goi cu cua cung kenh.
+        if (formulaIdOverride !== undefined) {
+          formulaId = formulaIdOverride ?? undefined;
+        } else {
+          const existingCh = plans.find((x) => x.channelCode === channelCode && !!x.derivedFromId);
+          formulaId = existingCh?.formulaId ?? CHANNEL_FORMULA[channelCode];
+        }
       }
       const { error } = await supabase.from("rate_plans").insert({
         id, hotel_id: HOTEL_ID, account_id: ACCOUNT_ID,
@@ -621,6 +641,108 @@ export default function RatesCalendar() {
   function closeQuickUpdate() {
     setQuick(null);
     setQuError("");
+  }
+
+  // Xoá giá riêng trong khoảng ngày đã chọn — về lại giá tự tính (RATES14, theo layout mới).
+  // Giong thao tac "xoá trắng ô giá" nhung la nut rieng 1 bam, khong can nhap lai gia.
+  async function resetOverrideToDerived() {
+    if (!quick || quSaving) return;
+    const plan = plans.find((p) => p.id === quick.planId);
+    if (!plan || !plan.derivedFromId) return;
+    const from = quFrom || quick.date;
+    const to = quTo || quFrom || quick.date;
+    if (to < from) return;
+    const dates = rangeDates(from, to);
+    const { chName, typeName } = priceLogLabel(plan, from);
+    const dShort = (d: string) => d.split("-").reverse().join("/");
+    const rangeLabel = from === to ? dShort(from) : `${dShort(from)} → ${dShort(to)}`;
+    setQuSaving(true);
+    setOverrides((prev) => {
+      const next = { ...prev };
+      dates.forEach((d) => { delete next[keyOf(plan.id, d)]; });
+      return next;
+    });
+    const { error } = await supabase.from("rate_prices").delete().eq("rate_plan_id", plan.id).gte("date", from).lte("date", to);
+    setQuSaving(false);
+    if (error) { setDbError("Xoá giá riêng không thành công: " + error.message); return; }
+    markDirty(plan.channelCode);
+    queueChannexDates(dates);
+    flashSaved(dates.map((d) => keyOf(plan.id, d)));
+    writeAuditLog({
+      hotelId: HOTEL_ID, accountId: ACCOUNT_ID, action: "price_updated", entityType: "rate_price", entityId: plan.id,
+      summary: `Xoá giá riêng ${typeName} · ${chName} · ${rangeLabel} (${dates.length} ngày) — về giá tự tính`,
+      details: { planId: plan.id, from, to, days: dates.length, newPrice: null, channelCode: plan.channelCode, roomTypeId: plan.roomTypeId },
+    });
+    logChange(`Xoá giá riêng ${typeName} · ${chName} · ${rangeLabel} — về giá tự tính`);
+    showToast(`Đã xoá giá riêng ${typeName} · ${chName} · ${rangeLabel} — về lại giá tự tính.`);
+    closeQuickUpdate();
+  }
+
+  function openMarkup(channelCode: string, currentPct: number) {
+    setMarkup({ channelCode, currentPct });
+    setMarkupDraft(String(currentPct));
+    setMarkupError("");
+  }
+
+  function closeMarkup() {
+    setMarkup(null);
+    setMarkupError("");
+  }
+
+  // % hien tai cua 1 kenh (tu goi da co, khong thi % mac dinh) — de goi moi tao ra dung % kenh dang dung.
+  function channelCurrentPct(channelCode: string): number {
+    const p = plans.find((x) => x.channelCode === channelCode && !!x.derivedFromId);
+    const v = p ? getFormula(p.formulaId)?.value : getFormula(CHANNEL_FORMULA[channelCode])?.value;
+    return v ?? 0;
+  }
+
+  function openCreator(channelCode: string, roomTypeId: string, date: string) {
+    setCreator({ channelCode, roomTypeId, date });
+    setCreatorPct(String(channelCurrentPct(channelCode)));
+    setCreatorError("");
+  }
+
+  function closeCreator() {
+    setCreator(null);
+    setCreatorError("");
+  }
+
+  // Tao gia cho kenh: neu % doi so voi % kenh hien tai thi doi % ca kenh truoc, roi tao goi voi % do.
+  async function applyCreateRate() {
+    if (!creator || creatorSaving) return;
+    const pct = Number(creatorPct);
+    if (Number.isNaN(pct)) { setCreatorError("Nhập % cộng thêm là số."); return; }
+    const chName = CHANNELS.find((c) => c.code === creator.channelCode)?.name ?? creator.channelCode;
+    const typeName = roomTypesDb.find((t) => t.id === creator.roomTypeId)?.name ?? creator.roomTypeId;
+    setCreatorSaving(true);
+    setCreatorError("");
+    if (pct !== channelCurrentPct(creator.channelCode)) {
+      const ok = await setChannelMarkup(creator.channelCode, pct);
+      if (!ok && plans.some((x) => x.channelCode === creator.channelCode && !!x.derivedFromId)) {
+        setCreatorSaving(false);
+        setCreatorError("Không đổi được % — thử lại sau.");
+        return;
+      }
+    }
+    const formulaId = pct > 0 ? `f-plus${pct}` : pct < 0 ? `f-minus${-pct}` : null;
+    const plan = await ensureStandardPlan(creator.channelCode, creator.roomTypeId, formulaId);
+    setCreatorSaving(false);
+    if (!plan) { setCreatorError("Không tạo được giá cho kênh — thử lại sau."); return; }
+    const base = standardPlanFor("website", creator.roomTypeId)?.prices[creator.date];
+    const preview = base !== undefined ? fmt(applyFormula(base, { id: "pv", name: "", kind: "percent", value: pct })) : "—";
+    showToast(`Đã tạo giá ${chName} cho ${typeName} — giá tự tính ${preview}.`);
+    closeCreator();
+  }
+
+  async function applyMarkup() {
+    if (!markup || markupSaving) return;
+    const v = Number(markupDraft);
+    if (Number.isNaN(v) || v === markup.currentPct) return;
+    setMarkupSaving(true);
+    const ok = await setChannelMarkup(markup.channelCode, v);
+    setMarkupSaving(false);
+    if (ok) closeMarkup();
+    else setMarkupError("Không đổi được % — thử lại sau.");
   }
 
   async function applyQuickUpdate() {
@@ -817,13 +939,6 @@ export default function RatesCalendar() {
           {collapsed ? "▸" : "▾"}
         </button>
         {t.name} {t.code ? <span className="ml-1.5 rounded-md bg-surface px-1.5 py-0.5 align-middle text-[11px] font-semibold text-muted">{t.code}</span> : null}
-        <button
-          onClick={() => router.push(`/${HOTEL_ID}/rates/bulk?type=${t.id}&from=${startDate}&to=${addDays(startDate, 13)}`)}
-          className="ml-2 inline-flex items-center rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-semibold text-muted hover:bg-primary-soft hover:text-primary"
-          title="Sửa nhanh giá gốc loại phòng này cho 14 ngày đang xem"
-        >
-          ⚡ Sửa nhanh
-        </button>
       </div>
     );
   }
@@ -924,8 +1039,9 @@ export default function RatesCalendar() {
               <div className="absolute right-0 top-full z-40 mt-1 w-72 rounded-xl border border-line bg-surface p-3 text-xs text-ink shadow-card">
                 <div className="mb-2 text-sm font-semibold">Chú thích</div>
                 <p className="py-0.5"><span className="font-semibold">★ Giá gốc</span> — hàng Website, sửa được, các kênh khác tự tính theo.</p>
-                <p className="py-0.5"><span className="text-warning">● vàng</span> — giá sửa tay (chỉ kênh đó); xoá để về lại giá tự tính.</p>
+                <p className="py-0.5"><span className="font-semibold">▲ đen ở góc ô</span> — giá sửa tay (chỉ kênh đó); bấm ô rồi bấm “Xoá giá riêng” để về lại giá tự tính.</p>
                 <p className="py-0.5"><span className="text-muted">Hàng xám + chip %</span> — giá tự tính từ giá gốc, bấm ô để sửa tay.</p>
+                <p className="py-0.5"><span className="font-semibold text-primary">— Đặt giá —</span> — kênh chưa có giá, bấm để tạo giá cho kênh đó.</p>
                 <p className="py-0.5"><span className="rounded bg-danger-soft px-1 font-semibold text-danger">Ô cam</span> — đang ngừng bán ngày đó.</p>
                 <p className="py-0.5"><span className="font-semibold">*2</span> — ở tối thiểu 2 đêm; chip SS / CTA / CTD là các hạn chế khác.</p>
                 <p className="py-0.5"><span className="font-semibold text-danger">Chữ đỏ</span> — giá kênh đang thấp hơn giá Website cùng ngày.</p>
@@ -1145,6 +1261,12 @@ export default function RatesCalendar() {
       }
     }
     const quDisabled = quSaving || quToEff < quFromEff || !hasChange;
+    // Gia tu tinh (khong sua tay) cua o vua bam — de nguoi dung biet gia hien tai la gia tu tinh hay gia sua tay.
+    const isDerivedPlan = !!plan.derivedFromId;
+    const formulaPrice = isDerivedPlan ? resolvePlanPrice(plan, quick.date, plans, {}) : undefined;
+    const currentShownPrice = priceForCell(plan, quick.date);
+    const isCurrentlyOverride = isDerivedPlan && overrides[keyOf(plan.id, quick.date)] !== undefined;
+    const hasOverrideInRange = isDerivedPlan && quDates.length > 0 && quDates.some((d) => overrides[keyOf(plan.id, d)] !== undefined);
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeQuickUpdate}>
         <div className="w-full max-w-md rounded-xl bg-surface p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -1215,8 +1337,20 @@ export default function RatesCalendar() {
                 />
               </div>
             )}
+            {quKind === "price" && isDerivedPlan && (
+              <div className="rounded-lg bg-primary-soft px-3 py-2 text-xs leading-relaxed text-muted">
+                Giá tự tính ngày {quick.date.split("-").reverse().join("/")} là {formulaPrice !== undefined ? fmt(formulaPrice) : "—"}
+                {isCurrentlyOverride ? ` — hiện đang là giá sửa tay ${currentShownPrice !== undefined ? fmt(currentShownPrice) : "—"}` : " — chưa sửa tay"}.
+                Nhập giá mới sẽ thành giá sửa tay cho riêng kênh này (các kênh khác không đổi). Muốn về lại giá tự tính thì bấm nút “Xoá giá riêng” bên dưới.
+              </div>
+            )}
             {quKind === "price" && quFrom && quTo && quFrom !== quTo && (
               <p className="text-right text-xs text-muted">Áp dụng cho {rangeDates(quFrom, quTo).length} ngày</p>
+            )}
+            {quKind === "price" && isDerivedPlan && hasOverrideInRange && (
+              <button onClick={() => void resetOverrideToDerived()} disabled={quSaving} className="cb-btn-ghost w-full px-4 py-2 text-sm font-semibold text-danger">
+                ↩ Xoá giá riêng — về giá tự tính ({quDates.length} ngày)
+              </button>
             )}
             {quError && <p className="text-sm font-medium text-danger">{quError}</p>}
           </div>
@@ -1229,12 +1363,185 @@ export default function RatesCalendar() {
     );
   }
 
+  // Popup doi % cong them (RATES12) — giong popup Cap nhat nhanh: mo ra chua sua gi thi nut Xac nhan mo, khong bam duoc.
+  function MarkupModal() {
+    if (!markup) return null;
+    const chName = CHANNELS.find((c) => c.code === markup.channelCode)?.name ?? markup.channelCode;
+    const newPct = Number(markupDraft);
+    const hasChange = markupDraft !== "" && !Number.isNaN(newPct) && newPct !== markup.currentPct;
+    const mkDisabled = markupSaving || !hasChange;
+    // Xem truoc gia moi theo % moi: lay gia goc Website cua loai phong dau tien co gia trong khung hien.
+    const previewBase = (() => {
+      const t0 = roomTypesDb[0];
+      if (!t0) return undefined;
+      const wp = standardPlanFor("website", t0.id);
+      if (!wp) return undefined;
+      const d = days.find((x) => wp.prices[x] !== undefined);
+      if (!d) return undefined;
+      return { typeName: t0.name, dateShort: d.split("-").reverse().join("/"), price: wp.prices[d] as number };
+    })();
+    const previewNew = previewBase && hasChange
+      ? applyFormula(previewBase.price, { id: "preview", name: "", kind: "percent", value: newPct })
+      : undefined;
+    const previewNow = previewBase
+      ? applyFormula(previewBase.price, { id: "now", name: "", kind: "percent", value: markup.currentPct })
+      : undefined;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeMarkup}>
+        <div className="w-full max-w-md rounded-xl bg-surface p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-bold text-ink">Đổi % cộng thêm</h3>
+            <button onClick={closeMarkup} className="rounded-md px-2 py-1 text-lg font-bold text-muted hover:bg-[var(--nui-bg)]">✕</button>
+          </div>
+          <div className="mt-4 space-y-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted">Kênh bán</span>
+              <span className="font-semibold text-ink">{chName}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted">% hiện tại</span>
+              <span className="font-semibold text-ink">{markup.currentPct >= 0 ? `+${markup.currentPct}%` : `${markup.currentPct}%`}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted">% mới</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  autoFocus
+                  value={markupDraft}
+                  onChange={(e) => setMarkupDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !mkDisabled) void applyMarkup();
+                  }}
+                  className="cb-input-pill w-24 px-2 py-1.5 text-right font-semibold"
+                />
+                <span className="text-muted">%</span>
+              </div>
+            </div>
+            {hasChange && previewBase && previewNew !== undefined && (
+              <div className="rounded-lg bg-primary-soft px-3 py-2 text-xs leading-relaxed text-ink">
+                Ví dụ — {previewBase.typeName} ngày {previewBase.dateShort}: giá gốc {fmt(previewBase.price)} → {chName} mới <b>{fmt(previewNew)}</b>
+                {previewNow !== undefined && <> (hiện tại {fmt(previewNow)} với +{markup.currentPct}%)</>}.
+              </div>
+            )}
+            <p className="text-xs text-muted">Đổi % xong, giá của kênh này tính lại ngay theo % mới cho mọi loại phòng và mọi ngày, rồi gửi lên Channex.</p>
+            {markupError && <p className="text-sm font-medium text-danger">{markupError}</p>}
+          </div>
+          <div className="mt-5 flex gap-3">
+            <button onClick={closeMarkup} className="cb-btn-ghost flex-1 px-4 py-2 text-sm">Huỷ bỏ</button>
+            <button onClick={() => void applyMarkup()} disabled={mkDisabled} className="cb-btn-primary flex-1 px-4 py-2 text-sm disabled:opacity-50">{markupSaving ? "Đang lưu..." : "Xác nhận"}</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Man hinh tao gia cho kenh (RATES14) — 1 buoc: kenh, loai phong, suy ra tu gia goc, % cong them, xem truoc bang tien that.
+  function CreateRateModal() {
+    if (!creator) return null;
+    const ch = CHANNELS.find((c) => c.code === creator.channelCode);
+    const chName = ch?.name ?? creator.channelCode;
+    const typeName = roomTypesDb.find((t) => t.id === creator.roomTypeId)?.name ?? creator.roomTypeId;
+    const isOta = ch?.type === "ota";
+    const webPlan = standardPlanFor("website", creator.roomTypeId);
+    const basePrice = webPlan?.prices[creator.date];
+    // Gia goc de xem truoc: gia ngay vua bam, khong co thi ngay gan nhat co gia (trong khung hien truoc, roi moi ngay).
+    const previewBase = (() => {
+      if (!webPlan) return undefined;
+      if (basePrice !== undefined) return { dateShort: creator.date.split("-").reverse().join("/"), price: basePrice };
+      const d = days.find((x) => webPlan.prices[x] !== undefined)
+        ?? Object.keys(webPlan.prices).sort().find((x) => webPlan.prices[x] !== undefined);
+      return d ? { dateShort: d.split("-").reverse().join("/"), price: webPlan.prices[d] as number } : undefined;
+    })();
+    const pct = Number(creatorPct);
+    const pctOk = creatorPct !== "" && !Number.isNaN(pct);
+    const previewPrice = previewBase && pctOk && isOta
+      ? applyFormula(previewBase.price, { id: "pv", name: "", kind: "percent", value: pct })
+      : previewBase && !isOta
+        ? previewBase.price
+        : undefined;
+    const noBase = !webPlan || !previewBase;
+    const canCreate = !creatorSaving && !noBase && (!isOta || pctOk);
+    const dateShort = creator.date.split("-").reverse().join("/");
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeCreator}>
+        <div className="w-full max-w-md rounded-xl bg-surface p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-bold text-ink">Tạo giá cho kênh</h3>
+            <button onClick={closeCreator} className="rounded-md px-2 py-1 text-lg font-bold text-muted hover:bg-[var(--nui-bg)]">✕</button>
+          </div>
+          <div className="mt-4 space-y-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted">Kênh bán</span>
+              <span className="font-semibold text-ink">{chName}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted">Loại phòng</span>
+              <span className="font-semibold text-ink">{typeName}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted">Suy ra từ</span>
+              <span className="font-semibold text-ink">Website — Giá gốc</span>
+            </div>
+            {isOta && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted">% cộng thêm</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    autoFocus
+                    value={creatorPct}
+                    onChange={(e) => setCreatorPct(e.target.value)}
+                    className="cb-input-pill w-24 px-2 py-1.5 text-right font-semibold"
+                  />
+                  <span className="text-muted">%</span>
+                </div>
+              </div>
+            )}
+            {!isOta && (
+              <p className="text-xs text-muted">Giá bằng giá gốc (không cộng thêm).</p>
+            )}
+            {previewBase && previewPrice !== undefined && (
+              <div className="rounded-lg bg-primary-soft px-3 py-2 text-xs leading-relaxed text-ink">
+                {chName} {typeName} = Giá gốc {fmt(previewBase.price)} {isOta ? `+ ${pct}%` : ""} = <b>{fmt(previewPrice)}</b>
+                {previewBase.dateShort !== dateShort && <> (giá gốc ngày {previewBase.dateShort})</>}.
+              </div>
+            )}
+            {noBase && (
+              <p className="text-sm font-medium text-danger">Chưa có giá gốc cho {typeName} — nhập giá gốc ở hàng Website trước rồi mới tạo giá cho kênh.</p>
+            )}
+            {isOta && <p className="text-xs text-muted">Đổi % ở đây sẽ đổi cho mọi loại phòng của kênh {chName}.</p>}
+            {creatorError && <p className="text-sm font-medium text-danger">{creatorError}</p>}
+          </div>
+          <div className="mt-5 flex gap-3">
+            <button onClick={closeCreator} className="cb-btn-ghost flex-1 px-4 py-2 text-sm">Huỷ bỏ</button>
+            <button onClick={() => void applyCreateRate()} disabled={!canCreate} className="cb-btn-primary flex-1 px-4 py-2 text-sm disabled:opacity-50">{creatorSaving ? "Đang tạo..." : "Tạo giá cho kênh"}</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ---------- luoi gia ----------
   function renderPriceCell(plan: RatePlan | undefined, date: string, channelCode: string, typeId: string) {
+    // Kênh chưa có gói giá: hiện nút "— Đặt giá —" mở màn hình tạo giá 1 bước (không tự tạo ngầm khi bấm ô).
+    if (!plan && channelCode !== "website") {
+      return (
+        <div
+          key={date}
+          onClick={() => void openCreator(channelCode, typeId, date)}
+          className={`cursor-pointer border-b border-l border-[var(--nui-bg)] px-2 py-2 text-center hover:bg-primary-soft/70 ${date === todayStr ? "bg-primary-soft/50" : ""}`}
+          title="Chưa có giá cho kênh này — bấm để tạo giá"
+        >
+          <span className="inline-block rounded-md border border-dashed border-line px-2 py-0.5 text-xs font-semibold text-primary">— Đặt giá —</span>
+        </div>
+      );
+    }
     const r = plan ? restrictions[keyOf(plan.id, date)] : undefined;
     const isEditing = !!plan && editing?.planId === plan.id && editing?.date === date;
     const price = plan ? priceForCell(plan, date) : undefined;
     const isOverride = !!plan?.derivedFromId && overrides[keyOf(plan.id, date)] !== undefined;
+    const derivedPct = plan?.derivedFromId ? getFormula(plan.formulaId)?.value : undefined;
     const ib = inventoryBlockOn(invBlocks, channelCode, typeId, date);
     const webPlan = channelCode === "website" ? undefined : standardPlanFor("website", typeId);
     const webPrice = webPlan?.prices[date];
@@ -1288,9 +1595,18 @@ export default function RatesCalendar() {
       <div
         key={date}
         onClick={() => void openQuickUpdate(channelCode, typeId, date)}
-        className={`cursor-pointer border-b border-l border-[var(--nui-bg)] px-2 py-2 text-center hover:bg-primary-soft/70 ${r?.stopSell || ib ? "bg-danger-soft" : saved ? "bg-success-soft" : date === todayStr ? "bg-primary-soft/50" : ""}`}
-        title={isOverride ? "Giá sửa tay — bấm vào ô rồi xoá trắng để về lại giá tự tính." : undefined}
+        className={`relative cursor-pointer border-b border-l border-[var(--nui-bg)] px-2 py-2 text-center hover:bg-primary-soft/70 ${r?.stopSell || ib ? "bg-danger-soft" : saved ? "bg-success-soft" : date === todayStr ? "bg-primary-soft/50" : ""}`}
+        title={
+          isOverride
+            ? "Giá sửa tay — bấm để xem, sửa hoặc xoá về giá tự tính."
+            : plan?.derivedFromId
+              ? `Giá tự tính từ giá gốc${derivedPct !== undefined ? ` +${derivedPct}%` : ""} — bấm để đặt giá riêng (sửa tay), đổi % ở đầu hàng.`
+              : undefined
+        }
       >
+        {isOverride && !ib && !r?.stopSell && (
+          <span className="absolute right-1 top-1 text-[9px] leading-none text-ink" title="Giá sửa tay">▲</span>
+        )}
         {ib ? (
           <div className="text-xs font-semibold text-muted">
             ĐÓNG BÁN
@@ -1302,7 +1618,6 @@ export default function RatesCalendar() {
           <>
             <div className={`text-sm tabular-nums ${priceWeightCls} ${priceTextCls}`}>
               {price !== undefined ? fmt(price) : <span className="font-normal text-subtle">—</span>}
-              {isOverride && <span className="text-warning"> ●</span>}
             </div>
             {hasRestr && badges.length > 0 && (
               <button
@@ -1323,6 +1638,40 @@ export default function RatesCalendar() {
     );
   }
 
+  // Doi % cong them cua 1 kenh (RATES11) — % chi dat o Lich gia, khong dat o trang Kenh ban nua.
+  // Cap nhat formula cua goi chuan suy ra cua kenh (moi loai phong 1 goi); gia kenh tinh lai tu dong theo cong thuc moi roi gui len Channex.
+  async function setChannelMarkup(channelCode: string, pct: number): Promise<boolean> {
+    const formulaId = pct > 0 ? `f-plus${pct}` : pct < 0 ? `f-minus${-pct}` : undefined;
+    const targets = roomTypesDb
+      .map((t) => standardPlanFor(channelCode, t.id))
+      .filter((p): p is RatePlan => !!p && !!p.derivedFromId);
+    if (targets.length === 0) return false;
+    const oldPct = getFormula(targets[0].formulaId)?.value ?? 0;
+    if (oldPct === pct) return true;
+    const ids = targets.map((p) => p.id);
+    const { error } = await supabase.from("rate_plans").update({ formula_id: formulaId ?? null }).in("id", ids);
+    if (error) {
+      setDbError("Đổi % cộng thêm không thành công: " + error.message);
+      return false;
+    }
+    setPlans((prev) => prev.map((p) => (ids.includes(p.id) ? { ...p, formulaId } : p)));
+    markDirty(channelCode);
+    queueChannexDates(days);
+    const chName = CHANNELS.find((c) => c.code === channelCode)?.name ?? channelCode;
+    await writeAuditLog({
+      hotelId: HOTEL_ID,
+      accountId: ACCOUNT_ID,
+      action: "price_updated",
+      entityType: "rate_price",
+      entityId: channelCode,
+      summary: `Đổi % cộng thêm kênh ${chName}: ${oldPct}% → ${pct}% (giá kênh tính lại theo % mới)`,
+      details: { channelCode, oldPct, newPct: pct },
+    });
+    logChange(`Đổi % cộng thêm kênh ${chName}: ${oldPct}% → ${pct}%`);
+    showToast(`Đã đổi % cộng thêm kênh ${chName} thành ${pct}% — giá kênh đã tính lại, đang gửi lên Channex.`);
+    return true;
+  }
+
   function renderPriceRows(channelCode: string, typeId: string) {
     const plan = standardPlanFor(channelCode, typeId);
     const ch = CHANNELS.find((c) => c.code === channelCode);
@@ -1336,8 +1685,16 @@ export default function RatesCalendar() {
           <div className={`flex items-center gap-1.5 text-sm ${isBase ? "font-bold text-ink" : "font-medium text-muted"}`}>
             {isBase ? "★ " : <span className="pl-4" />}
             {ch?.name ?? channelCode}
-            {!isBase && formulaPct !== undefined && <span className="rounded bg-primary-soft px-1.5 py-0.5 text-[11px] font-bold text-primary">+{formulaPct}%</span>}
-            {!isBase && formulaPct === undefined && <span className="rounded bg-primary-soft px-1.5 py-0.5 text-[11px] font-bold text-primary">±0%</span>}
+            {isBase && <span className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-bold text-white">Giá gốc</span>}
+            {!isBase && (
+              <button
+                onClick={() => openMarkup(channelCode, formulaPct ?? 0)}
+                className="rounded bg-primary-soft px-1.5 py-0.5 text-[11px] font-bold text-primary hover:bg-primary hover:text-white"
+                title="Bấm để đổi % cộng thêm của kênh này"
+              >
+                {formulaPct !== undefined ? `+${formulaPct}%` : "±0%"}
+              </button>
+            )}
             {dirtyChannels.has(channelCode) && <span className="text-warning" title="Có thay đổi chưa đẩy lên Channex">●</span>}
           </div>
         </div>
@@ -1481,7 +1838,7 @@ export default function RatesCalendar() {
             </div>
           </div>
           <p className="mt-2 text-xs text-muted">
-            Bấm ô giá để sửa (Enter lưu, Tab sang ngày sau, Esc huỷ). Chấm vàng = giá sửa tay — xoá trắng để về lại giá tự tính.
+            Giá các kênh tự tính từ giá gốc (hàng Website, có ★) theo % cộng thêm ở đầu hàng. Kênh chưa có giá thì bấm “— Đặt giá —” để tạo giá. Bấm ô giá để đặt giá riêng cho kênh đó — thành giá sửa tay (tam giác đen ở góc ô), chỉ kênh đó đổi, các kênh khác không đổi; bấm nút “Xoá giá riêng” trong popup để về lại giá tự tính.
           </p>
         </>
       )}
@@ -1594,6 +1951,8 @@ export default function RatesCalendar() {
       {InvModal()}
       {RestrictionPopover()}
       {QuickUpdateModal()}
+      {MarkupModal()}
+      {CreateRateModal()}
       {Toast()}
     </div>
   );

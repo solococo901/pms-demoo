@@ -5,8 +5,11 @@ import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
 import { useParams } from "next/navigation";
 import { queueChannexDates, stayDates } from "@/lib/channex-outbox";
+import { writeAuditLog } from "@/lib/audit-log";
 
-// NATEUI24 — components/ChannexBookings.tsx (nhan don tu Channex)
+// AUDIT8 — components/ChannexBookings.tsx (nhan don tu Channex)
+// Moi lan keo don ve (moi / sua / huy) deu ghi 1 dong vao audit_logs (action booking_pulled),
+// don sua ghi ro ngay cu -> ngay moi de thay ngay bi kenh de ve.
 // Keo revision tu Channex → doi chieu mapping → ghi don vao Supabase → ghi nhat ky revision → ack; don moi = confirmed, sua = cap nhat, huy = cancelled.
 // Doi sang token toi gian 2026-11-21.
 
@@ -201,7 +204,7 @@ export default function ChannexBookings() {
       const [typesRes, plansRes, resvRes, revRes] = await Promise.all([
         supabase.from("room_types").select("id, channex_id").eq("hotel_id", HOTEL_ID),
         supabase.from("rate_plans").select("id, channex_id").eq("hotel_id", HOTEL_ID),
-        supabase.from("reservations").select("id, channex_booking_id").eq("hotel_id", HOTEL_ID).not("channex_booking_id", "is", null),
+        supabase.from("reservations").select("id, channex_booking_id, check_in, check_out, guest_name, total_amount").eq("hotel_id", HOTEL_ID).not("channex_booking_id", "is", null),
         supabase.from("channex_revisions").select("revision_id").eq("hotel_id", HOTEL_ID),
       ]);
       const typeByChannex = new Map(
@@ -213,7 +216,14 @@ export default function ChannexBookings() {
       const resByBooking = new Map(
         (resvRes.data ?? []).map((r) => [r.channex_booking_id as string, r.id])
       );
+      const oldByBooking = new Map(
+        (resvRes.data ?? []).map((r) => [
+          r.channex_booking_id as string,
+          { checkIn: r.check_in as string, checkOut: r.check_out as string, guestName: r.guest_name as string, total: r.total_amount as number },
+        ])
+      );
       const processed = new Set((revRes.data ?? []).map((r) => r.revision_id));
+      const dShort = (d: string) => d.split("-").reverse().join("/");
 
       const ackIds: string[] = [];
       const touchedDates: string[] = [];
@@ -330,6 +340,38 @@ export default function ChannexBookings() {
           reservation_id: reservationId,
         });
         if (revErr) throw new Error("Ghi nhật ký revision lỗi: " + revErr.message);
+
+        // Ghi log keo don (AUDIT8) — de lan sau ngay don bi kenh de ve thi mo nhat ky la thay ngay.
+        const old = oldByBooking.get(a.booking_id);
+        let pullSummary: string;
+        if (a.status === "cancelled") {
+          pullSummary = `Kênh huỷ đơn ${guestName} · ${dShort(checkIn)} → ${dShort(checkOut)} (${sourceName ?? "OTA"})`;
+        } else if (existingId && old && (old.checkIn !== checkIn || old.checkOut !== checkOut)) {
+          pullSummary = `Kéo đơn từ ${sourceName ?? "OTA"} về, đè ngày cũ ${dShort(old.checkIn)} → ${dShort(old.checkOut)} thành ${dShort(checkIn)} → ${dShort(checkOut)}: ${guestName}`;
+        } else if (existingId) {
+          pullSummary = `Kéo đơn từ ${sourceName ?? "OTA"} về, cập nhật đơn ${reservationId}: ${guestName} · ${dShort(checkIn)} → ${dShort(checkOut)}`;
+        } else {
+          pullSummary = `Kéo đơn mới từ ${sourceName ?? "OTA"} về: ${guestName} · ${dShort(checkIn)} → ${dShort(checkOut)} · ${total.toLocaleString("vi-VN")}₫`;
+        }
+        await writeAuditLog({
+          hotelId: HOTEL_ID,
+          accountId: ACCOUNT_ID,
+          action: "booking_pulled",
+          entityType: "reservation",
+          entityId: reservationId!,
+          summary: pullSummary,
+          details: {
+            reservationId,
+            channexBookingId: a.booking_id,
+            source: sourceName ?? null,
+            checkIn,
+            checkOut,
+            total,
+            oldCheckIn: old?.checkIn ?? null,
+            oldCheckOut: old?.checkOut ?? null,
+            status: a.status,
+          },
+        });
 
         ackIds.push(rev.id);
         touchedDates.push(...stayDates(checkIn, checkOut));

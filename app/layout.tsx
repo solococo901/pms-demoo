@@ -1,7 +1,7 @@
 "use client";
 
 // ============================================================
-// FILE NATEUI2 — app/layout.tsx (khung Cloudbeds, đổi sang
+// FILE LAYOUT3 — app/layout.tsx (khung Cloudbeds, token NateUI + muc Nhat ky thao tac)
 // token tối giản kiểu NateUI — 2026-11-21, bước 2 sau NATEUI1)
 // CHỈ đổi class màu/viền sang token (bg-primary, text-ink,
 // text-muted, bg-surface, bg-primary-soft, border-line...);
@@ -88,6 +88,7 @@ const MENU = [
   { label: "Đặt phòng", href: "/reservations", icon: "reservations", group: "Vận hành" },
   { label: "Buồng phòng", href: "/housekeeping", icon: "housekeeping", group: "Vận hành" },
   { label: "Báo cáo", href: "/reports", icon: "reports", group: "Quản lí", adminOnly: true },
+  { label: "Nhật ký thao tác", href: "/audit", icon: "reservations", group: "Quản lí", adminOnly: true },
   { label: "Cài đặt", href: "/settings", icon: "settings", group: "Quản lí", adminOnly: true },
   { label: "Người dùng", href: "/settings/users", icon: "user", group: "Quản lí", adminOnly: true },
 ];
@@ -124,7 +125,7 @@ function MenuIcon({ name }: { name: string }) {
 // Cac duong dan chi admin duoc vao (staff go thang cung bi chan).
 // "/hotels/" (co dau / cuoi) chi chan trang con /hotels/[id] — trang
 // danh sach /hotels mo cho ca nhan vien de chon khach san lam viec.
-const ADMIN_ROUTES = ["/hotels/", "/rates", "/channels", "/reports", "/settings"];
+const ADMIN_ROUTES = ["/hotels/", "/rates", "/channels", "/reports", "/settings", "/audit"];
 
 
 function HotelSwitcher() {

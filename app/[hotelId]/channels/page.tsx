@@ -1,6 +1,7 @@
 "use client";
 
-// NATEUI8 — app/[hotelId]/channels/page.tsx (Kenh ban)
+// RATES11 — app/[hotelId]/channels/page.tsx (Kenh ban)
+// Bo o nhap "% Hoa hong" o the kenh (Vos: % chi dat o Lich gia) — the kenh chi hien "Đặt ở Lịch giá".
 // Moi o kenh hien trang thai THAT doc tu DB; doi sang token toi gian 2026-11-21.
 // Da ket noi = co goi gia mang channex_id; tat ban = tao block dong ban theo kenh.
 
@@ -13,17 +14,13 @@ import ChannexBookings from "@/components/ChannexBookings";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
 import { addDaysStr, isoDay } from "@/lib/channex-compute";
-import { patchChannelSettings, queueChannexDates, rangeDates } from "@/lib/channex-outbox";
+import { queueChannexDates, rangeDates } from "@/lib/channex-outbox";
 import { IconBuilding } from "@/components/icons";
 
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 // Ly do danh dau block do cong tac tat-ban tao ra (de bat lai chi xoa dung cac block nay).
 const OFF_REASON = "Tắt bán trên kênh";
 const OFF_DAYS = 365;
-const DEFAULT_COMMISSIONS: Record<string, number> = {
-  booking_com: 15, expedia: 18, airbnb: 14, agoda: 16,
-};
-
 type OffBlock = {
   id: string; channelCode: string; roomTypeId: string;
 };
@@ -51,7 +48,6 @@ export default function ChannelsPage() {
   const [connected, setConnected] = useState<Record<string, boolean>>({});
   const [offBlocks, setOffBlocks] = useState<OffBlock[]>([]);
   const [roomTypeIds, setRoomTypeIds] = useState<string[]>([]);
-  const [commissions, setCommissions] = useState<Record<string, number>>(DEFAULT_COMMISSIONS);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [busyCode, setBusyCode] = useState<string | null>(null);
 
@@ -101,7 +97,6 @@ export default function ChannelsPage() {
       );
       setRoomTypeIds((typesRes.data ?? []).map((t) => t.id));
       const settings = (connRes.data?.settings ?? {}) as Record<string, any>;
-      if (settings.commissions) setCommissions({ ...DEFAULT_COMMISSIONS, ...settings.commissions });
       setLastSyncAt(settings.last_sync_at ?? null);
       setLoading(false);
     })();
@@ -145,12 +140,6 @@ export default function ChannelsPage() {
       queueChannexDates(rangeDates(today, to), HOTEL_ID);
     }
     setBusyCode(null);
-  }
-
-  async function saveCommission(code: string, value: number) {
-    const next = { ...commissions, [code]: value };
-    setCommissions(next);
-    await patchChannelSettings(HOTEL_ID, { commissions: next });
   }
 
   return (
@@ -266,16 +255,8 @@ export default function ChannelsPage() {
                     </button>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-muted">Hoa hồng kênh thu</span>
-                    <span className="text-ink">
-                      <input
-                        type="number"
-                        value={commissions[c.code] ?? 0}
-                        onChange={(e) => setCommissions((prev) => ({ ...prev, [c.code]: Number(e.target.value) }))}
-                        onBlur={() => saveCommission(c.code, commissions[c.code] ?? 0)}
-                        className="w-16 rounded border border-line px-2 py-1 text-right outline-none focus:border-primary"
-                      /> %
-                    </span>
+                    <span className="text-muted">Phần trăm cộng thêm</span>
+                    <span className="text-ink">Đặt ở Lịch giá</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted">Đồng bộ gần nhất</span>
