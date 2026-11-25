@@ -17,6 +17,7 @@ import {
   type RoomType,
 } from "@/lib/mock-data";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/components/Toast";
 import { queueChannexDates, stayDates } from "@/lib/channex-outbox";
 import { currentHotelId } from "@/lib/current-hotel";
 import { markRoomsDirtyAfterCheckout } from "@/lib/checkout-housekeeping";
@@ -84,6 +85,7 @@ const fmtDateTime = (iso: string) => {
 };
 
 export default function ReservationsPage() {
+  const { showToast } = useToast();
   // Khach san lay tu URL /h/[hotelId] khi co; neu khong (duong dan cu)
   // thi dung khach san da luu theo tab.
   const params = useParams();
@@ -215,7 +217,7 @@ export default function ReservationsPage() {
       .insert({ hotel_id: HOTEL_ID, account_id: ACCOUNT_ID, reservation_id: detail.id, author, body: noteDraft.trim() })
       .select("id, author, body, created_at")
       .single();
-    if (error || !data) return alert("Lưu ghi chú không thành công: " + (error?.message ?? ""));
+    if (error || !data) { showToast("Lưu ghi chú không thành công: " + (error?.message ?? ""), "error"); return; }
     setDetailNotes((prev) => [...prev, { id: data.id, author: data.author, body: data.body, createdAt: data.created_at }]);
     setNoteDraft("");
   }
@@ -362,7 +364,7 @@ export default function ReservationsPage() {
     // reservation_rooms, ben goi tu lo truoc khi goi ham nay.
     const { error } = await supabase.from("reservations").update(dbPatch).eq("id", id);
     if (error) {
-      alert("Lưu xuống cơ sở dữ liệu không thành công: " + error.message);
+      showToast("Lưu xuống cơ sở dữ liệu không thành công: " + error.message, "error");
       return false;
     }
     setReservations((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -385,7 +387,7 @@ export default function ReservationsPage() {
       id: item.id, reservation_id: item.reservationId, hotel_id: HOTEL_ID, account_id: ACCOUNT_ID,
       date: item.date, label: item.label, amount: item.amount,
     });
-    if (error) return alert("Lưu khoản dịch vụ không thành công: " + error.message);
+    if (error) { showToast("Lưu khoản dịch vụ không thành công: " + error.message, "error"); return; }
     setFolioItems((prev) => [...prev, item]);
     setExtraLabel("");
     setExtraAmount(0);
@@ -393,7 +395,7 @@ export default function ReservationsPage() {
 
   async function deleteExtra(id: string) {
     const { error } = await supabase.from("folio_items").delete().eq("id", id);
-    if (error) return alert("Xoá khoản dịch vụ không thành công: " + error.message);
+    if (error) { showToast("Xoá khoản dịch vụ không thành công: " + error.message, "error"); return; }
     setFolioItems((prev) => prev.filter((x) => x.id !== id));
   }
 
@@ -401,7 +403,7 @@ export default function ReservationsPage() {
     if (!detail || payAmount <= 0) return;
     // Khong thu qua so con no (kieu Cloudbeds: thanh toan khong vuot balance).
     const check = validatePayment(payAmount, balance);
-    if (!check.ok) return alert(check.error);
+    if (!check.ok) { showToast(check.error ?? "Có lỗi xảy ra.", "error"); return; }
     patchReservation(detail.id, { paidAmount: detail.paidAmount + payAmount });
     setPayAmount(0);
   }
@@ -639,7 +641,7 @@ export default function ReservationsPage() {
 
   async function applyBulk() {
     const rows = reservations.filter((r) => selected.has(r.id));
-    if (rows.length === 0) return alert("Chưa tick chọn đơn nào.");
+    if (rows.length === 0) { showToast("Chưa tick chọn đơn nào.", "error"); return; }
     if (bulkAction === "export") exportCsv(rows);
     else {
       // Chi huy duoc don cho xac nhan / da xac nhan — don dang o / da tra
@@ -647,10 +649,10 @@ export default function ReservationsPage() {
       const okRows = rows.filter((r) => canCancel(r).ok);
       const skipped = rows.length - okRows.length;
       if (okRows.length === 0)
-        return alert("Không huỷ được đơn nào trong các đơn đã chọn (chỉ huỷ được đơn chờ xác nhận / đã xác nhận).");
+        { showToast("Không huỷ được đơn nào trong các đơn đã chọn (chỉ huỷ được đơn chờ xác nhận / đã xác nhận).", "error"); return; }
       if (!window.confirm(`Huỷ ${okRows.length} đơn đã chọn?${skipped > 0 ? ` ${skipped} đơn đang ở / đã trả phòng sẽ được bỏ qua.` : ""}`)) return;
       const { error } = await supabase.from("reservations").update({ status: "cancelled" }).in("id", okRows.map((r) => r.id));
-      if (error) return alert("Huỷ đơn trên cơ sở dữ liệu không thành công: " + error.message);
+      if (error) { showToast("Huỷ đơn trên cơ sở dữ liệu không thành công: " + error.message, "error"); return; }
       setReservations((prev) =>
         prev.map((r) => (okRows.some((x) => x.id === r.id) ? { ...r, status: "cancelled" as ReservationStatus } : r))
       );
@@ -834,7 +836,7 @@ export default function ReservationsPage() {
       {/* ---------- reservation detail drawer + folio ---------- */}
       {detail && (
         <>
-          <div className="fixed inset-0 z-20 bg-ink/30" onClick={() => { setDetailId(null); setEditing(false); setExtending(false); }} />
+          <div className="fixed inset-0 z-20" onClick={() => { setDetailId(null); setEditing(false); setExtending(false); }} />
           <div className="fixed inset-y-0 right-0 z-50 flex w-[26rem] max-w-[92vw] flex-col bg-surface shadow-2xl">
             <div className="border-b border-[var(--nui-bg)] p-5">
               <div className="flex items-start gap-3">

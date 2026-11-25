@@ -1,18 +1,23 @@
 "use client";
-// BULK10 — app/[hotelId]/rates/bulk/page.tsx (Trang rieng Cap nhat gia hang loat, toi gian kieu ezCloud + chon nhanh khoang ngay)
+// BULK12 — app/[hotelId]/rates/bulk/page.tsx (Trang rieng Cap nhat gia hang loat, toi gian kieu ezCloud + chon nhanh khoang ngay)
+// BULK12 (2026-11-25): them tab "Han che" (ngay o toi thieu + dong ban) ben canh tab "Gia"; mo thang tab Han che bang ?tab=restrictions&mode=stop_sell|min_stay.
 // Khong the card: loai phong + ten loai sat trai, 7 o T2-CN chum phai; Master hien cong thuc suy ra; nut nhanh 30/90/180 ngay, 1 nam, 500 ngay; o nhap hien dau cham ngan cach hang nghin khi go.
 // Gia goc = gia Website; kenh khac suy ra theo % hoa hong, nhap tay la override (xoa de ve lai gia suy ra).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useToast } from "@/components/Toast";
 import {
   CHANNELS,
   CHANNEL_FORMULA,
   RATE_PLANS,
   ROOM_TYPES,
   getFormula,
+  inventoryBlockOn,
   resolvePlanPrice,
+  type BaseRatePeriod,
+  type InventoryBlock,
   type RatePlan,
   type RoomType,
 } from "@/lib/mock-data";
@@ -36,6 +41,12 @@ const fmt = (n: number) => n.toLocaleString("vi-VN");
 const fmtInput = (v: string) => (v === "" ? "" : Number(v).toLocaleString("vi-VN"));
 const isoLocal = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// Dich ngay d them n ngay (n am duoc) — dung khi tach block dong ban.
+const shiftDay = (d: string, n: number) => {
+  const dt = new Date(d + "T00:00:00");
+  dt.setDate(dt.getDate() + n);
+  return isoLocal(dt);
+};
 // Mac dinh: thang sau (thuong la thang can nhap gia).
 function nextMonthRange(): { from: string; to: string } {
   const now = new Date();
@@ -60,17 +71,22 @@ export default function BulkRatesPage() {
   const [roomTypesDb, setRoomTypesDb] = useState<RoomType[]>(ROOM_TYPES);
   const [restrictions, setRestrictions] = useState<Record<CellKey, Restriction>>({});
   const [overrides, setOverrides] = useState<Record<CellKey, number>>({}); // gia sua tay cua goi suy ra
+  const [basePeriods, setBasePeriods] = useState<BaseRatePeriod[]>([]); // giai doan gia goc (Base Rate)
   const [dbError, setDbError] = useState("");
 
   const [channel, setChannel] = useState<string>("website");
   const [typeIds, setTypeIds] = useState<string[]>([]); // rong = tat ca loai phong
   const [range, setRange] = useState<{ from: string; to: string }>(() => nextMonthRange());
   const [values, setValues] = useState<Record<string, string>>({}); // `${typeId}|${dow}` -> gia nhap
+  const [bigTab, setBigTab] = useState<"price" | "restrictions">("price");
+  const [restrMode, setRestrMode] = useState<"min_stay" | "stop_sell">("min_stay");
+  const [invBlocks, setInvBlocks] = useState<InventoryBlock[]>([]); // cac block dong ban
+  const [restrValues, setRestrValues] = useState<Record<string, string>>({}); // `${typeId}|${dow}` -> so dem toi thieu nhap
+  const [stopValues, setStopValues] = useState<Record<string, boolean>>({}); // `${typeId}|${dow}` -> tick "Ngung ban" (chi nhung o da cham)
   const [showTypeFilter, setShowTypeFilter] = useState(false);
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [toast, setToast] = useState<{ text: string; onUndo?: () => void } | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { showToast } = useToast();
   const ensuringRef = useRef<Set<string>>(new Set());
 
   const selectedTypes = typeIds.length === 0 ? roomTypesDb : roomTypesDb.filter((t) => typeIds.includes(t.id));
@@ -84,21 +100,17 @@ export default function BulkRatesPage() {
         ? "Giá nhập là giá Lễ tân — bằng giá gốc."
         : `Giá tự tính từ giá gốc ${factorText} + 0 — ô nào nhập giá thì ô đó thành giá sửa tay (chỉ kênh này).`;
 
-  function showToast(text: string, onUndo?: () => void) {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast({ text, onUndo });
-    toastTimer.current = setTimeout(() => setToast(null), 10000);
-  }
-
   // ---------- Supabase: load plans + daily prices on mount ----------
   useEffect(() => {
     (async () => {
-      const [typesRes, plansRes, pricesRes] = await Promise.all([
+      const [typesRes, plansRes, pricesRes, baseRes, invRes] = await Promise.all([
         supabase.from("room_types").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("rate_plans").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("rate_prices").select("*"),
+        supabase.from("base_rate_periods").select("*").eq("hotel_id", HOTEL_ID),
+        supabase.from("inventory_blocks").select("*").eq("hotel_id", HOTEL_ID),
       ]);
-      const loadErr = plansRes.error ?? pricesRes.error;
+      const loadErr = plansRes.error ?? pricesRes.error ?? baseRes.error ?? invRes.error;
       if (loadErr) {
         setDbError(loadErr.message ?? "Không đọc được dữ liệu");
         return;
@@ -141,6 +153,17 @@ export default function BulkRatesPage() {
           if (!page || page.length < 1000) break;
         }
       }
+      // Gia goc theo giai doan (Base Rate): nap vao plan.prices cua goi Website
+      // truoc, roi cac dong rate_prices (gia sua tay / override) ghi de len tren.
+      const baseList: BaseRatePeriod[] = (baseRes.data ?? []).map((r) => ({
+        id: r.id, roomTypeId: r.room_type_id, from: r.from_date, to: r.to_date, price: Number(r.price),
+      }));
+      setBasePeriods(baseList);
+      for (const bp of baseList) {
+        const plan = dbPlans.find((x) => !x.derivedFromId && x.roomTypeId === bp.roomTypeId);
+        if (!plan) continue;
+        for (const d of rangeDates(bp.from, bp.to)) plan.prices[d] = bp.price;
+      }
       const rows = allPriceRows.filter((r) => planIds.has(r.rate_plan_id));
       const dbOverrides: Record<CellKey, number> = {};
       for (const row of rows) {
@@ -165,23 +188,42 @@ export default function BulkRatesPage() {
       setPlans(dbPlans);
       setOverrides(dbOverrides);
       setRestrictions(dbRestrictions);
+      setInvBlocks((invRes.data ?? []).map((r) => ({
+        id: r.id,
+        scope: r.scope as "channel" | "room_type",
+        channelCode: r.channel_code ?? undefined,
+        roomTypeId: r.room_type_id,
+        from: r.from_date,
+        to: r.to_date,
+        reason: r.reason ?? undefined,
+      })));
     })();
   }, []);
 
-  // Prefill tu nut Sua nhanh o Lich gia: ?type=<id>&from=<yyyy-mm-dd>&to=<yyyy-mm-dd>
+  // Prefill tu nut Sua nhanh o Lich gia: ?type=<id>&from=<yyyy-mm-dd>&to=<yyyy-mm-dd>&channel=<code>
+  // Nut "Dong ban" o Lich gia dan sang ?tab=restrictions&mode=stop_sell de mo thang tab Han che.
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const t = q.get("type");
     const from = q.get("from");
     const to = q.get("to");
+    const ch = q.get("channel");
+    const tab = q.get("tab");
+    const mode = q.get("mode");
     if (t) setTypeIds([t]);
     if (from && to && to >= from) setRange({ from, to });
+    if (ch && CHANNELS.some((c) => c.code === ch)) setChannel(ch);
+    if (tab === "restrictions") {
+      setBigTab("restrictions");
+      if (mode === "stop_sell") setRestrMode("stop_sell");
+      else if (mode === "min_stay") setRestrMode("min_stay");
+    }
   }, []);
 
   // Gia hien thi cua 1 o: goi goc lay gia da luu; goi suy ra tinh tu gia goc (+ cong thuc), gia sua tay thang.
   function priceForCell(plan: RatePlan, date: string): number | undefined {
     if (!plan.derivedFromId) return plan.prices[date];
-    return resolvePlanPrice(plan, date, plans, overrides);
+    return resolvePlanPrice(plan, date, plans, overrides, basePeriods);
   }
 
   // ---------- Supabase: save one cell (price + restrictions giu nguyen) ----------
@@ -346,7 +388,7 @@ export default function BulkRatesPage() {
     setProgress(100);
     queueChannexDates([...new Set(targets.map((t) => t.date))], HOTEL_ID);
     const typeNames = selectedTypes.map((t) => t.name).join(", ");
-    showToast(`Đã lưu ${done} ô giá ${chName} · ${typeNames} — sẽ đồng bộ lên Channex trong ít phút.`, () => {
+    showToast(`Đã lưu ${done} ô giá ${chName} · ${typeNames} — sẽ đồng bộ lên Channex trong ít phút.`, "success", () => {
       snap.forEach((cell) => {
         if (cell.hadPrice && cell.price !== undefined) setPrice(cell.planId, cell.date, cell.price);
         else clearPrice(cell.planId, cell.date);
@@ -396,6 +438,263 @@ export default function BulkRatesPage() {
     return undefined;
   }
 
+  // ---------- tab Han che ----------
+  // Kenh OTA thi dong ban theo kenh (scope="channel"); Website/Front Desk dong theo loai phong.
+  const isOta = CHANNELS.find((c) => c.code === channel)?.type === "ota";
+
+  // Ngay o toi thieu hien tai cua 1 thu (lay ngay dau tien co thu do) — hien nho duoi o nhap.
+  function currentWeekdayMinStay(typeId: string, dow: number): number | undefined {
+    const plan = standardPlanFor(channel, typeId);
+    if (!plan) return undefined;
+    if (!range.from || !range.to || range.to < range.from) return undefined;
+    for (const date of rangeDates(range.from, range.to)) {
+      if (dayParts(date).dow === dow) return restrictions[keyOf(plan.id, date)]?.minStay;
+    }
+    return undefined;
+  }
+
+  // Ngay dau tien co thu do trong khoang co dang dong ban khong.
+  function currentWeekdayBlocked(typeId: string, dow: number): boolean {
+    if (!range.from || !range.to || range.to < range.from) return false;
+    for (const date of rangeDates(range.from, range.to)) {
+      if (dayParts(date).dow === dow) return !!inventoryBlockOn(invBlocks, channel, typeId, date);
+    }
+    return false;
+  }
+
+  // Doi tab / doi che do thi xoa gia tri da nhap o tab/che do cu de khong luu nham.
+  function switchBigTab(tab: "price" | "restrictions") {
+    if (tab === bigTab) return;
+    if (tab === "restrictions") setValues({});
+    else { setRestrValues({}); setStopValues({}); }
+    setBigTab(tab);
+  }
+  function switchRestrMode(mode: "min_stay" | "stop_sell") {
+    if (mode === restrMode) return;
+    if (mode === "stop_sell") setRestrValues({});
+    else setStopValues({});
+    setRestrMode(mode);
+  }
+
+  // Chep so dem toi thieu Thu 2 sang cac ngay con lai (giong copyMonday cua tab Gia).
+  function copyRestrMonday(typeId: string) {
+    const mon = (restrValues[`${typeId}|1`] ?? "").trim();
+    if (!mon) return;
+    setRestrValues((prev) => {
+      const next = { ...prev };
+      for (const dow of [2, 3, 4, 5, 6, 0]) next[`${typeId}|${dow}`] = mon;
+      return next;
+    });
+  }
+
+  // Chon nhanh checkbox dong ban cho tat ca loai phong dang chon (thay toan bo lua chon cu).
+  function setStopQuick(kind: "all" | "weekday" | "weekend") {
+    const dows = kind === "all" ? [0, 1, 2, 3, 4, 5, 6] : kind === "weekday" ? [1, 2, 3, 4, 5] : [0, 6];
+    setStopValues((prev) => {
+      const next = { ...prev };
+      for (const type of selectedTypes) {
+        for (let dow = 0; dow <= 6; dow++) next[`${type.id}|${dow}`] = dows.includes(dow);
+      }
+      return next;
+    });
+  }
+
+  // So o han che se luu (de mo/khoa nut Cap nhat): min-stay = o da nhap so >= 1;
+  // stop-sell = ngay ma tick muon doi khac trang thai hien tai (chi tinh o da cham).
+  const restrTargets = useMemo(() => {
+    const list: { typeId: string; date: string; kind: "min_stay" | "stop_sell"; value?: number; wantBlocked?: boolean }[] = [];
+    if (bigTab !== "restrictions") return list;
+    if (!range.from || !range.to || range.to < range.from) return list;
+    if (restrMode === "min_stay") {
+      for (const type of selectedTypes) {
+        for (let dow = 0; dow <= 6; dow++) {
+          const raw = (restrValues[`${type.id}|${dow}`] ?? "").trim();
+          if (!raw || !/^\d+$/.test(raw)) continue;
+          const value = Number(raw);
+          if (value < 1) continue;
+          for (const date of rangeDates(range.from, range.to)) {
+            if (dayParts(date).dow === dow) list.push({ typeId: type.id, date, kind: "min_stay", value });
+          }
+        }
+      }
+    } else {
+      for (const type of selectedTypes) {
+        for (let dow = 0; dow <= 6; dow++) {
+          const key = `${type.id}|${dow}`;
+          if (stopValues[key] === undefined) continue;
+          const wantBlocked = stopValues[key];
+          for (const date of rangeDates(range.from, range.to)) {
+            if (dayParts(date).dow !== dow) continue;
+            const isBlocked = !!inventoryBlockOn(invBlocks, channel, type.id, date);
+            if (wantBlocked !== isBlocked) list.push({ typeId: type.id, date, kind: "stop_sell", wantBlocked });
+          }
+        }
+      }
+    }
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bigTab, restrMode, selectedTypes, range, restrValues, stopValues, invBlocks, channel]);
+
+  // ---------- luu hang loat tab Han che (co Hoan tac) ----------
+  async function saveRestrictions() {
+    if (saving || restrTargets.length === 0) return;
+    setSaving(true);
+    setProgress(0);
+    if (restrMode === "min_stay") {
+      const snap = new Map<string, { planId: string; date: string; oldRestr?: Restriction; price?: number }>();
+      const planCache = new Map<string, RatePlan | undefined>();
+      const pending: Promise<void>[] = [];
+      let done = 0;
+      let skipped = 0;
+      const changedDates = new Set<string>();
+      const savedTypes = new Set<string>();
+      const savedDates = new Set<string>();
+      const flush = async () => {
+        if (pending.length === 0) return;
+        await Promise.all(pending.splice(0));
+        setProgress(Math.round((done / restrTargets.length) * 100));
+      };
+      for (const t of restrTargets) {
+        if (t.kind !== "min_stay" || t.value === undefined) continue;
+        if (!planCache.has(t.typeId)) planCache.set(t.typeId, await ensureStandardPlan(channel, t.typeId));
+        const plan = planCache.get(t.typeId);
+        if (!plan) continue;
+        // Cot price NOT NULL nen o chua co gia thi khong the upsert min-stay — bo qua, bao trong toast.
+        const price = priceForCell(plan, t.date);
+        if (price === undefined) { skipped++; continue; }
+        const k = keyOf(plan.id, t.date);
+        if (!snap.has(k)) snap.set(k, { planId: plan.id, date: t.date, oldRestr: restrictions[k] ? { ...restrictions[k] } : undefined, price });
+        const r = { ...(restrictions[k] ?? {}), minStay: t.value };
+        pending.push(persistCell(plan.id, t.date, price, r));
+        setRestrictions((prev) => ({ ...prev, [k]: r }));
+        changedDates.add(t.date);
+        savedTypes.add(t.typeId);
+        savedDates.add(t.date);
+        done++;
+        if (pending.length >= 10) await flush();
+      }
+      await flush();
+      setProgress(100);
+      queueChannexDates([...changedDates], HOTEL_ID);
+      const typeCount = savedTypes.size;
+      const dayCount = savedDates.size;
+      showToast(
+        `Đã cập nhật ngày ở tối thiểu cho ${typeCount} loại phòng, ${dayCount} ngày.${skipped > 0 ? ` Bỏ qua ${skipped} ô chưa có giá.` : ""}`,
+        "success",
+        () => {
+          snap.forEach((cell) => {
+            const r = cell.oldRestr ? { ...cell.oldRestr } : {};
+            if (cell.price !== undefined) void persistCell(cell.planId, cell.date, cell.price, r);
+            setRestrictions((prev) => {
+              const next = { ...prev };
+              const k = keyOf(cell.planId, cell.date);
+              if (cell.oldRestr) next[k] = { ...cell.oldRestr };
+              else delete next[k];
+              return next;
+            });
+          });
+          showToast("Đã hoàn tác.");
+        }
+      );
+      setRestrValues({});
+    } else {
+      // Dong ban: lap ke hoach tren ban sao invBlocks roi moi ghi DB — tach block dai
+      // nhieu ngay khi bo tick 1 ngay giua (giu lai cac ngay con lai van dong).
+      const scope = isOta ? "channel" : "room_type";
+      const createdIds: string[] = [];
+      const deletedBlocks: InventoryBlock[] = [];
+      let working = [...invBlocks];
+      let counter = 0;
+      const changedDates = new Set<string>();
+      const toInsert: InventoryBlock[] = [];
+      const toDeleteIds: string[] = [];
+      for (const t of restrTargets) {
+        if (t.kind !== "stop_sell") continue;
+        const cur = inventoryBlockOn(working, channel, t.typeId, t.date);
+        if (t.wantBlocked && !cur) {
+          const nb: InventoryBlock = {
+            id: `ib-${Date.now()}-${counter++}`,
+            scope,
+            channelCode: isOta ? channel : undefined,
+            roomTypeId: t.typeId,
+            from: t.date,
+            to: t.date,
+          };
+          toInsert.push(nb);
+          working = [...working, nb];
+          createdIds.push(nb.id);
+          changedDates.add(t.date);
+        } else if (!t.wantBlocked && cur) {
+          toDeleteIds.push(cur.id);
+          deletedBlocks.push({ ...cur });
+          working = working.filter((b) => b.id !== cur.id);
+          changedDates.add(t.date);
+          const before = cur.from < t.date
+            ? { ...cur, id: `ib-${Date.now()}-${counter++}`, to: shiftDay(t.date, -1) }
+            : null;
+          const after = t.date < cur.to
+            ? { ...cur, id: `ib-${Date.now()}-${counter++}`, from: shiftDay(t.date, 1) }
+            : null;
+          if (before) { toInsert.push(before); working = [...working, before]; createdIds.push(before.id); }
+          if (after) { toInsert.push(after); working = [...working, after]; createdIds.push(after.id); }
+        }
+      }
+      const totalOps = toInsert.length + toDeleteIds.length;
+      let doneOps = 0;
+      const ops: PromiseLike<void>[] = [];
+      const flushOps = async () => {
+        if (ops.length === 0) return;
+        await Promise.all(ops.splice(0));
+        setProgress(totalOps > 0 ? Math.round((doneOps / totalOps) * 100) : 100);
+      };
+      for (const id of toDeleteIds) {
+        ops.push(supabase.from("inventory_blocks").delete().eq("id", id).then(({ error }) => {
+          doneOps++;
+          if (error) setDbError("Xoá đóng bán không thành công: " + error.message);
+        }));
+        if (ops.length >= 10) await flushOps();
+      }
+      for (const b of toInsert) {
+        ops.push(supabase.from("inventory_blocks").insert({
+          id: b.id, hotel_id: HOTEL_ID, account_id: ACCOUNT_ID,
+          scope: b.scope, channel_code: b.channelCode ?? null, room_type_id: b.roomTypeId,
+          from_date: b.from, to_date: b.to, reason: b.reason ?? null,
+        }).then(({ error }) => {
+          doneOps++;
+          if (error) setDbError("Lưu đóng bán không thành công: " + error.message);
+        }));
+        if (ops.length >= 10) await flushOps();
+      }
+      await flushOps();
+      setInvBlocks(working);
+      setProgress(100);
+      queueChannexDates([...changedDates], HOTEL_ID);
+      const typeCount = new Set(restrTargets.map((t) => t.typeId)).size;
+      const dayCount = new Set(restrTargets.map((t) => t.date)).size;
+      showToast(`Đã cập nhật đóng bán cho ${typeCount} loại phòng, ${dayCount} ngày.`, "success", () => {
+        setInvBlocks((prev) => {
+          const next = prev.filter((x) => !createdIds.includes(x.id));
+          return [...next, ...deletedBlocks];
+        });
+        void (async () => {
+          await Promise.all([
+            ...createdIds.map((id) => supabase.from("inventory_blocks").delete().eq("id", id)),
+            ...deletedBlocks.map((b) => supabase.from("inventory_blocks").insert({
+              id: b.id, hotel_id: HOTEL_ID, account_id: ACCOUNT_ID,
+              scope: b.scope, channel_code: b.channelCode ?? null, room_type_id: b.roomTypeId,
+              from_date: b.from, to_date: b.to, reason: b.reason ?? null,
+            })),
+          ]);
+          queueChannexDates([...changedDates], HOTEL_ID);
+        })();
+        showToast("Đã hoàn tác.");
+      });
+      setStopValues({});
+    }
+    setSaving(false);
+    setProgress(0);
+  }
+
   const rangeText = range.from && range.to ? `${range.from} ~ ${range.to}` : "";
   const shownChips = selectedTypes.slice(0, 3);
   const extraChips = selectedTypes.length - shownChips.length;
@@ -409,22 +708,23 @@ export default function BulkRatesPage() {
           </Link>
           <h1 className="mt-1 flex items-center gap-1.5 text-xl font-bold text-ink"><IconZap className="h-5 w-5" /> Cập nhật giá hàng loạt</h1>
         </div>
-        <button onClick={() => void saveAll()} disabled={saving || targets.length === 0} className="cb-btn-primary px-5 py-2 text-sm disabled:opacity-50">
+        <button onClick={() => void (bigTab === "price" ? saveAll() : saveRestrictions())} disabled={saving || (bigTab === "price" ? targets.length === 0 : restrTargets.length === 0)} className="cb-btn-primary px-5 py-2 text-sm disabled:opacity-50">
           {saving ? `Đang lưu… ${progress}%` : "Cập nhật"}
         </button>
       </div>
 
       {dbError && <div className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm font-medium text-danger">{dbError}</div>}
 
-      {/* Tab lon kieu ezCloud */}
+      {/* Tab lon kieu ezCloud — "Gia" + "Han che" lam ngay trong trang nay; "Phong trong" + "Gioi han ban" van la Link */}
       <div className="mt-4 grid grid-cols-4 border-b border-line text-center text-sm font-semibold">
         <Link href={`/${HOTEL_ID}/inventory`} className="pb-2 text-muted hover:text-ink">Phòng trống</Link>
-        <span className="border-b-2 border-primary pb-2 text-primary">Giá</span>
-        <Link href={`/${HOTEL_ID}/rates`} className="pb-2 text-muted hover:text-ink">Hạn chế</Link>
+        <button onClick={() => switchBigTab("price")} className={bigTab === "price" ? "border-b-2 border-primary pb-2 text-primary" : "pb-2 text-muted hover:text-ink"}>Giá</button>
+        <button onClick={() => switchBigTab("restrictions")} className={bigTab === "restrictions" ? "border-b-2 border-primary pb-2 text-primary" : "pb-2 text-muted hover:text-ink"}>Hạn chế</button>
         <Link href={`/${HOTEL_ID}/inventory`} className="pb-2 text-muted hover:text-ink">Giới hạn bán</Link>
       </div>
 
-      {/* Tab con — chi "Gia phong" lam viec duoc */}
+      {/* Tab con — chi "Gia phong" lam viec duoc; an o tab Han che */}
+      {bigTab === "price" && (
       <div className="mt-3 flex flex-wrap gap-1 rounded-lg bg-surface-muted p-1 text-sm">
         <span className="cursor-not-allowed rounded-md px-3 py-1.5 text-muted" title="Chưa có">Giá tuần</span>
         <span className="cursor-not-allowed rounded-md px-3 py-1.5 text-muted" title="Chưa có">Giá ngày</span>
@@ -432,6 +732,7 @@ export default function BulkRatesPage() {
         <span className="cursor-not-allowed rounded-md px-3 py-1.5 text-muted" title="Chưa có">Giá phụ thu</span>
         <span className="cursor-not-allowed rounded-md px-3 py-1.5 text-muted" title="Chưa có">Giá phụ thu ngày</span>
       </div>
+      )}
 
       {/* Loai phong — thanh chon rong het chieu ngang, chip nam trong thanh */}
       <div className="relative mt-4">
@@ -513,6 +814,26 @@ export default function BulkRatesPage() {
         </span>
       </div>
 
+      {/* Chon cap nhat o tab Han che + chon nhanh checkbox dong ban */}
+      {bigTab === "restrictions" && (
+        <div className="mt-4 flex flex-wrap items-center gap-5 text-sm">
+          <label className="flex items-center gap-2">
+            <span className="font-bold text-ink">Chọn cập nhật</span>
+            <select value={restrMode} onChange={(e) => switchRestrMode(e.target.value as "min_stay" | "stop_sell")} className={`${inputCls} text-sm`} disabled={saving}>
+              <option value="min_stay">Ngày ở tối thiểu</option>
+              <option value="stop_sell">Ngừng bán / Mở bán lại</option>
+            </select>
+          </label>
+          {restrMode === "stop_sell" && (
+            <span className="flex items-center gap-3 text-xs">
+              <button onClick={() => setStopQuick("all")} className="font-semibold text-primary hover:underline">Tất cả các ngày</button>
+              <button onClick={() => setStopQuick("weekday")} className="font-semibold text-primary hover:underline">Chỉ ngày thường (T2–T6)</button>
+              <button onClick={() => setStopQuick("weekend")} className="font-semibold text-primary hover:underline">Chỉ cuối tuần (T7, CN)</button>
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Tieu de thu — 1 hang duy nhat, can theo o nhap */}
       <div className="mt-4 flex justify-end">
         <div className="flex items-start gap-2">
@@ -526,7 +847,7 @@ export default function BulkRatesPage() {
       </div>
 
       {/* Tung loai phong 1 khoi: ten sat trai, Master + 7 o chum phai */}
-      {selectedTypes.map((type) => (
+      {bigTab === "price" && selectedTypes.map((type) => (
         <div key={type.id} className="border-t border-line py-3">
           <div className="flex items-start justify-between gap-6">
             <div className="shrink-0 pt-1">
@@ -582,31 +903,109 @@ export default function BulkRatesPage() {
         </div>
       ))}
 
-      {/* Nut luu cuoi trang */}
+      {/* Tung loai phong 1 khoi: han che — 7 o theo T2-CN */}
+      {bigTab === "restrictions" && selectedTypes.map((type) => (
+        <div key={type.id} className="border-t border-line py-3">
+          <div className="flex items-start justify-between gap-6">
+            <div className="shrink-0 pt-1">
+              <div className="text-[15px] font-bold text-primary">{type.name}</div>
+              <div className="mt-1 text-sm text-ink">{range.from && range.to ? `${range.from} - ${range.to}` : "Chưa chọn khoảng ngày"}</div>
+            </div>
+            <div className="shrink-0">
+              {restrMode === "min_stay" ? (
+                <>
+                  <div className="mb-1 flex items-center justify-end gap-1.5 text-sm">
+                    <span className="font-semibold text-ink">Số đêm tối thiểu</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <button
+                      onClick={() => copyRestrMonday(type.id)}
+                      disabled={saving || !(restrValues[`${type.id}|1`] ?? "").trim()}
+                      className="mt-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded bg-primary text-white disabled:opacity-40"
+                      title="Chép số đêm Thứ 2 sang các ngày còn lại trong hàng này"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                    </button>
+                    {DOW_ORDER.map((dow) => {
+                      const cur = currentWeekdayMinStay(type.id, dow);
+                      return (
+                        <div key={dow} className="w-[104px]">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={restrValues[`${type.id}|${dow}`] ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value.replace(/[^\d]/g, "");
+                              setRestrValues((prev) => ({ ...prev, [`${type.id}|${dow}`]: v }));
+                            }}
+                            disabled={saving}
+                            placeholder="—"
+                            className={`${inputCls} w-full text-right text-sm font-semibold tabular-nums`}
+                          />
+                          <span className="mt-0.5 block text-center text-[11px] text-subtle">
+                            {cur !== undefined ? `${cur} đêm` : "—"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-start gap-2">
+                  <div className="w-7" />
+                  {DOW_ORDER.map((dow) => {
+                    const key = `${type.id}|${dow}`;
+                    const checked = stopValues[key] ?? currentWeekdayBlocked(type.id, dow);
+                    const isBlocked = currentWeekdayBlocked(type.id, dow);
+                    return (
+                      <div key={dow} className="w-[104px] text-center">
+                        <label className="flex cursor-pointer items-center justify-center gap-1 text-xs font-semibold text-ink">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => setStopValues((prev) => ({ ...prev, [key]: e.target.checked }))}
+                            disabled={saving}
+                            className="h-4 w-4 shrink-0 accent-primary"
+                          />
+                          Ngừng bán
+                        </label>
+                        <span className={`mt-0.5 block text-center text-[11px] ${isBlocked ? "font-semibold text-danger" : "text-subtle"}`}>
+                          {isBlocked ? "Đang đóng" : "Đang bán"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {/* Nut luu cuoi trang — goi ham luu theo tab dang mo */}
       <div className="mt-4 flex items-center justify-end gap-3 border-t border-line pt-4">
-        {targets.length > 0 && (
-          <span className="text-sm">
-            Sẽ lưu <b>{targets.length} ô giá</b> · {chName}
-            {rangeText ? ` · ${rangeText}` : ""}
-          </span>
+        {bigTab === "price" ? (
+          targets.length > 0 && (
+            <span className="text-sm">
+              Sẽ lưu <b>{targets.length} ô giá</b> · {chName}
+              {rangeText ? ` · ${rangeText}` : ""}
+            </span>
+          )
+        ) : (
+          restrTargets.length > 0 && (
+            <span className="text-sm">
+              Sẽ lưu <b>{restrTargets.length} ô hạn chế</b> · {chName}
+              {rangeText ? ` · ${rangeText}` : ""}
+            </span>
+          )
         )}
-        <button onClick={() => void saveAll()} disabled={saving || targets.length === 0} className="cb-btn-primary px-5 py-2 text-sm disabled:opacity-50">
+        <button onClick={() => void (bigTab === "price" ? saveAll() : saveRestrictions())} disabled={saving || (bigTab === "price" ? targets.length === 0 : restrTargets.length === 0)} className="cb-btn-primary px-5 py-2 text-sm disabled:opacity-50">
           {saving ? `Đang lưu… ${progress}%` : "Cập nhật"}
         </button>
       </div>
-
-      {/* Thong bao + Hoan tac */}
-      {toast && (
-        <div className="fixed right-4 top-4 z-50 flex max-w-md items-center gap-3 rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-card">
-          <span>{toast.text}</span>
-          {toast.onUndo && (
-            <button onClick={() => { toast.onUndo?.(); setToast(null); }} className="shrink-0 rounded-lg bg-white px-2.5 py-1 font-bold text-ink">
-              Hoàn tác
-            </button>
-          )}
-          <button onClick={() => setToast(null)} className="shrink-0 font-bold opacity-70">✕</button>
-        </div>
-      )}
     </div>
   );
 }

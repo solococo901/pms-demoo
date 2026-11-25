@@ -20,6 +20,7 @@ import {
   type NearbyPlace,
   type PaymentMethods,
 } from "@/lib/mock-data";
+import { useToast } from "@/components/Toast";
 
 const inputCls =
   "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
@@ -84,6 +85,7 @@ const DEFAULT_ALERTS: HotelAlerts = { email: "", lowRoomThreshold: 2, enabled: f
 type SubTab = "info" | "amenities" | "photos" | "nearby";
 
 export default function HotelInfoPage() {
+  const { showToast } = useToast();
   const params = useParams();
   const id = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
 
@@ -378,7 +380,7 @@ export default function HotelInfoPage() {
                 <input className={`${rowInputCls} w-56`} placeholder="Chú thích ảnh" value={newPhotoCaption} onChange={(e) => setNewPhotoCaption(e.target.value)} />
                 <button
                   onClick={() => {
-                    if (!newPhotoUrl.trim().startsWith("http")) return alert("Link ảnh phải bắt đầu bằng http:// hoặc https://");
+                    if (!newPhotoUrl.trim().startsWith("http")) { showToast("Link ảnh phải bắt đầu bằng http:// hoặc https://", "error"); return; }
                     setPhotos((p) => [...p, { id: `photo-${Date.now()}`, url: newPhotoUrl.trim(), caption: newPhotoCaption.trim() || "Ảnh mới" }]);
                     setNewPhotoUrl("");
                     setNewPhotoCaption("");
@@ -455,7 +457,7 @@ export default function HotelInfoPage() {
               <span className="self-center text-sm text-muted">km</span>
               <button
                 onClick={() => {
-                  if (!nbName.trim()) return alert("Chưa nhập tên địa điểm.");
+                  if (!nbName.trim()) { showToast("Chưa nhập tên địa điểm.", "error"); return; }
                   setNearby((p) => [...p, { category: nbCategory, name: nbName.trim(), distanceKm: nbDistance }]);
                   setNbName("");
                 }}

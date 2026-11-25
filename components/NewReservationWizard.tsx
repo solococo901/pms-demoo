@@ -31,6 +31,7 @@ import {
 } from "@/lib/booking-rules";
 import { DatePicker } from "@/components/DatePicker";
 import { IconBed, IconCalendar, IconCheck, IconSearch } from "@/components/icons";
+import { useToast } from "@/components/Toast";
 
 type WizardProps = {
   hotelId: string;
@@ -96,6 +97,7 @@ export default function NewReservationWizard({
   invBlocks,
   priceOverrides,
 }: WizardProps) {
+  const { showToast } = useToast();
   const [step, setStep] = useState(1);
   const [maxStep, setMaxStep] = useState(1);
   const [todayStr, setTodayStr] = useState("");
@@ -358,7 +360,7 @@ export default function NewReservationWizard({
         const { error: rrErr } = await supabase
           .from("reservation_rooms")
           .insert({ reservation_id: code, room_number: item.roomNumber });
-        if (rrErr) alert(`Đơn đã tạo nhưng gán phòng ${item.roomNumber} không thành công: ${rrErr.message} — gán lại trên Lịch phòng.`);
+        if (rrErr) showToast(`Đơn đã tạo nhưng gán phòng ${item.roomNumber} không thành công: ${rrErr.message} — gán lại trên Lịch phòng.`, "error");
       }
       const addonRows = addOns
         .filter((a) => addonAmount(a) > 0)
@@ -373,7 +375,7 @@ export default function NewReservationWizard({
         }));
       if (addonRows.length > 0) {
         const { error: fiErr } = await supabase.from("folio_items").insert(addonRows);
-        if (fiErr) alert("Đơn đã tạo nhưng lưu dịch vụ thêm không thành công: " + fiErr.message);
+        if (fiErr) showToast("Đơn đã tạo nhưng lưu dịch vụ thêm không thành công: " + fiErr.message, "error");
       }
     }
     queueChannexDates(stayDates(checkIn, checkOut));

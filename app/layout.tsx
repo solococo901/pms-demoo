@@ -5,6 +5,8 @@
 // token tối giản kiểu NateUI — 2026-11-21, bước 2 sau NATEUI1)
 // CHỈ đổi class màu/viền sang token (bg-primary, text-ink,
 // text-muted, bg-surface, bg-primary-soft, border-line...);
+// MENU1 (2026-11-24): them 2 muc Gia goc (Base Rate) + Gia kenh OTA
+// ngay sau "6. Lich gia" (khong danh so, giu nguyen thu tu 1-7).
 // KHÔNG đổi cấu trúc, không đổi logic, không đổi thứ tự menu.
 // Màu sắc giữ nguyên giá trị cũ nên khung nhìn gần như cũ —
 // bước này dọn code về 1 bộ token chung để các màn hình sau
@@ -61,6 +63,8 @@ import { Suspense, useEffect, useState, type ReactNode } from "react";
 import AuthGate from "@/components/AuthGate";
 import UserBox from "@/components/UserBox";
 import ChannexOutbox from "@/components/ChannexOutbox";
+import PageTransition from "@/components/PageTransition";
+import { ToastProvider } from "@/components/Toast";
 import { IconBed, IconBell, IconCalendar, IconDroplet, IconPlus } from "@/components/icons";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId, DEFAULT_HOTEL_ID, HOTEL_STORAGE_KEY } from "@/lib/current-hotel";
@@ -82,6 +86,8 @@ const MENU = [
   { label: "4. Thông tin loại phòng", href: "/room-types", icon: "bed", group: "Thiết lập khách sạn", adminOnly: true },
   { label: "5. Kênh bán", href: "/channels", icon: "channels", group: "Thiết lập khách sạn", adminOnly: true },
   { label: "6. Lịch giá", href: "/rates", icon: "rates", group: "Thiết lập khách sạn", adminOnly: true },
+  { label: "Giá gốc (Base Rate)", href: "/rates/base", icon: "rates", group: "Thiết lập khách sạn", adminOnly: true },
+  { label: "Giá kênh OTA", href: "/rates/ota", icon: "channels", group: "Thiết lập khách sạn", adminOnly: true },
   { label: "7. Chặn phòng & Đóng bán", href: "/inventory", icon: "archive", group: "Thiết lập khách sạn", adminOnly: true },
   { label: "Tổng quan", href: "/dashboard", icon: "dashboard", group: "Vận hành" },
   { label: "Lịch phòng", href: "/calendar", icon: "calendar", group: "Vận hành" },
@@ -195,7 +201,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </div>
           }
         >
-          <Shell>{children}</Shell>
+          <ToastProvider>
+            <Shell>{children}</Shell>
+          </ToastProvider>
         </Suspense>
       </body>
     </html>
@@ -329,7 +337,7 @@ function Shell({ children }: { children: ReactNode }) {
   if (pathname === "/" || pathname === "/hotels") {
     return (
       <AuthGate>
-        <main className="mx-auto min-h-screen w-[80%] bg-[var(--nui-bg)] px-6 pb-2.5 pt-6">{children}</main>
+        <main className="mx-auto min-h-screen w-[80%] bg-[var(--nui-bg)] px-6 pb-2.5 pt-6"><PageTransition>{children}</PageTransition></main>
       </AuthGate>
     );
   }
@@ -523,7 +531,7 @@ function Shell({ children }: { children: ReactNode }) {
                   </Link>
                 </div>
               ) : (
-                children
+                <PageTransition>{children}</PageTransition>
               )}
             </div>
           </main>

@@ -128,13 +128,14 @@ body {
   color: #fff;
   border-radius: var(--nui-radius-md);
   font-weight: 600;
-  transition: background 0.15s ease;
+  transition: transform 0.12s ease, background-color 0.15s ease;
 }
 .cb-btn-primary:hover {
   background: var(--nui-primary-hover);
 }
-.cb-btn-primary:active {
+.cb-btn-primary:active:not(:disabled) {
   background: var(--nui-primary-active);
+  transform: scale(0.97);
 }
 
 /* Nút trắng lặng, viền mỏng */
@@ -144,9 +145,13 @@ body {
   border: 1px solid var(--nui-border);
   border-radius: var(--nui-radius-md);
   font-weight: 600;
+  transition: transform 0.12s ease, background-color 0.15s ease;
 }
 .cb-btn-ghost:hover {
   background: var(--nui-surface-muted);
+}
+.cb-btn-ghost:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 /* Ô tìm kiếm hình viên thuốc (thanh trên) */
@@ -164,4 +169,30 @@ body {
 .cb-dot {
   background: var(--nui-danger);
   border-radius: 999px;
+}
+
+/* Hieu ung chuyen trang: mo dan + truot nhe len khi doi trang.
+   PageTransition boc noi dung trang va doi key theo duong dan nen
+   moi lan chuyen trang hieu ung chay lai tu dau (0,28 giay). */
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.page-enter {
+  animation: page-enter 0.28s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+/* Moi nut bam deu co phan hoi an xuong nhe (ca nut dung class
+   Tailwind truc tiep, khong chi 2 lop cb-btn o tren). */
+button {
+  transition: transform 0.12s ease;
+}
+button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Tat hieu ung neu may tinh dat che do giam chuyen dong. */
+@media (prefers-reduced-motion: reduce) {
+  .page-enter { animation: none; }
+  .cb-btn-primary, .cb-btn-ghost, button { transition: none; }
 }

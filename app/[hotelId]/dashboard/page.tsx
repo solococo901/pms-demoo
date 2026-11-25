@@ -23,6 +23,7 @@ import {
   canCheckOut,
   type AvailabilityData,
 } from "@/lib/booking-rules";
+import { useToast } from "@/components/Toast";
 
 // ---------- small date/money helpers ----------
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -228,6 +229,7 @@ type Block = { roomNumber: string; fromDate: string; toDate: string; kind: strin
 const PAGE_DAYS = 14; // luoi Phong trong: 14 ngay / trang
 
 function DashboardPage() {
+  const { showToast } = useToast();
   // Khach san lay tu URL /h/[hotelId] khi co; neu khong thi dung khach san da luu theo tab.
   const params = useParams();
   const HOTEL_ID = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
@@ -464,11 +466,11 @@ function DashboardPage() {
     // Chi cap nhat man hinh sau khi luu xong (khong cap nhat truoc).
     if (status === "in_house") {
       const check = canCheckIn(availData, r);
-      if (!check.ok) return alert(check.error);
+      if (!check.ok) { showToast(check.error ?? "Có lỗi xảy ra.", "error"); return; }
       if (check.warnings.length > 0 && !window.confirm(`${check.warnings.join("\n")}\nVẫn nhận phòng?`)) return;
     } else if (status === "checked_out") {
       const check = canCheckOut(r);
-      if (!check.ok) return alert(check.error);
+      if (!check.ok) { showToast(check.error ?? "Có lỗi xảy ra.", "error"); return; }
       if (check.warnings.length > 0 && !window.confirm(check.warnings.join("\n"))) return;
     }
     const { error } = await supabase.from("reservations").update({ status }).eq("id", id);

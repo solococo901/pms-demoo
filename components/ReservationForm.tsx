@@ -135,14 +135,14 @@ export default function ReservationForm({
     });
   }
 
-  const inputCls = "w-full rounded-lg border border-[#dde3ea] px-3 py-2 text-sm text-[#17293e] outline-none focus:border-[#2563eb]";
-  const labelCls = "block text-xs font-medium text-[#68707a] mb-1";
+  const inputCls = "w-full rounded-lg border border-[var(--cb-border)] px-3 py-2 text-sm text-[var(--cb-text)] outline-none focus:border-[var(--cb-blue)]";
+  const labelCls = "block text-xs font-medium text-[var(--cb-muted)] mb-1";
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#17293e]/40 p-4">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-transparent p-4">
       <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between">
-          <h2 className="text-lg font-bold text-[#17293e]">Tạo đặt phòng mới</h2>
+          <h2 className="text-lg font-bold text-[var(--cb-text)]">Tạo đặt phòng mới</h2>
           <button onClick={onClose} className="cb-btn-ghost flex h-8 w-8 items-center justify-center rounded-full text-sm">✕</button>
         </div>
 
@@ -208,7 +208,7 @@ export default function ReservationForm({
           </div>
           <div>
             <label className={labelCls}>Giá gồm sẵn</label>
-            <div className="rounded-lg bg-[#f7f9fb] px-3 py-2 text-sm text-[#68707a]">
+            <div className="rounded-lg bg-[var(--cb-blue-soft)] px-3 py-2 text-sm text-[var(--cb-muted)]">
               {plan ? `${plan.baseOccupancy ?? 2} người lớn · thêm NL ${fmt(plan.extraAdultFee ?? 0)}₫/đêm · TE ${fmt(plan.extraChildFee ?? 0)}₫/đêm` : "—"}
             </div>
           </div>
@@ -218,22 +218,22 @@ export default function ReservationForm({
           </div>
         </div>
 
-        <div className="mt-4 space-y-1 rounded-xl bg-[#f2f6fe] px-4 py-3 text-sm text-[#17293e]">
+        <div className="mt-4 space-y-1 rounded-xl bg-[var(--cb-blue-soft)] px-4 py-3 text-sm text-[var(--cb-text)]">
           <div className="flex items-center justify-between">
             <span>Tiền phòng — {nights} đêm × {plan?.name ?? "—"}</span>
             <span className="font-semibold">{fmt(roomTotal)}₫</span>
           </div>
           {feesTotal > 0 && (
-            <div className="flex items-center justify-between text-[#68707a]">
+            <div className="flex items-center justify-between text-[var(--cb-muted)]">
               <span>
                 Phụ thu khách thêm ({fees.extraAdults > 0 ? `+${fees.extraAdults} người lớn` : ""}{fees.extraAdults > 0 && children > 0 ? ", " : ""}{children > 0 ? `+${children} trẻ em` : ""}) × {nights} đêm
               </span>
               <span className="font-semibold">{fmt(feesTotal)}₫</span>
             </div>
           )}
-          <div className="flex items-center justify-between border-t border-[#dde3ea] pt-1.5">
+          <div className="flex items-center justify-between border-t border-[var(--cb-border)] pt-1.5">
             <span className="font-semibold">Tổng tiền</span>
-            <span className="text-base font-bold text-[#2563eb]">{fmt(total)}₫</span>
+            <span className="text-base font-bold text-[var(--cb-blue)]">{fmt(total)}₫</span>
           </div>
         </div>
         {error && <p className="mt-3 text-sm text-[#e5484d]">{error}</p>}

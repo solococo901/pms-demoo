@@ -36,6 +36,7 @@ import ReservationBar, { STATUS_STYLES, STATUS_LABELS } from "./ReservationBar";
 import { DatePicker, DateRangePicker } from "@/components/DatePicker";
 import { IconBan, IconCalendar, IconDroplet, IconMenu, IconPlus, IconSearch } from "@/components/icons";
 import BookingPopup from "./BookingPopup";
+import { useToast } from "@/components/Toast";
 
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -86,6 +87,7 @@ export default function StaffCalendar() {
   // Khach san lay tu URL /h/[hotelId] khi co; neu khong (duong dan cu)
   // thi dung khach san da luu theo tab.
   const params = useParams();
+  const { showToast } = useToast();
   const HOTEL_ID = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -311,7 +313,7 @@ export default function StaffCalendar() {
     if (!bfRoom || !bfFrom || !bfTo || bfTo < bfFrom) return;
     // Khong chan duoc phong dang co khach o trong khoang nay.
     const check = validateBlock(reservations, bfRoom, bfFrom, bfTo);
-    if (!check.ok) return alert(check.error);
+    if (!check.ok) { showToast(check.error ?? "Có lỗi xảy ra.", "error"); return; }
     const nb: RoomBlock = {
       id: `blk-${Date.now()}`,
       roomNumber: bfRoom,
@@ -324,7 +326,7 @@ export default function StaffCalendar() {
       id: nb.id, hotel_id: HOTEL_ID, account_id: ACCOUNT_ID,
       room_number: nb.roomNumber, from_date: nb.from, to_date: nb.to, kind: nb.kind, reason: nb.reason,
     });
-    if (error) return alert("Lưu chặn phòng không thành công: " + error.message);
+    if (error) { showToast("Lưu chặn phòng không thành công: " + error.message, "error"); return; }
     setBlocks((prev) => [...prev, nb]);
     // Ghi log chan phong (AUDIT).
     const dShort = (d: string) => d.split("-").reverse().join("/");
@@ -345,7 +347,7 @@ export default function StaffCalendar() {
   async function removeBlock(id: string) {
     const blk = blocks.find((b) => b.id === id);
     const { error } = await supabase.from("room_blocks").delete().eq("id", id);
-    if (error) return alert("Xoá chặn phòng không thành công: " + error.message);
+    if (error) { showToast("Xoá chặn phòng không thành công: " + error.message, "error"); return; }
     setBlocks((prev) => prev.filter((b) => b.id !== id));
     setSelectedBlockId(null);
     // Ghi log mo lai phong (AUDIT).
@@ -473,14 +475,16 @@ export default function StaffCalendar() {
   async function assignRoom(roomNumber: string) {
     const res = assigningBooking;
     if (!res) return;
-    if (["checked_out", "cancelled", "no_show"].includes(res.status))
-      return alert("Không gán phòng cho đơn đã trả phòng / đã huỷ / khách không đến.");
+    if (["checked_out", "cancelled", "no_show"].includes(res.status)) {
+      showToast("Không gán phòng cho đơn đã trả phòng / đã huỷ / khách không đến.", "error");
+      return;
+    }
     const effType = assignTypeId ?? res.roomTypeId;
     // Kiem tra dung chung: dung loai phong / khong phong hong / khong trung don khac.
     const check = validateAssign(availData, res, roomNumber, effType);
-    if (!check.ok) return alert(check.error);
+    if (!check.ok) { showToast(check.error ?? "Có lỗi xảy ra.", "error"); return; }
     const room = rooms.find((rm) => rm.number === roomNumber);
-    if (!room) return alert("Không tìm thấy phòng này.");
+    if (!room) { showToast("Không tìm thấy phòng này.", "error"); return; }
     // Canh bao (khong chan): phong chua don xong hoac tam dong — de nguoi quyet
     if (["dirty", "in_progress"].includes(room.housekeepingStatus)) {
       if (!confirm(`Phòng ${roomNumber} chưa dọn xong (${HK_LABEL[room.housekeepingStatus] ?? room.housekeepingStatus}). Vẫn gán cho khách?`)) return;
@@ -494,11 +498,13 @@ export default function StaffCalendar() {
     let newPlanId = res.ratePlanId;
     if (effType !== res.roomTypeId) {
       const newPlan = standardPlanFor(res.channelCode, effType);
-      if (!newPlan) return alert(`Kênh ${getChannelName(res.channelCode)} chưa có gói giá cho loại phòng này — không gán sang loại khác được.`);
+      if (!newPlan) { showToast(`Kênh ${getChannelName(res.channelCode)} chưa có gói giá cho loại phòng này — không gán sang loại khác được.`, "error"); return; }
       const bd = priceBreakdown(newPlan, planObjs, res.checkIn, res.checkOut, res.adults ?? res.guests, res.children ?? 0, priceOverrides);
-      if (bd.unpriced.length > 0)
-        return alert(`Chưa có giá cho đêm ${bd.unpriced.join(", ")} ở loại phòng mới — nhập giá ở Lịch giá rồi gán lại.`);
-      if (bd.grandTotal <= 0) return alert("Tổng tiền mới bằng 0 — kiểm tra lại giá loại phòng mới.");
+      if (bd.unpriced.length > 0) {
+        showToast(`Chưa có giá cho đêm ${bd.unpriced.join(", ")} ở loại phòng mới — nhập giá ở Lịch giá rồi gán lại.`, "error");
+        return;
+      }
+      if (bd.grandTotal <= 0) { showToast("Tổng tiền mới bằng 0 — kiểm tra lại giá loại phòng mới.", "error"); return; }
       if (bd.grandTotal !== res.totalAmount && !window.confirm(`Đổi sang loại phòng mới, tổng tiền đổi từ ${fmtPrice(res.totalAmount)} thành ${fmtPrice(bd.grandTotal)}. Áp giá mới?`)) return;
       newTotal = bd.grandTotal;
       newPlanId = newPlan.id;
@@ -506,7 +512,7 @@ export default function StaffCalendar() {
     const { error } = await supabase
       .from("reservation_rooms")
       .insert({ reservation_id: res.id, room_number: roomNumber });
-    if (error) return alert("Gán phòng không thành công: " + error.message);
+    if (error) { showToast("Gán phòng không thành công: " + error.message, "error"); return; }
     if (effType !== res.roomTypeId) {
       await supabase.from("reservations").update({ room_type_id: effType, rate_plan_id: newPlanId, total_amount: newTotal }).eq("id", res.id);
     }
@@ -562,7 +568,7 @@ export default function StaffCalendar() {
         .from("reservation_rooms")
         .insert({ reservation_id: b.id, room_number: room.number });
       if (error) {
-        alert(`Gán phòng cho ${b.guestName} không thành công: ${error.message}`);
+        showToast(`Gán phòng cho ${b.guestName} không thành công: ${error.message}`, "error");
         continue;
       }
       const list = taken.get(room.number) ?? [];
@@ -576,8 +582,8 @@ export default function StaffCalendar() {
       );
       queueChannexDates(stayDates(b.checkIn, b.checkOut));
     }
-    if (done === 0) alert("Không có đơn nào gán được (hết phòng trống phù hợp).");
-    else if (done < panelUnassigned.length) alert(`Đã tự gán ${done}/${panelUnassigned.length} đơn, còn lại không đủ phòng trống phù hợp.`);
+    if (done === 0) showToast("Không có đơn nào gán được (hết phòng trống phù hợp).", "error");
+    else if (done < panelUnassigned.length) showToast(`Đã tự gán ${done}/${panelUnassigned.length} đơn, còn lại không đủ phòng trống phù hợp.`, "error");
   }
 
   // ---------- drop logic (kieu Cloudbeds: keo doi phong/ngay) ----------
@@ -594,7 +600,7 @@ export default function StaffCalendar() {
     // Kiem tra dung chung: don con keo duoc / ngay khong qua khu /
     // cung loai phong / khong phong hong / khong trung don khac.
     const check = validateDrop(availData, res, roomNumber, newCheckIn, newCheckOut, todayStr);
-    if (!check.ok) return alert(check.error);
+    if (!check.ok) { showToast(check.error ?? "Có lỗi xảy ra.", "error"); return; }
     if (check.warnings.length > 0 && !window.confirm(`${check.warnings.join("\n")}\nVẫn chuyển?`)) return;
 
     // Doi ngay: tinh lai gia theo goi cua don (kieu Cloudbeds hoi
@@ -603,11 +609,13 @@ export default function StaffCalendar() {
     let newTotal = res.totalAmount;
     if (newCheckIn !== res.checkIn || newCheckOut !== res.checkOut) {
       const plan = planObjs.find((p) => p.id === res.ratePlanId);
-      if (!plan) return alert("Không tìm thấy gói giá của đơn này — không tính được tiền ngày mới.");
+      if (!plan) { showToast("Không tìm thấy gói giá của đơn này — không tính được tiền ngày mới.", "error"); return; }
       const bd = priceBreakdown(plan, planObjs, newCheckIn, newCheckOut, res.adults ?? res.guests, res.children ?? 0, priceOverrides);
-      if (bd.unpriced.length > 0)
-        return alert(`Chưa có giá cho đêm ${bd.unpriced.join(", ")} — nhập giá ở Lịch giá rồi kéo lại.`);
-      if (bd.grandTotal <= 0) return alert("Tổng tiền mới bằng 0 — kiểm tra lại giá các đêm mới.");
+      if (bd.unpriced.length > 0) {
+        showToast(`Chưa có giá cho đêm ${bd.unpriced.join(", ")} — nhập giá ở Lịch giá rồi kéo lại.`, "error");
+        return;
+      }
+      if (bd.grandTotal <= 0) { showToast("Tổng tiền mới bằng 0 — kiểm tra lại giá các đêm mới.", "error"); return; }
       if (bd.grandTotal !== res.totalAmount && !window.confirm(`Đổi ngày: tổng tiền đổi từ ${fmtPrice(res.totalAmount)} thành ${fmtPrice(bd.grandTotal)}. Áp giá mới?`)) return;
       newTotal = bd.grandTotal;
     }
@@ -616,19 +624,19 @@ export default function StaffCalendar() {
       .from("reservations")
       .update({ check_in: newCheckIn, check_out: newCheckOut, ...(newTotal !== res.totalAmount ? { total_amount: newTotal } : {}) })
       .eq("id", res.id);
-    if (e1) return alert("Lưu thay đổi không thành công: " + e1.message);
+    if (e1) { showToast("Lưu thay đổi không thành công: " + e1.message, "error"); return; }
     if (dragging.roomNumber === null) {
       const { error: e2 } = await supabase
         .from("reservation_rooms")
         .insert({ reservation_id: res.id, room_number: roomNumber });
-      if (e2) return alert("Gán phòng không thành công: " + e2.message);
+      if (e2) { showToast("Gán phòng không thành công: " + e2.message, "error"); return; }
     } else if (dragging.roomNumber !== roomNumber) {
       const { error: e2 } = await supabase
         .from("reservation_rooms")
         .update({ room_number: roomNumber })
         .eq("reservation_id", res.id)
         .eq("room_number", dragging.roomNumber);
-      if (e2) return alert("Đổi phòng không thành công: " + e2.message);
+      if (e2) { showToast("Đổi phòng không thành công: " + e2.message, "error"); return; }
     }
 
     setReservations((prev) =>
@@ -653,22 +661,22 @@ export default function StaffCalendar() {
     // cho / da xac nhan.
     if (status === "in_house") {
       const check = canCheckIn(availData, r);
-      if (!check.ok) return alert(check.error);
+      if (!check.ok) { showToast(check.error ?? "Có lỗi xảy ra.", "error"); return; }
       if (check.warnings.length > 0 && !window.confirm(`${check.warnings.join("\n")}\nVẫn nhận phòng?`)) return;
     } else if (status === "checked_out") {
       const check = canCheckOut(r);
-      if (!check.ok) return alert(check.error);
+      if (!check.ok) { showToast(check.error ?? "Có lỗi xảy ra.", "error"); return; }
       if (check.warnings.length > 0 && !window.confirm(check.warnings.join("\n"))) return;
     } else if (status === "cancelled") {
       const check = canCancel(r);
-      if (!check.ok) return alert(check.error);
+      if (!check.ok) { showToast(check.error ?? "Có lỗi xảy ra.", "error"); return; }
       if (!window.confirm(`Huỷ đơn ${r.id} của ${r.guestName}?`)) return;
     } else if (status === "no_show") {
-      if (r.status !== "confirmed") return alert("Chỉ đánh dấu không đến cho đơn đã xác nhận.");
+      if (r.status !== "confirmed") { showToast("Chỉ đánh dấu không đến cho đơn đã xác nhận.", "error"); return; }
       if (!window.confirm(`Đánh dấu khách không đến cho đơn ${r.id} của ${r.guestName}?`)) return;
     }
     const { error } = await supabase.from("reservations").update({ status }).eq("id", id);
-    if (error) return alert("Lưu trạng thái không thành công: " + error.message);
+    if (error) { showToast("Lưu trạng thái không thành công: " + error.message, "error"); return; }
     setReservations((prev) => prev.map((x) => (x.id === id ? { ...x, status } : x)));
     // Ghi log doi trang thai don (AUDIT): huy / nhan / tra phong / khong den.
     const logAction = status === "cancelled" ? "booking_cancelled" : status === "in_house" ? "booking_checked_in" : status === "checked_out" ? "booking_checked_out" : "booking_updated";

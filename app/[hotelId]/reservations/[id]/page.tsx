@@ -25,6 +25,7 @@ import { markRoomsDirtyAfterCheckout } from "@/lib/checkout-housekeeping";
 import { writeAuditLog } from "@/lib/audit-log";
 import { STATUS_LABELS, STATUS_STYLES } from "@/components/ReservationBar";
 import AlertDialog from "@/components/AlertDialog";
+import { useToast } from "@/components/Toast";
 import { DatePicker } from "@/components/DatePicker";
 import {
   canCancel,
@@ -75,6 +76,7 @@ const TABS: { key: TabKey; label: string }[] = [
 
 export default function ReservationDetailPage() {
   const params = useParams();
+  const { showToast } = useToast();
   const HOTEL_ID = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
   const RES_ID = typeof params.id === "string" ? params.id : "";
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -306,7 +308,7 @@ export default function ReservationDetailPage() {
     if (patch.note !== undefined) dbPatch.note = patch.note ?? null;
     const { error } = await supabase.from("reservations").update(dbPatch).eq("id", id);
     if (error) {
-      alert("Lưu xuống cơ sở dữ liệu không thành công: " + error.message);
+      showToast("Lưu xuống cơ sở dữ liệu không thành công: " + error.message, "error");
       return false;
     }
     setReservations((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -390,7 +392,7 @@ export default function ReservationDetailPage() {
       id: item.id, reservation_id: item.reservationId, hotel_id: HOTEL_ID, account_id: ACCOUNT_ID,
       date: item.date, label: item.label, amount: item.amount,
     });
-    if (error) return alert("Lưu khoản dịch vụ không thành công: " + error.message);
+    if (error) { showToast("Lưu khoản dịch vụ không thành công: " + error.message, "error"); return; }
     setFolioItems((prev) => [...prev, item]);
     setExtraLabel("");
     setExtraAmount(0);
@@ -398,14 +400,14 @@ export default function ReservationDetailPage() {
 
   async function deleteExtra(id: string) {
     const { error } = await supabase.from("folio_items").delete().eq("id", id);
-    if (error) return alert("Xoá khoản dịch vụ không thành công: " + error.message);
+    if (error) { showToast("Xoá khoản dịch vụ không thành công: " + error.message, "error"); return; }
     setFolioItems((prev) => prev.filter((x) => x.id !== id));
   }
 
   function recordPayment() {
     if (!detail || payAmount <= 0) return;
     const check = validatePayment(payAmount, balance);
-    if (!check.ok) return alert(check.error);
+    if (!check.ok) { showToast(check.error ?? "Có lỗi xảy ra.", "error"); return; }
     patchReservation(detail.id, { paidAmount: detail.paidAmount + payAmount });
     setPayAmount(0);
   }
@@ -420,7 +422,7 @@ export default function ReservationDetailPage() {
       .insert({ hotel_id: HOTEL_ID, account_id: ACCOUNT_ID, reservation_id: detail.id, author, body: noteBody.trim() })
       .select("id, author, body, created_at")
       .single();
-    if (error || !data) return alert("Lưu ghi chú không thành công: " + (error?.message ?? ""));
+    if (error || !data) { showToast("Lưu ghi chú không thành công: " + (error?.message ?? ""), "error"); return; }
     setNotes((prev) => [...prev, { id: data.id, author: data.author, body: data.body, createdAt: data.created_at }]);
     setNoteBody("");
   }

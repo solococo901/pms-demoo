@@ -15,7 +15,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
-import { resolvePlanPrice, type RatePlan } from "@/lib/mock-data";
+import { resolvePlanPrice, type BaseRatePeriod, type RatePlan } from "@/lib/mock-data";
 
 const OTA_CHANNELS = ["booking_com", "expedia", "airbnb", "agoda"];
 
@@ -61,7 +61,7 @@ export async function computeChannexValues(
   const uniqueDates = [...new Set(dates)].sort();
   if (uniqueDates.length === 0) return { availability: [], restrictions: [] };
 
-  const [typesRes, roomsRes, resRes, rrRes, blocksRes, invRes, plansRes] =
+  const [typesRes, roomsRes, resRes, rrRes, blocksRes, invRes, plansRes, baseRes] =
     await Promise.all([
       supabase.from("room_types").select("id, channex_id, active").eq("hotel_id", hotelId),
       supabase.from("rooms").select("number, room_type_id, housekeeping_status").eq("hotel_id", hotelId),
@@ -79,8 +79,9 @@ export async function computeChannexValues(
         .select("scope, channel_code, room_type_id, from_date, to_date")
         .eq("hotel_id", hotelId),
       supabase.from("rate_plans").select("*").eq("hotel_id", hotelId),
+      supabase.from("base_rate_periods").select("*").eq("hotel_id", hotelId),
     ]);
-  const loadErr = typesRes.error ?? roomsRes.error ?? resRes.error ?? plansRes.error;
+  const loadErr = typesRes.error ?? roomsRes.error ?? resRes.error ?? plansRes.error ?? baseRes.error;
   if (loadErr) throw new Error(loadErr.message);
 
   const types = (typesRes.data ?? []).filter((t) => t.channex_id);
@@ -147,6 +148,10 @@ export async function computeChannexValues(
       });
     }
   }
+  // Gia goc theo giai doan (Base Rate) — dung khi goi goc khong co gia sua tay.
+  const basePeriods: BaseRatePeriod[] = (baseRes.data ?? []).map((r) => ({
+    id: r.id, roomTypeId: r.room_type_id, from: r.from_date, to: r.to_date, price: Number(r.price),
+  }));
   const channexTypeId = new Map(types.map((t) => [t.id, t.channex_id as string]));
   const channexPlanId = new Map(
     planRows.filter((p) => p.channex_id).map((p) => [p.id, p.channex_id as string])
@@ -200,7 +205,7 @@ export async function computeChannexValues(
       const v: RestrictionValue = { rate_plan_id: channexId, date };
       let hasValue = false;
       if (!channexDerivesPrice) {
-        const price = resolvePlanPrice(planObj, date, planObjs, overrides);
+        const price = resolvePlanPrice(planObj, date, planObjs, overrides, basePeriods);
         if (price != null && price > 0) {
           v.rate = price.toFixed(2);
           hasValue = true;

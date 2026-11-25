@@ -315,10 +315,13 @@ export const applyFormula = (price: number, formula: PriceFormula): number => {
   return Math.round(raw / 1000) * 1000;
 };
 
+// Giai doan gia goc (Base Rate): 1 loai phong co nhieu giai doan (tu-den-gia).
+// Ngay khong nam trong giai doan nao thi gia goc la 0 (khong co gia).
+export type BaseRatePeriod = { id: string; roomTypeId: string; from: string; to: string; price: number };
+
 // The price of a plan on a date, resolved live:
-// - base plan: its stored price; a date outside the seeded range
-//   falls back to the plan's weekday/weekend sample price
-//   (21/10 = weekday sample, 24/10 = weekend sample).
+// - base plan: its stored price (gia sua tay / override); khong co thi
+//   lay gia goc theo giai doan; khong nam trong giai doan nao thi khong co gia.
 // - derived plan: the base plan's resolved price + its formula.
 //   An entry in "overrides" (key "planId|date") is a SPECIAL price
 //   set by hand on that date — it wins over the formula.
@@ -326,23 +329,23 @@ export const resolvePlanPrice = (
   plan: RatePlan,
   date: string,
   allPlans: RatePlan[],
-  overrides?: Record<string, number>
+  overrides?: Record<string, number>,
+  baseRatePeriods?: BaseRatePeriod[]
 ): number | undefined => {
   if (plan.derivedFromId) {
     const special = overrides?.[`${plan.id}|${date}`];
     if (special !== undefined) return special;
     const base = allPlans.find((p) => p.id === plan.derivedFromId);
     if (!base) return undefined;
-    const basePrice = resolvePlanPrice(base, date, allPlans, overrides);
+    const basePrice = resolvePlanPrice(base, date, allPlans, overrides, baseRatePeriods);
     if (basePrice === undefined) return undefined;
     const formula = getFormula(plan.formulaId);
     return formula ? applyFormula(basePrice, formula) : basePrice;
   }
   const direct = plan.prices[date];
   if (direct !== undefined) return direct;
-  const dow = new Date(`${date}T12:00:00`).getDay();
-  const isWeekend = dow === 0 || dow === 6;
-  return plan.prices[isWeekend ? "2026-10-24" : "2026-10-21"];
+  const period = baseRatePeriods?.find((x) => x.roomTypeId === plan.roomTypeId && x.from <= date && date <= x.to);
+  return period ? period.price : undefined;
 };
 
 export const mealPlanLabel = (plan: RatePlan): string =>

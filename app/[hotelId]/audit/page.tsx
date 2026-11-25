@@ -21,6 +21,8 @@ const ACTION_LABELS: Record<string, string> = {
   price_updated: "Đổi giá",
   room_blocked: "Chặn phòng",
   room_unblocked: "Mở phòng",
+  stop_sell_set: "Đóng bán",
+  stop_sell_removed: "Mở bán",
   payment_added: "Thu tiền",
 };
 
@@ -149,7 +151,7 @@ export default function AuditLogPage() {
             {logs.length === 0 ? "Chưa có hoạt động nào được ghi." : "Không có dòng nào khớp bộ lọc."}
           </p>
         ) : (
-          <div className="max-h-[600px] overflow-y-auto">
+          <div>
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-[var(--nui-bg)]">
                 <tr className="text-left text-xs font-semibold text-muted">

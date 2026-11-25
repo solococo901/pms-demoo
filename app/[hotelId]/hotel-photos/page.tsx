@@ -10,6 +10,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
 import type { HotelPhoto } from "@/lib/mock-data";
+import { useToast } from "@/components/Toast";
 
 const inputCls =
   "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
@@ -17,6 +18,7 @@ const rowInputCls =
   "rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
 
 export default function HotelPhotosPage() {
+  const { showToast } = useToast();
   const params = useParams();
   const id = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
 
@@ -89,7 +91,7 @@ export default function HotelPhotosPage() {
             <input className={`${rowInputCls} w-56`} placeholder="Chú thích ảnh" value={newPhotoCaption} onChange={(e) => setNewPhotoCaption(e.target.value)} />
             <button
               onClick={() => {
-                if (!newPhotoUrl.trim().startsWith("http")) return alert("Link ảnh phải bắt đầu bằng http:// hoặc https://");
+                if (!newPhotoUrl.trim().startsWith("http")) { showToast("Link ảnh phải bắt đầu bằng http:// hoặc https://", "error"); return; }
                 setPhotos((p) => [...p, { id: `photo-${Date.now()}`, url: newPhotoUrl.trim(), caption: newPhotoCaption.trim() || "Ảnh mới" }]);
                 setNewPhotoUrl("");
                 setNewPhotoCaption("");

@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { HOTEL_STORAGE_KEY } from "@/lib/current-hotel";
 import { useCurrentRole } from "@/lib/current-role";
+import { useToast } from "@/components/Toast";
 
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -22,6 +23,7 @@ type HotelRow = {
 
 export default function HotelsPage() {
   const role = useCurrentRole();
+  const { showToast } = useToast();
   const router = useRouter();
   const [hotels, setHotels] = useState<HotelRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,14 +69,16 @@ export default function HotelsPage() {
   }
 
   async function addHotel() {
-    if (!form.name.trim()) return alert("Chưa nhập tên khách sạn.");
+    if (!form.name.trim()) { showToast("Chưa nhập tên khách sạn.", "error"); return; }
     const id = form.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-    if (!id) return alert("Tên khách sạn cần có ít nhất một chữ cái hoặc số.");
-    if (hotels.some((h) => h.id === id)) return alert("Khách sạn này đã có trong danh sách.");
+    if (!id) { showToast("Tên khách sạn cần có ít nhất một chữ cái hoặc số.", "error"); return; }
+    if (hotels.some((h) => h.id === id)) { showToast("Khách sạn này đã có trong danh sách.", "error"); return; }
     // Ma khach san: tu chon, khong bat buoc — de trong thi nhap sau o trang Thong tin chung; chi dung de hien thi + tim kiem, khong anh huong noi Channex.
     const code = form.code.trim().toUpperCase();
-    if (code && hotels.some((h) => (h.code ?? "").toUpperCase() === code))
-      return alert("Mã này đã dùng cho khách sạn khác.");
+    if (code && hotels.some((h) => (h.code ?? "").toUpperCase() === code)) {
+      showToast("Mã này đã dùng cho khách sạn khác.", "error");
+      return;
+    }
     const { error } = await supabase.from("hotels").insert({
       id,
       account_id: ACCOUNT_ID,
@@ -84,7 +88,7 @@ export default function HotelsPage() {
       city: null,
       profile: { phone: form.phone.trim(), email: form.email.trim() },
     });
-    if (error) return alert("Tạo khách sạn trong cơ sở dữ liệu không thành công: " + error.message);
+    if (error) { showToast("Tạo khách sạn trong cơ sở dữ liệu không thành công: " + error.message, "error"); return; }
     setHotels((p) => [
       ...p,
       { id, code: code || undefined, name: form.name.trim(), address: form.address.trim() || "—" },

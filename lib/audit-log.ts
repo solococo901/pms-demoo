@@ -14,9 +14,11 @@ export type AuditAction =
   | "price_updated"
   | "room_blocked"
   | "room_unblocked"
+  | "stop_sell_set"
+  | "stop_sell_removed"
   | "payment_added";
 
-export type AuditEntityType = "reservation" | "rate_price" | "room_block" | "room";
+export type AuditEntityType = "reservation" | "rate_price" | "room_block" | "room" | "inventory_block";
 
 export interface AuditEntry {
   hotelId: string;

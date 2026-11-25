@@ -10,6 +10,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
 import type { Room, RoomType } from "@/lib/mock-data";
+import { useToast } from "@/components/Toast";
 
 const inputSm =
   "rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
@@ -269,6 +270,7 @@ function TypeRoomsPanel(props: {
 export default function HotelRoomTypesPage() {
   const params = useParams();
   const id = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
+  const { showToast } = useToast();
 
   // ----- state: header + operations -----
   const [hotelName, setHotelName] = useState("Đang tải...");
@@ -398,13 +400,13 @@ export default function HotelRoomTypesPage() {
   }, [roomTypes, rooms, id]);
 
   function addRoomType() {
-    if (!typeName.trim()) return alert("Chưa nhập tên loại phòng.");
+    if (!typeName.trim()) { showToast("Chưa nhập tên loại phòng.", "error"); return; }
     const newId = slugifyTypeName(typeName);
-    if (roomTypes.some((t) => t.id === newId)) return alert("Loại phòng này đã tồn tại ở khách sạn này.");
+    if (roomTypes.some((t) => t.id === newId)) { showToast("Loại phòng này đã tồn tại ở khách sạn này.", "error"); return; }
     const code = typeCode.trim().toUpperCase() || autoCodeFromName(typeName);
-    if (roomTypes.some((t) => (t.code ?? "").toUpperCase() === code)) return alert(`Mã "${code}" đã có — đổi mã khác.`);
+    if (roomTypes.some((t) => (t.code ?? "").toUpperCase() === code)) { showToast(`Mã "${code}" đã có — đổi mã khác.`, "error"); return; }
     const size = typeSize.trim() === "" ? undefined : Number(typeSize);
-    if (size !== undefined && (!Number.isFinite(size) || size <= 0)) return alert("Diện tích phải là số lớn hơn 0.");
+    if (size !== undefined && (!Number.isFinite(size) || size <= 0)) { showToast("Diện tích phải là số lớn hơn 0.", "error"); return; }
     setRoomTypes((p) => [
       ...p,
       {
@@ -428,8 +430,8 @@ export default function HotelRoomTypesPage() {
   }
 
   function deleteRoomType(typeId: string) {
-    if (rooms.some((r) => r.roomTypeId === typeId)) return alert("Không xoá được: khách sạn này vẫn còn phòng thuộc loại đó — chuyển hoặc xoá hết phòng của loại này trước.");
-    if (planTypeIds.has(typeId)) return alert("Không xoá được: vẫn còn gói giá thuộc loại này.");
+    if (rooms.some((r) => r.roomTypeId === typeId)) { showToast("Không xoá được: khách sạn này vẫn còn phòng thuộc loại đó — chuyển hoặc xoá hết phòng của loại này trước.", "error"); return; }
+    if (planTypeIds.has(typeId)) { showToast("Không xoá được: vẫn còn gói giá thuộc loại này.", "error"); return; }
     setRoomTypes((p) => p.filter((t) => t.id !== typeId));
     setExpandedIds((p) => {
       const s = new Set(p);
@@ -447,7 +449,8 @@ export default function HotelRoomTypesPage() {
 
   function deleteRoom(number: string) {
     if (activeRoomNumbers.has(number))
-      return alert(`Không xoá được: phòng ${number} đang có đơn đang hiệu lực.`);
+      showToast(`Không xoá được: phòng ${number} đang có đơn đang hiệu lực.`, "error");
+      return;
     setRooms((p) => p.filter((r) => r.number !== number));
   }
 

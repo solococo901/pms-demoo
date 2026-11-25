@@ -16,6 +16,7 @@ import { currentHotelId } from "@/lib/current-hotel";
 import { addDaysStr, isoDay } from "@/lib/channex-compute";
 import { queueChannexDates, rangeDates } from "@/lib/channex-outbox";
 import { IconBuilding } from "@/components/icons";
+import { useToast } from "@/components/Toast";
 
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 // Ly do danh dau block do cong tac tat-ban tao ra (de bat lai chi xoa dung cac block nay).
@@ -38,6 +39,7 @@ function relTime(iso: string | null): string {
 }
 
 export default function ChannelsPage() {
+  const { showToast } = useToast();
   const params = useParams();
   const HOTEL_ID = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
   const [environment, setEnvironment] = useState<"staging" | "production">("staging");
@@ -123,7 +125,7 @@ export default function ChannelsPage() {
       }));
       if (rows.length > 0) {
         const { error } = await supabase.from("inventory_blocks").insert(rows);
-        if (error) { alert("Tắt bán không thành công: " + error.message); setBusyCode(null); return; }
+        if (error) { showToast("Tắt bán không thành công: " + error.message, "error"); setBusyCode(null); return; }
         setOffBlocks((prev) => [
           ...prev,
           ...rows.map((r) => ({ id: r.id, channelCode: code, roomTypeId: r.room_type_id })),
@@ -134,7 +136,7 @@ export default function ChannelsPage() {
       const doomed = offBlocks.filter((b) => b.channelCode === code);
       if (doomed.length > 0) {
         const { error } = await supabase.from("inventory_blocks").delete().in("id", doomed.map((b) => b.id));
-        if (error) { alert("Mở bán lại không thành công: " + error.message); setBusyCode(null); return; }
+        if (error) { showToast("Mở bán lại không thành công: " + error.message, "error"); setBusyCode(null); return; }
         setOffBlocks((prev) => prev.filter((b) => !doomed.some((d) => d.id === b.id)));
       }
       queueChannexDates(rangeDates(today, to), HOTEL_ID);

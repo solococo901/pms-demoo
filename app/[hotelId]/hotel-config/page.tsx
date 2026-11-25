@@ -19,6 +19,7 @@ import {
   type NearbyPlace,
   type PaymentMethods,
 } from "@/lib/mock-data";
+import { useToast } from "@/components/Toast";
 
 const inputCls =
   "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
@@ -77,10 +78,11 @@ function PolicySection({
   items: NamedPolicy[];
   setItems: (f: (p: NamedPolicy[]) => NamedPolicy[]) => void;
 }) {
+  const { showToast } = useToast();
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   function add() {
-    if (!name.trim()) return alert("Chưa nhập tên chính sách.");
+    if (!name.trim()) { showToast("Chưa nhập tên chính sách.", "error"); return; }
     setItems((p) => [
       ...p,
       { id: `policy-${Date.now()}`, name: name.trim(), description: desc.trim(), active: true },

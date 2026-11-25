@@ -1,11 +1,13 @@
 "use client";
-// RATES12 — components/RatesCalendar.tsx (Lich gia, popup doi % cong them)
-// Bấm huy hiệu % ở đầu hàng giá mở popup xác nhận; nút Xác nhận chỉ bật khi % mới khác % hiện tại.
-// Bo nut "⚡ Sửa nhanh" o dau moi loai phong (Vos yeu cau 23/11) — nut "Cập nhật hàng loạt" tren thanh cong cu giu nguyen.
-// Gia goc = gia Website; gia kenh suy ra theo % hoa hong, sua tay duoc tung o (override).
-// Popup Cap nhat nhanh: nut Cap nhat chi bat khi co thay doi that (gia / ngung ban / so dem toi thieu khac gia tri hien tai cua it nhat 1 ngay trong khoang).
+// RATES19 — components/RatesCalendar.tsx (Lich gia kieu ezCloud)
+// Bo nut tab 'Lich phong' khoi thanh tab (chi con 2 tab xem gia); Lich phong van vao duoc tu menu + nut tren thanh tren.
+// 2 tab: Ban phong theo kenh | Ban phong theo loai phong (mac dinh).
+// Moi loai phong chi 2 dong (Phong trong + Gia ban); ten loai phong om 2 dong (rowspan).
+// Gia goc = gia Website; gia kenh suy ra theo %, sua tay duoc tung o (override, ▲ den).
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useToast } from "@/components/Toast";
 import {
   CHANNELS,
   CHANNEL_FORMULA,
@@ -22,6 +24,7 @@ import {
   inventoryBlockOn,
   resolvePlanPrice,
   roomBlockOn,
+  type BaseRatePeriod,
   type InventoryBlock,
   type RatePlan,
   type RoomType,
@@ -29,10 +32,10 @@ import {
 import { supabase } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit-log";
 import { currentHotelId } from "@/lib/current-hotel";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { queueChannexDates, rangeDates } from "@/lib/channex-outbox";
 import { DatePicker, DateRangePicker } from "@/components/DatePicker";
-import { IconZap } from "@/components/icons";
+import { IconEdit, IconZap } from "@/components/icons";
 
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -52,7 +55,7 @@ const WINDOW = 14;
 type Restriction = { stopSell?: boolean; minStay?: number; maxStay?: number; cta?: boolean; ctd?: boolean };
 type CellKey = string; // `${planId}|${date}`
 const keyOf = (planId: string, date: string): CellKey => `${planId}|${date}`;
-type ViewMode = "prices" | "availability" | "restrictions";
+type MainTab = "byType" | "byChannel";
 
 const inputCls = "rounded-lg border border-line px-2 py-2 text-ink outline-none focus:border-primary";
 const WEEKEND_DAYS: number[] = getHotelData("cityhouse-mark").config?.weekendDays ?? [0, 6];
@@ -61,13 +64,16 @@ export default function RatesCalendar() {
   // Khach san lay tu URL; neu khong thi dung khach san da luu theo tab.
   const params = useParams();
   const HOTEL_ID = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
-  const router = useRouter();
 
-  const [view, setView] = useState<ViewMode>("prices");
-  const [visibleTypeIds, setVisibleTypeIds] = useState<Set<string> | null>(null); // null = tat ca loai phong
-  const [visibleChannels, setVisibleChannels] = useState<Set<string> | null>(null); // null = tat ca kenh
+  const [mainTab, setMainTab] = useState<MainTab>("byType");
+  const [typeFilter, setTypeFilter] = useState<string | null>(null); // null = tat ca loai phong
+  const [policyFilter, setPolicyFilter] = useState<string>("all");
+  const [selectedChannel, setSelectedChannel] = useState<string>("agoda");
+  const [showAvailRow, setShowAvailRow] = useState(true);
+  const [showHint, setShowHint] = useState(true);
+  // Kênh đang xem của từng loại phòng ở tab "Bán phòng theo kênh" (mỗi dòng 1 dropdown riêng).
+  const [channelByType, setChannelByType] = useState<Record<string, string>>({});
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
-  const [invChannel, setInvChannel] = useState<string>("all"); // che do Ton phong: kenh dang kiem tra
   const [startDate, setStartDate] = useState<string>(TODAY);
   const [todayStr, setTodayStr] = useState<string>(TODAY);
 
@@ -75,6 +81,7 @@ export default function RatesCalendar() {
   const [roomTypesDb, setRoomTypesDb] = useState<RoomType[]>(ROOM_TYPES);
   const [restrictions, setRestrictions] = useState<Record<CellKey, Restriction>>({});
   const [overrides, setOverrides] = useState<Record<CellKey, number>>({}); // gia sua tay cua goi suy ra
+  const [basePeriods, setBasePeriods] = useState<BaseRatePeriod[]>([]); // giai doan gia goc (Base Rate)
   const [invBlocks, setInvBlocks] = useState<InventoryBlock[]>(INVENTORY_BLOCKS); // stop-sell cap kenh & loai phong
   // Phong/don/chan phong: bat dau la du lieu mau, loader duoi thay bang du lieu DB.
   const [roomsDb, setRoomsDb] = useState(ROOMS);
@@ -113,9 +120,8 @@ export default function RatesCalendar() {
   const [creatorError, setCreatorError] = useState("");
 
 
-  // Phan hoi sau khi luu: thong bao + hoan tac + o vua sua sang xanh + nhat ky thay doi.
-  const [toast, setToast] = useState<{ text: string; onUndo?: () => void } | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Phan hoi sau khi luu: thong bao dung chung (co nut Hoan tac) + o vua sua sang xanh + nhat ky thay doi.
+  const { showToast } = useToast();
   const [justSaved, setJustSaved] = useState<Set<string>>(new Set());
   const [changeLog, setChangeLog] = useState<{ time: string; text: string }[]>([]);
   const [showLog, setShowLog] = useState(false);
@@ -168,12 +174,6 @@ export default function RatesCalendar() {
     setDirtyChannels((prev) => new Set(prev).add(code));
   }
 
-  function showToast(text: string, onUndo?: () => void) {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast({ text, onUndo });
-    toastTimer.current = setTimeout(() => setToast(null), 10000);
-  }
-
   function logChange(text: string) {
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
@@ -188,7 +188,7 @@ export default function RatesCalendar() {
   // ---------- Supabase: load plans + daily prices on mount ----------
   useEffect(() => {
     (async () => {
-      const [typesRes, plansRes, pricesRes, roomsRes, resRes, rrRes, blocksRes, invRes] = await Promise.all([
+      const [typesRes, plansRes, pricesRes, roomsRes, resRes, rrRes, blocksRes, invRes, baseRes] = await Promise.all([
         supabase.from("room_types").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("rate_plans").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("rate_prices").select("*"),
@@ -197,8 +197,9 @@ export default function RatesCalendar() {
         supabase.from("reservation_rooms").select("reservation_id, room_number"),
         supabase.from("room_blocks").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("inventory_blocks").select("*").eq("hotel_id", HOTEL_ID),
+        supabase.from("base_rate_periods").select("*").eq("hotel_id", HOTEL_ID),
       ]);
-      const loadErr = plansRes.error ?? pricesRes.error ?? roomsRes.error ?? resRes.error ?? rrRes.error ?? blocksRes.error ?? invRes.error;
+      const loadErr = plansRes.error ?? pricesRes.error ?? roomsRes.error ?? resRes.error ?? rrRes.error ?? blocksRes.error ?? invRes.error ?? baseRes.error;
       if (loadErr) {
         setDbError(loadErr.message ?? "Không đọc được dữ liệu");
         return;
@@ -243,6 +244,18 @@ export default function RatesCalendar() {
           allPriceRows = [...allPriceRows, ...(page ?? [])];
           if (!page || page.length < 1000) break;
         }
+      }
+      // Gia goc theo giai doan (Base Rate): nap vao plan.prices cua goi Website
+      // truoc, roi cac dong rate_prices (gia sua tay / override) ghi de len tren.
+      // Nhu vay moi cho doc plan.prices[date] deu thay gia hieu luc (ghi de thang gia goc).
+      const baseList: BaseRatePeriod[] = (baseRes.data ?? []).map((r) => ({
+        id: r.id, roomTypeId: r.room_type_id, from: r.from_date, to: r.to_date, price: Number(r.price),
+      }));
+      setBasePeriods(baseList);
+      for (const bp of baseList) {
+        const plan = dbPlans.find((x) => !x.derivedFromId && x.roomTypeId === bp.roomTypeId);
+        if (!plan) continue;
+        for (const d of rangeDates(bp.from, bp.to)) plan.prices[d] = bp.price;
       }
       const rows = allPriceRows.filter((r) => planIds.has(r.rate_plan_id));
       const dbOverrides: Record<CellKey, number> = {};
@@ -329,10 +342,17 @@ export default function RatesCalendar() {
     })();
   }, []);
 
-  // Gia hien thi cua 1 o: goi goc lay gia da luu; goi suy ra tinh tu gia goc (+ cong thuc), gia sua tay thang.
+  // Gia goc theo giai doan cho 1 loai phong vao 1 ngay (khong co giai doan thi undefined).
+  const baseRatePrice = (roomTypeId: string, date: string): number | undefined => {
+    const bp = basePeriods.find((x) => x.roomTypeId === roomTypeId && x.from <= date && date <= x.to);
+    return bp ? bp.price : undefined;
+  };
+
+  // Gia hien thi cua 1 o: goi goc lay gia da luu (ghi de thang gia goc, khong co thi gia goc theo giai doan);
+  // goi suy ra tinh tu gia goc (+ cong thuc), gia sua tay thang.
   function priceForCell(plan: RatePlan, date: string): number | undefined {
     if (!plan.derivedFromId) return plan.prices[date];
-    return resolvePlanPrice(plan, date, plans, overrides);
+    return resolvePlanPrice(plan, date, plans, overrides, basePeriods);
   }
 
   // Ten hien thi cho log gia: ten loai phong + ten kenh + ngay dd/MM/yyyy.
@@ -400,10 +420,13 @@ export default function RatesCalendar() {
         return next;
       });
     } else {
+      // Xoa gia sua tay: o ve lai gia goc theo giai doan (neu co), khong de trong.
+      const bp = baseRatePrice(plan.roomTypeId, date);
       setPlans((prev) => prev.map((p) => {
         if (p.id !== planId) return p;
         const next = { ...p.prices };
-        delete next[date];
+        if (bp !== undefined) next[date] = bp;
+        else delete next[date];
         return { ...p, prices: next };
       }));
     }
@@ -456,6 +479,7 @@ export default function RatesCalendar() {
   function pushAllToChannex() {
     queueChannexDates(days, HOTEL_ID);
     setDirtyChannels(new Set());
+    showToast("Đã đẩy thay đổi lên Channex — đang đồng bộ.");
   }
 
   async function addInvBlock() {
@@ -474,7 +498,7 @@ export default function RatesCalendar() {
       scope: nb.scope, channel_code: nb.channelCode ?? null, room_type_id: nb.roomTypeId,
       from_date: nb.from, to_date: nb.to, reason: nb.reason ?? null,
     });
-    if (error) return alert("Lưu đóng bán không thành công: " + error.message);
+    if (error) { setDbError("Lưu đóng bán không thành công: " + error.message); return; }
     setInvBlocks((prev) => [...prev, nb]);
     queueChannexDates(rangeDates(nb.from, nb.to));
     if (nb.scope === "channel" && nb.channelCode) markDirty(nb.channelCode);
@@ -485,7 +509,7 @@ export default function RatesCalendar() {
   async function removeInvBlock(id: string) {
     const blk = invBlocks.find((b) => b.id === id);
     const { error } = await supabase.from("inventory_blocks").delete().eq("id", id);
-    if (error) return alert("Xoá đóng bán không thành công: " + error.message);
+    if (error) { setDbError("Xoá đóng bán không thành công: " + error.message); return; }
     setInvBlocks((prev) => prev.filter((b) => b.id !== id));
     if (blk) queueChannexDates(rangeDates(blk.from, blk.to));
   }
@@ -584,6 +608,7 @@ export default function RatesCalendar() {
       if (!moveNext && plan) {
         showToast(
           `Đã xoá giá ${chName} · ${typeName} · ${editing.date}${oldPrice !== undefined ? ` (giá cũ ${fmt(oldPrice)})` : ""}.`,
+          "success",
           () => { restoreOld(); showToast("Đã hoàn tác."); }
         );
       }
@@ -597,6 +622,7 @@ export default function RatesCalendar() {
         if (!moveNext) {
           showToast(
             `Đã sửa giá ${chName} · ${typeName} · ${editing.date}: ${oldPrice !== undefined ? fmt(oldPrice) : "—"} → ${fmt(Number(v))}.`,
+            "success",
             () => { restoreOld(); showToast("Đã hoàn tác."); }
           );
         }
@@ -648,7 +674,7 @@ export default function RatesCalendar() {
   async function resetOverrideToDerived() {
     if (!quick || quSaving) return;
     const plan = plans.find((p) => p.id === quick.planId);
-    if (!plan || !plan.derivedFromId) return;
+    if (!plan) return;
     const from = quFrom || quick.date;
     const to = quTo || quFrom || quick.date;
     if (to < from) return;
@@ -656,12 +682,27 @@ export default function RatesCalendar() {
     const { chName, typeName } = priceLogLabel(plan, from);
     const dShort = (d: string) => d.split("-").reverse().join("/");
     const rangeLabel = from === to ? dShort(from) : `${dShort(from)} → ${dShort(to)}`;
+    const backLabel = plan.derivedFromId ? "về giá tự tính" : "về giá gốc";
     setQuSaving(true);
-    setOverrides((prev) => {
-      const next = { ...prev };
-      dates.forEach((d) => { delete next[keyOf(plan.id, d)]; });
-      return next;
-    });
+    if (plan.derivedFromId) {
+      setOverrides((prev) => {
+        const next = { ...prev };
+        dates.forEach((d) => { delete next[keyOf(plan.id, d)]; });
+        return next;
+      });
+    } else {
+      // Goi goc: xoa gia sua tay, o ve lai gia goc theo giai doan (neu co).
+      setPlans((prev) => prev.map((p) => {
+        if (p.id !== plan.id) return p;
+        const next = { ...p.prices };
+        dates.forEach((d) => {
+          const bp = baseRatePrice(p.roomTypeId, d);
+          if (bp !== undefined) next[d] = bp;
+          else delete next[d];
+        });
+        return { ...p, prices: next };
+      }));
+    }
     const { error } = await supabase.from("rate_prices").delete().eq("rate_plan_id", plan.id).gte("date", from).lte("date", to);
     setQuSaving(false);
     if (error) { setDbError("Xoá giá riêng không thành công: " + error.message); return; }
@@ -670,11 +711,11 @@ export default function RatesCalendar() {
     flashSaved(dates.map((d) => keyOf(plan.id, d)));
     writeAuditLog({
       hotelId: HOTEL_ID, accountId: ACCOUNT_ID, action: "price_updated", entityType: "rate_price", entityId: plan.id,
-      summary: `Xoá giá riêng ${typeName} · ${chName} · ${rangeLabel} (${dates.length} ngày) — về giá tự tính`,
+      summary: `Xoá giá riêng ${typeName} · ${chName} · ${rangeLabel} (${dates.length} ngày) — ${backLabel}`,
       details: { planId: plan.id, from, to, days: dates.length, newPrice: null, channelCode: plan.channelCode, roomTypeId: plan.roomTypeId },
     });
-    logChange(`Xoá giá riêng ${typeName} · ${chName} · ${rangeLabel} — về giá tự tính`);
-    showToast(`Đã xoá giá riêng ${typeName} · ${chName} · ${rangeLabel} — về lại giá tự tính.`);
+    logChange(`Xoá giá riêng ${typeName} · ${chName} · ${rangeLabel} — ${backLabel}`);
+    showToast(`Đã xoá giá riêng ${typeName} · ${chName} · ${rangeLabel} — ${backLabel}.`);
     closeQuickUpdate();
   }
 
@@ -786,10 +827,15 @@ export default function RatesCalendar() {
             return next;
           });
         } else {
+          // Xoa gia sua tay trong khoang: cac o ve lai gia goc theo giai doan (neu co).
           setPlans((prev) => prev.map((p) => {
             if (p.id !== plan.id) return p;
             const next = { ...p.prices };
-            dates.forEach((d) => { delete next[d]; });
+            dates.forEach((d) => {
+              const bp = baseRatePrice(p.roomTypeId, d);
+              if (bp !== undefined) next[d] = bp;
+              else delete next[d];
+            });
             return { ...p, prices: next };
           }));
         }
@@ -805,7 +851,7 @@ export default function RatesCalendar() {
           details: { planId: plan.id, from, to, days: dates.length, newPrice: null, channelCode: plan.channelCode, roomTypeId: plan.roomTypeId },
         });
         logChange(`Xoá giá ${typeName} · ${chName} · ${rangeLabel}`);
-        showToast(`Đã xoá giá ${typeName} · ${chName} · ${rangeLabel}.`, restoreSnap);
+        showToast(`Đã xoá giá ${typeName} · ${chName} · ${rangeLabel}.`, "success", restoreSnap);
         closeQuickUpdate();
         return;
       }
@@ -841,7 +887,7 @@ export default function RatesCalendar() {
         details: { planId: plan.id, from, to, days: dates.length, oldPrices: [...snap.values()].map((c) => c.price), newPrice: price, channelCode: plan.channelCode, roomTypeId: plan.roomTypeId },
       });
       logChange(`Đổi giá ${typeName} · ${chName} · ${rangeLabel}: ${oldDesc} → ${fmt(price)}`);
-      showToast(`Đã đổi giá ${typeName} · ${chName} · ${rangeLabel}: ${oldDesc} → ${fmt(price)}.`, restoreSnap);
+      showToast(`Đã đổi giá ${typeName} · ${chName} · ${rangeLabel}: ${oldDesc} → ${fmt(price)}.`, "success", restoreSnap);
       closeQuickUpdate();
       return;
     }
@@ -877,18 +923,42 @@ export default function RatesCalendar() {
   }
 
 
-  // ---------- shared grid pieces ----------
-  const gridCols = { gridTemplateColumns: `230px repeat(${days.length}, minmax(88px, 1fr))` } as const;
-  const visibleTypes = roomTypesDb.filter((t) => !visibleTypeIds || visibleTypeIds.has(t.id));
-  const visibleChannelList = CHANNELS.filter((c) => !visibleChannels || visibleChannels.has(c.code));
-  const [openFilter, setOpenFilter] = useState<"types" | "channels" | null>(null);
-
-  function toggleInSet(set: Set<string> | null, id: string, all: string[]): Set<string> {
-    const next = new Set(set ?? all);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    return next;
+  // ---------- shared grid pieces (RATES15: luoi gon — o gia ~46px, cot ngay 76px, chu gia 13px) ----------
+  const gridColsType = { gridTemplateColumns: `140px 120px repeat(${days.length}, minmax(72px, 1fr))` } as const;
+  const gridColsChannel = { gridTemplateColumns: `200px repeat(${days.length}, minmax(76px, 1fr))` } as const;
+  // Luoi ton phong o tab "Ban phong theo kenh": ten loai phong + dropdown chon kenh + cac cot ngay.
+  const gridColsInv = { gridTemplateColumns: `180px 150px repeat(${days.length}, minmax(72px, 1fr))` } as const;
+  // Kênh của 1 dòng ở tab "Bán phòng theo kênh": đã chọn riêng thì dùng nó, chưa thì theo dropdown Kênh bán.
+  const rowChannel = (typeId: string) => channelByType[typeId] ?? (selectedChannel === "all" ? "website" : selectedChannel);
+  // Bấm 1 ô tồn phòng: mở cửa sổ Đóng bán, điền sẵn kênh + loại phòng + ngày đó.
+  function openInvForCell(channelCode: string, typeId: string, date: string) {
+    setIbScope("channel");
+    setIbChannel(channelCode);
+    setIbType(typeId);
+    setIbFrom(date);
+    setIbTo(date);
+    setIbReason("");
+    setInvOpen(true);
   }
+  const [openFilter, setOpenFilter] = useState<"type" | "policy" | "channel" | "display" | null>(null);
+  const policyOptions = [...new Set(plans.map((p) => p.cancellationPolicy))];
+  const policyLabel = (p: string) => (p === "non_refundable" ? "Không hoàn tiền" : "Linh hoạt");
+  // Loai phong hien theo bo loc: loai + chinh sach gia (goi chuan cua kenh dang chon).
+  // Khi chon "Tat ca" kenh: an loai phong neu da co goi ma khong goi nao khop chinh sach;
+  // loai phong chua co goi van hien de bam "— Dat gia —" duoc.
+  const visibleTypes = roomTypesDb.filter((t) => {
+    if (typeFilter && t.id !== typeFilter) return false;
+    if (policyFilter !== "all") {
+      if (selectedChannel === "all") {
+        const ps = CHANNELS.map((c) => standardPlanFor(c.code, t.id)).filter((p): p is RatePlan => !!p);
+        if (ps.length > 0 && !ps.some((p) => p.cancellationPolicy === policyFilter)) return false;
+      } else {
+        const p = standardPlanFor(selectedChannel, t.id);
+        if (p && p.cancellationPolicy !== policyFilter) return false;
+      }
+    }
+    return true;
+  });
 
   function weekRange(): { from: string; to: string } {
     const dow = dayParts(todayStr).dow;
@@ -902,17 +972,28 @@ export default function RatesCalendar() {
     return { from: `${y}-${m}-01`, to: `${y}-${m}-${String(last).padStart(2, "0")}` };
   }
 
-  function DateHeader() {
+  // Dau cot ngay: Thu / so ngay / Thang; cuoi tuan (T7, CN) to do/hong.
+  // labelSpan = so cot nhan gop lai o dau dong (2 o tab theo loai phong, 1 o cac bang khac).
+  function DateHeader({ label, labelSpan }: { label?: string; labelSpan?: number }) {
+    const span = labelSpan ?? 1;
     return (
       <div className="contents">
-        <div className="sticky left-0 top-0 z-20 border-b border-[var(--nui-bg)] bg-primary-soft px-3 py-2 text-xs font-semibold text-muted">Ngày →</div>
+        <div
+          className="sticky left-0 top-0 z-20 border-b border-[var(--nui-bg)] bg-primary-soft px-3 py-2 text-xs font-semibold text-muted"
+          style={{ gridColumn: `span ${span}` }}
+        >
+          {label ?? "Ngày →"}
+        </div>
         {days.map((d) => {
           const p = dayParts(d);
           const weekend = WEEKEND_DAYS.includes(p.dow);
+          const dd = new Date(d + "T00:00:00");
           return (
-            <div key={d} className={`sticky top-0 z-10 border-b border-l border-[var(--nui-bg)] px-2 py-2 text-center text-xs font-semibold ${d === todayStr ? "bg-primary text-white" : weekend ? "bg-danger-soft text-danger" : "bg-primary-soft text-muted"}`}>
-              {p.wd} · {p.label}
-              {d === todayStr && <div className="text-[10px] font-bold text-white/80">HÔM NAY</div>}
+            <div key={d} className={`sticky top-0 z-10 border-b border-l border-[var(--nui-bg)] px-1 py-2 text-center text-[10px] font-semibold leading-tight ${d === todayStr ? "bg-primary text-white" : weekend ? "bg-danger-soft text-danger" : "bg-primary-soft text-muted"}`}>
+              <div>{p.wd}</div>
+              <div className="text-[12px] font-bold">{dd.getDate()}</div>
+              <div className="text-[9px] font-medium">Tháng {dd.getMonth() + 1}</div>
+              {d === todayStr && <div className="text-[9px] font-bold text-white/80">HÔM NAY</div>}
             </div>
           );
         })}
@@ -923,7 +1004,7 @@ export default function RatesCalendar() {
   function TypeHeader({ t }: { t: RoomType }) {
     const collapsed = collapsedTypes.has(t.id);
     return (
-      <div className="sticky left-0 z-10 border-b shadow-[2px_0_4px_rgba(23,41,62,0.05)] border-[var(--nui-bg)] bg-primary-soft px-3 py-2.5 text-[15px] font-bold text-ink">
+      <div className="sticky left-0 z-10 border-b shadow-[2px_0_4px_rgba(23,41,62,0.05)] border-[var(--nui-bg)] bg-primary-soft px-3 py-2 text-[13px] font-bold text-ink">
         <button
           onClick={() =>
             setCollapsedTypes((prev) => {
@@ -943,12 +1024,31 @@ export default function RatesCalendar() {
     );
   }
 
-  // ---------- toolbar + modals + toast ----------
+  // ---------- toolbar + modals ----------
   function Toolbar() {
     const dirtyCount = dirtyChannels.size;
+    const selCh = CHANNELS.find((c) => c.code === selectedChannel);
+    const selPct = selectedChannel === "website" || selectedChannel === "all" ? undefined : channelCurrentPct(selectedChannel);
     return (
       <div className="sticky top-0 z-30 -mx-1 rounded-xl border border-line bg-surface px-3 py-2 shadow-card">
+        {/* 2 tab chinh: theo kenh | theo loai phong (mac dinh) */}
         <div className="flex flex-wrap items-center gap-2">
+          <div className="flex overflow-hidden rounded-full border border-line">
+            {(
+              [
+                ["byChannel", "Bán phòng theo kênh"],
+                ["byType", "Bán phòng theo loại phòng"],
+              ] as const
+            ).map(([tab, label]) => (
+              <button
+                key={tab}
+                onClick={() => setMainTab(tab)}
+                className={`px-3 py-2 text-sm font-medium ${mainTab === tab ? "bg-primary text-white" : "bg-surface text-ink hover:bg-primary-soft"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <span className="flex items-center gap-1">
             <button onClick={() => setStartDate(addDays(startDate, -WINDOW))} className="cb-btn-ghost px-2.5 py-2" title="Lùi 14 ngày">‹</button>
             <button onClick={() => setStartDate(todayStr)} className="cb-btn-ghost px-2.5 py-2 text-sm font-semibold" title="Về hôm nay">Hôm nay</button>
@@ -958,78 +1058,119 @@ export default function RatesCalendar() {
             {dayParts(days[0]).label} → {dayParts(days[days.length - 1]).label}
           </span>
           <DatePicker value={startDate} onChange={(v) => v && setStartDate(v)} />
+          <span className="ml-auto flex items-center gap-2">
+            {dirtyCount > 0 ? (
+              <>
+                <span className="text-sm text-warning">● {dirtyCount} kênh có thay đổi chưa đẩy lên Channex</span>
+                <button onClick={pushAllToChannex} className="cb-btn-primary px-3 py-2 text-sm">Đẩy lên Channex ngay</button>
+              </>
+            ) : (
+              <span className="text-sm text-success">● Đã đồng bộ Channex</span>
+            )}
+            <Link href={`/${HOTEL_ID}/rates/bulk?tab=restrictions&mode=stop_sell&channel=${selectedChannel === "all" ? "website" : selectedChannel}&from=${startDate}&to=${addDays(startDate, WINDOW - 1)}`} className="cb-btn-ghost px-3 py-2 text-sm">
+              Đóng bán
+            </Link>
+            <Link href={`/${HOTEL_ID}/rates/bulk?channel=${selectedChannel === "all" ? "website" : selectedChannel}&from=${startDate}&to=${addDays(startDate, WINDOW - 1)}`} className="cb-btn-primary inline-flex items-center gap-1.5 px-3 py-2 text-sm">
+              <IconZap className="h-4 w-4" /> Cập nhật hàng loạt
+            </Link>
+          </span>
+        </div>
+        {/* Hang loc: loai phong | chinh sach gia | kenh ban | hien thi them */}
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-[var(--nui-bg)] pt-2">
           <div className="relative">
-            <button onClick={() => setOpenFilter(openFilter === "types" ? null : "types")} className="cb-btn-ghost px-3 py-2 text-sm">
-              Loại phòng {visibleTypeIds ? `(${visibleTypeIds.size})` : "(tất cả)"} ▾
+            <button onClick={() => setOpenFilter(openFilter === "type" ? null : "type")} className="cb-btn-ghost px-3 py-2 text-sm">
+              Loại phòng: {typeFilter ? roomTypesDb.find((t) => t.id === typeFilter)?.name ?? typeFilter : "Tất cả"} ▾
             </button>
-            {openFilter === "types" && (
+            {openFilter === "type" && (
               <div className="absolute left-0 top-full z-40 mt-1 w-56 rounded-xl border border-line bg-surface p-2 shadow-card">
                 <button
-                  onClick={() => { setVisibleTypeIds(null); setOpenFilter(null); }}
+                  onClick={() => { setTypeFilter(null); setOpenFilter(null); }}
                   className="mb-1 w-full rounded-lg px-2 py-1.5 text-left text-sm font-semibold text-primary hover:bg-primary-soft"
                 >
                   Tất cả loại phòng
                 </button>
-                {roomTypesDb.map((t) => {
-                  const checked = !visibleTypeIds || visibleTypeIds.has(t.id);
+                {roomTypesDb.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => { setTypeFilter(t.id); setOpenFilter(null); }}
+                    className={`w-full rounded-lg px-2 py-1.5 text-left text-sm hover:bg-primary-soft ${typeFilter === t.id ? "font-semibold text-primary" : "text-ink"}`}
+                  >
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="relative">
+            <button onClick={() => setOpenFilter(openFilter === "policy" ? null : "policy")} className="cb-btn-ghost px-3 py-2 text-sm">
+              Chính sách giá: {policyFilter === "all" ? "Tất cả" : policyLabel(policyFilter)} ▾
+            </button>
+            {openFilter === "policy" && (
+              <div className="absolute left-0 top-full z-40 mt-1 w-56 rounded-xl border border-line bg-surface p-2 shadow-card">
+                <button
+                  onClick={() => { setPolicyFilter("all"); setOpenFilter(null); }}
+                  className="mb-1 w-full rounded-lg px-2 py-1.5 text-left text-sm font-semibold text-primary hover:bg-primary-soft"
+                >
+                  Tất cả chính sách
+                </button>
+                {policyOptions.map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => { setPolicyFilter(p); setOpenFilter(null); }}
+                    className={`w-full rounded-lg px-2 py-1.5 text-left text-sm hover:bg-primary-soft ${policyFilter === p ? "font-semibold text-primary" : "text-ink"}`}
+                  >
+                    {policyLabel(p)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="relative">
+            <button onClick={() => setOpenFilter(openFilter === "channel" ? null : "channel")} className="cb-btn-ghost px-3 py-2 text-sm">
+              Kênh bán: {selectedChannel === "all" ? "Tất cả" : selCh?.name ?? selectedChannel}
+              {selectedChannel === "all" ? "" : selectedChannel === "website" ? " ★ Giá gốc" : selectedChannel === "frontdesk" ? " ±0%" : selPct !== undefined ? ` +${selPct}%` : ""} ▾
+            </button>
+            {openFilter === "channel" && (
+              <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-xl border border-line bg-surface p-2 shadow-card">
+                <button
+                  onClick={() => { setSelectedChannel("all"); setOpenFilter(null); }}
+                  className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm hover:bg-primary-soft ${selectedChannel === "all" ? "font-semibold text-primary" : "text-ink"}`}
+                >
+                  <span>Tất cả</span>
+                  <span className="text-xs text-muted">mọi kênh</span>
+                </button>
+                {CHANNELS.map((c) => {
+                  const pct = c.code === "website" ? undefined : channelCurrentPct(c.code);
                   return (
-                    <label key={t.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-ink hover:bg-primary-soft">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => setVisibleTypeIds((prev) => toggleInSet(prev, t.id, roomTypesDb.map((x) => x.id)))}
-                      />
-                      {t.name}
-                    </label>
+                    <button
+                      key={c.code}
+                      onClick={() => { setSelectedChannel(c.code); setOpenFilter(null); }}
+                      className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm hover:bg-primary-soft ${selectedChannel === c.code ? "font-semibold text-primary" : "text-ink"}`}
+                    >
+                      <span>{c.name}{c.code === "website" ? " ★ Giá gốc" : ""}</span>
+                      <span className="text-xs text-muted">{c.code === "website" ? "" : c.code === "frontdesk" ? "±0%" : pct !== undefined ? `+${pct}%` : ""}</span>
+                    </button>
                   );
                 })}
               </div>
             )}
           </div>
           <div className="relative">
-            <button onClick={() => setOpenFilter(openFilter === "channels" ? null : "channels")} className="cb-btn-ghost px-3 py-2 text-sm">
-              Kênh {visibleChannels ? `(${visibleChannels.size})` : "(tất cả)"} ▾
+            <button onClick={() => setOpenFilter(openFilter === "display" ? null : "display")} className="cb-btn-ghost px-3 py-2 text-sm">
+              Hiển thị thêm ▾
             </button>
-            {openFilter === "channels" && (
+            {openFilter === "display" && (
               <div className="absolute left-0 top-full z-40 mt-1 w-56 rounded-xl border border-line bg-surface p-2 shadow-card">
-                <button
-                  onClick={() => { setVisibleChannels(null); setOpenFilter(null); }}
-                  className="mb-1 w-full rounded-lg px-2 py-1.5 text-left text-sm font-semibold text-primary hover:bg-primary-soft"
-                >
-                  Tất cả các kênh
-                </button>
-                {CHANNELS.map((c) => {
-                  const checked = !visibleChannels || visibleChannels.has(c.code);
-                  return (
-                    <label key={c.code} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-ink hover:bg-primary-soft">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => setVisibleChannels((prev) => toggleInSet(prev, c.code, CHANNELS.map((x) => x.code)))}
-                      />
-                      {c.name}
-                    </label>
-                  );
-                })}
+                <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-ink hover:bg-primary-soft">
+                  <input type="checkbox" checked={showAvailRow} onChange={(e) => setShowAvailRow(e.target.checked)} />
+                  Hiện dòng Phòng trống
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-ink hover:bg-primary-soft">
+                  <input type="checkbox" checked={showHint} onChange={(e) => setShowHint(e.target.checked)} />
+                  Hiện chú thích dưới bảng
+                </label>
               </div>
             )}
-          </div>
-          <div className="flex overflow-hidden rounded-full border border-line">
-            {(
-              [
-                ["prices", "Giá"],
-                ["availability", "Tồn phòng"],
-                ["restrictions", "Điều kiện bán"],
-              ] as const
-            ).map(([mode, label]) => (
-              <button
-                key={mode}
-                onClick={() => setView(mode)}
-                className={`px-3 py-2 text-sm font-medium ${view === mode ? "bg-primary text-white" : "bg-surface text-ink hover:bg-primary-soft"}`}
-              >
-                {label}
-              </button>
-            ))}
           </div>
           <div className="relative">
             <button onClick={() => setShowLegend((v) => !v)} className="cb-btn-ghost px-2.5 py-2 text-sm font-bold" title="Chú thích màu và ký hiệu">
@@ -1040,7 +1181,7 @@ export default function RatesCalendar() {
                 <div className="mb-2 text-sm font-semibold">Chú thích</div>
                 <p className="py-0.5"><span className="font-semibold">★ Giá gốc</span> — hàng Website, sửa được, các kênh khác tự tính theo.</p>
                 <p className="py-0.5"><span className="font-semibold">▲ đen ở góc ô</span> — giá sửa tay (chỉ kênh đó); bấm ô rồi bấm “Xoá giá riêng” để về lại giá tự tính.</p>
-                <p className="py-0.5"><span className="text-muted">Hàng xám + chip %</span> — giá tự tính từ giá gốc, bấm ô để sửa tay.</p>
+                <p className="py-0.5"><span className="font-semibold text-muted">Hàng xám + chip %</span> — giá tự tính từ giá gốc, bấm ô để sửa tay.</p>
                 <p className="py-0.5"><span className="font-semibold text-primary">— Đặt giá —</span> — kênh chưa có giá, bấm để tạo giá cho kênh đó.</p>
                 <p className="py-0.5"><span className="rounded bg-danger-soft px-1 font-semibold text-danger">Ô cam</span> — đang ngừng bán ngày đó.</p>
                 <p className="py-0.5"><span className="font-semibold">*2</span> — ở tối thiểu 2 đêm; chip SS / CTA / CTD là các hạn chế khác.</p>
@@ -1069,22 +1210,6 @@ export default function RatesCalendar() {
               </div>
             )}
           </div>
-          <span className="ml-auto flex items-center gap-2">
-            {dirtyCount > 0 ? (
-              <>
-                <span className="text-sm text-warning">● {dirtyCount} kênh có thay đổi chưa đẩy lên Channex</span>
-                <button onClick={pushAllToChannex} className="cb-btn-primary px-3 py-2 text-sm">Đẩy lên Channex ngay</button>
-              </>
-            ) : (
-              <span className="text-sm text-success">● Đã đồng bộ Channex</span>
-            )}
-            <button onClick={() => setInvOpen(true)} className="cb-btn-ghost px-3 py-2 text-sm">
-              Đóng bán
-            </button>
-            <button onClick={() => router.push(`/${HOTEL_ID}/rates/bulk`)} className="cb-btn-primary inline-flex items-center gap-1.5 px-3 py-2 text-sm">
-              <IconZap className="h-4 w-4" /> Cập nhật hàng loạt
-            </button>
-          </span>
         </div>
       </div>
     );
@@ -1093,8 +1218,8 @@ export default function RatesCalendar() {
   function InvModal() {
     if (!invOpen) return null;
     return (
-      <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4" onClick={() => setInvOpen(false)}>
-        <div className="my-8 w-full max-w-2xl rounded-2xl bg-surface p-5 shadow-card" onClick={(e) => e.stopPropagation()}>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-transparent p-4" onClick={() => setInvOpen(false)}>
+        <div className="my-8 max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-surface p-5 shadow-card" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-start justify-between">
             <div>
               <div className="text-base font-bold text-ink">Đóng bán cấp kênh &amp; cấp loại phòng</div>
@@ -1215,25 +1340,6 @@ export default function RatesCalendar() {
     );
   }
 
-  function Toast() {
-    if (!toast) return null;
-    return (
-      <div className="fixed bottom-5 right-5 z-50 flex max-w-md items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink shadow-card">
-        <span className="text-success">✓</span>
-        <span className="flex-1">{toast.text}</span>
-        {toast.onUndo && (
-          <button
-            onClick={() => { const u = toast.onUndo; setToast(null); if (u) u(); }}
-            className="rounded-lg bg-primary px-3 py-1.5 font-semibold text-white"
-          >
-            Hoàn tác
-          </button>
-        )}
-        <button onClick={() => setToast(null)} className="font-bold text-muted hover:text-ink">✕</button>
-      </div>
-    );
-  }
-
   // ---------- popup Cap nhat nhanh ----------
   function QuickUpdateModal() {
     if (!quick) return null;
@@ -1263,12 +1369,16 @@ export default function RatesCalendar() {
     const quDisabled = quSaving || quToEff < quFromEff || !hasChange;
     // Gia tu tinh (khong sua tay) cua o vua bam — de nguoi dung biet gia hien tai la gia tu tinh hay gia sua tay.
     const isDerivedPlan = !!plan.derivedFromId;
-    const formulaPrice = isDerivedPlan ? resolvePlanPrice(plan, quick.date, plans, {}) : undefined;
+    const formulaPrice = isDerivedPlan ? resolvePlanPrice(plan, quick.date, plans, {}, basePeriods) : undefined;
     const currentShownPrice = priceForCell(plan, quick.date);
     const isCurrentlyOverride = isDerivedPlan && overrides[keyOf(plan.id, quick.date)] !== undefined;
     const hasOverrideInRange = isDerivedPlan && quDates.length > 0 && quDates.some((d) => overrides[keyOf(plan.id, d)] !== undefined);
+    // Goi goc (Website): gia sua tay la gia da luu khac gia goc theo giai doan (hoac co gia ma khong co giai doan nao).
+    const basePriceOnDate = !isDerivedPlan ? baseRatePrice(plan.roomTypeId, quick.date) : undefined;
+    const isBaseOverride = !isDerivedPlan && plan.prices[quick.date] !== undefined && plan.prices[quick.date] !== basePriceOnDate;
+    const hasBaseOverrideInRange = !isDerivedPlan && quDates.length > 0 && quDates.some((d) => plan.prices[d] !== undefined && plan.prices[d] !== baseRatePrice(plan.roomTypeId, d));
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeQuickUpdate}>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-transparent p-4" onClick={closeQuickUpdate}>
         <div className="w-full max-w-md rounded-xl bg-surface p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between">
             <h3 className="text-base font-bold text-ink">Cập nhật nhanh</h3>
@@ -1344,12 +1454,19 @@ export default function RatesCalendar() {
                 Nhập giá mới sẽ thành giá sửa tay cho riêng kênh này (các kênh khác không đổi). Muốn về lại giá tự tính thì bấm nút “Xoá giá riêng” bên dưới.
               </div>
             )}
+            {quKind === "price" && !isDerivedPlan && (
+              <div className="rounded-lg bg-primary-soft px-3 py-2 text-xs leading-relaxed text-muted">
+                Giá gốc theo giai đoạn ngày {quick.date.split("-").reverse().join("/")} là {basePriceOnDate !== undefined ? fmt(basePriceOnDate) : "— (chưa có giai đoạn, giá là 0)"}
+                {isBaseOverride ? ` — hiện đang là giá sửa tay ${currentShownPrice !== undefined ? fmt(currentShownPrice) : "—"}` : " — chưa sửa tay"}.
+                Nhập giá mới sẽ thành giá sửa tay cho riêng kênh Website. Muốn về lại giá gốc thì bấm nút “Xoá giá riêng” bên dưới.
+              </div>
+            )}
             {quKind === "price" && quFrom && quTo && quFrom !== quTo && (
               <p className="text-right text-xs text-muted">Áp dụng cho {rangeDates(quFrom, quTo).length} ngày</p>
             )}
-            {quKind === "price" && isDerivedPlan && hasOverrideInRange && (
+            {quKind === "price" && (hasOverrideInRange || hasBaseOverrideInRange) && (
               <button onClick={() => void resetOverrideToDerived()} disabled={quSaving} className="cb-btn-ghost w-full px-4 py-2 text-sm font-semibold text-danger">
-                ↩ Xoá giá riêng — về giá tự tính ({quDates.length} ngày)
+                ↩ Xoá giá riêng — {isDerivedPlan ? "về giá tự tính" : "về giá gốc"} ({quDates.length} ngày)
               </button>
             )}
             {quError && <p className="text-sm font-medium text-danger">{quError}</p>}
@@ -1387,7 +1504,7 @@ export default function RatesCalendar() {
       ? applyFormula(previewBase.price, { id: "now", name: "", kind: "percent", value: markup.currentPct })
       : undefined;
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeMarkup}>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-transparent p-4" onClick={closeMarkup}>
         <div className="w-full max-w-md rounded-xl bg-surface p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between">
             <h3 className="text-base font-bold text-ink">Đổi % cộng thêm</h3>
@@ -1464,7 +1581,7 @@ export default function RatesCalendar() {
     const canCreate = !creatorSaving && !noBase && (!isOta || pctOk);
     const dateShort = creator.date.split("-").reverse().join("/");
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeCreator}>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-transparent p-4" onClick={closeCreator}>
         <div className="w-full max-w-md rounded-xl bg-surface p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between">
             <h3 className="text-base font-bold text-ink">Tạo giá cho kênh</h3>
@@ -1533,14 +1650,17 @@ export default function RatesCalendar() {
           className={`cursor-pointer border-b border-l border-[var(--nui-bg)] px-2 py-2 text-center hover:bg-primary-soft/70 ${date === todayStr ? "bg-primary-soft/50" : ""}`}
           title="Chưa có giá cho kênh này — bấm để tạo giá"
         >
-          <span className="inline-block rounded-md border border-dashed border-line px-2 py-0.5 text-xs font-semibold text-primary">— Đặt giá —</span>
+          <span className="inline-block rounded-md border border-dashed border-line px-2 py-0.5 text-[11px] font-semibold text-primary">— Đặt giá —</span>
         </div>
       );
     }
     const r = plan ? restrictions[keyOf(plan.id, date)] : undefined;
     const isEditing = !!plan && editing?.planId === plan.id && editing?.date === date;
     const price = plan ? priceForCell(plan, date) : undefined;
-    const isOverride = !!plan?.derivedFromId && overrides[keyOf(plan.id, date)] !== undefined;
+    // Gia sua tay: goi suy ra thi co dong trong overrides; goi goc thi gia da luu khac gia goc theo giai doan.
+    const isOverride = !!plan && (plan.derivedFromId
+      ? overrides[keyOf(plan.id, date)] !== undefined
+      : plan.prices[date] !== undefined && plan.prices[date] !== baseRatePrice(plan.roomTypeId, date));
     const derivedPct = plan?.derivedFromId ? getFormula(plan.formulaId)?.value : undefined;
     const ib = inventoryBlockOn(invBlocks, channelCode, typeId, date);
     const webPlan = channelCode === "website" ? undefined : standardPlanFor("website", typeId);
@@ -1595,10 +1715,12 @@ export default function RatesCalendar() {
       <div
         key={date}
         onClick={() => void openQuickUpdate(channelCode, typeId, date)}
-        className={`relative cursor-pointer border-b border-l border-[var(--nui-bg)] px-2 py-2 text-center hover:bg-primary-soft/70 ${r?.stopSell || ib ? "bg-danger-soft" : saved ? "bg-success-soft" : date === todayStr ? "bg-primary-soft/50" : ""}`}
+        className={`relative cursor-pointer border-b border-l border-[var(--nui-bg)] px-2 py-3 text-center hover:bg-primary-soft/70 ${r?.stopSell || ib ? "bg-danger-soft" : saved ? "bg-success-soft" : date === todayStr ? "bg-primary-soft/50" : ""}`}
         title={
           isOverride
-            ? "Giá sửa tay — bấm để xem, sửa hoặc xoá về giá tự tính."
+            ? plan?.derivedFromId
+              ? "Giá sửa tay — bấm để xem, sửa hoặc xoá về giá tự tính."
+              : "Giá sửa tay — bấm để xem, sửa hoặc xoá về giá gốc."
             : plan?.derivedFromId
               ? `Giá tự tính từ giá gốc${derivedPct !== undefined ? ` +${derivedPct}%` : ""} — bấm để đặt giá riêng (sửa tay), đổi % ở đầu hàng.`
               : undefined
@@ -1608,15 +1730,15 @@ export default function RatesCalendar() {
           <span className="absolute right-1 top-1 text-[9px] leading-none text-ink" title="Giá sửa tay">▲</span>
         )}
         {ib ? (
-          <div className="text-xs font-semibold text-muted">
+          <div className="text-[11px] font-semibold text-muted">
             ĐÓNG BÁN
             <div className="text-[10px] font-medium">{ib.scope === "channel" ? "(đóng theo kênh)" : "(đóng cả loại phòng)"}</div>
           </div>
         ) : r?.stopSell ? (
-          <div className="text-xs font-semibold text-danger">ĐÓNG BÁN</div>
+          <div className="text-[11px] font-semibold text-danger">ĐÓNG BÁN</div>
         ) : (
           <>
-            <div className={`text-sm tabular-nums ${priceWeightCls} ${priceTextCls}`}>
+            <div className={`text-[12px] tabular-nums ${priceWeightCls} ${priceTextCls}`}>
               {price !== undefined ? fmt(price) : <span className="font-normal text-subtle">—</span>}
             </div>
             {hasRestr && badges.length > 0 && (
@@ -1681,7 +1803,7 @@ export default function RatesCalendar() {
     const isBase = channelCode === "website";
     return (
       <div className="contents" key={`${channelCode}|${typeId}`}>
-        <div className={`sticky left-0 z-10 border-b shadow-[2px_0_4px_rgba(23,41,62,0.05)] border-[var(--nui-bg)] px-3 py-2 ${isBase ? "bg-primary-soft" : "bg-surface-muted"}`}>
+        <div className={`sticky left-0 z-10 border-b shadow-[2px_0_4px_rgba(23,41,62,0.05)] border-[var(--nui-bg)] px-3 py-3 ${isBase ? "bg-primary-soft" : "bg-surface-muted"}`}>
           <div className={`flex items-center gap-1.5 text-sm ${isBase ? "font-bold text-ink" : "font-medium text-muted"}`}>
             {isBase ? "★ " : <span className="pl-4" />}
             {ch?.name ?? channelCode}
@@ -1707,11 +1829,11 @@ export default function RatesCalendar() {
     const left = roomsLeftByType[typeId] ?? [];
     return (
       <div className="contents" key={`avl-${typeId}`}>
-        <div className="sticky left-0 z-10 border-b shadow-[2px_0_4px_rgba(23,41,62,0.05)] border-[var(--nui-bg)] bg-surface px-3 py-1.5 pl-9 text-xs text-muted">Còn trống</div>
+        <div className="sticky left-0 z-10 border-b shadow-[2px_0_4px_rgba(23,41,62,0.05)] border-[var(--nui-bg)] bg-surface px-3 py-2.5 pl-9 text-xs text-muted">Còn trống</div>
         {days.map((date, i) => {
           const n = left[i] ?? 0;
           return (
-            <div key={date} className={`border-b border-l border-[var(--nui-bg)] px-2 py-1.5 text-center text-xs font-semibold tabular-nums ${n <= 0 ? "bg-warning-soft text-danger" : "text-muted"}`}>
+            <div key={date} className={`border-b border-l border-[var(--nui-bg)] px-2 py-2.5 text-center text-xs font-semibold tabular-nums ${n <= 0 ? "bg-warning-soft text-danger" : "text-muted"}`}>
               {n}
             </div>
           );
@@ -1720,89 +1842,267 @@ export default function RatesCalendar() {
     );
   }
 
-  function renderRestrictionRows(channelCode: string, typeId: string) {
-    const plan = standardPlanFor(channelCode, typeId);
-    const ch = CHANNELS.find((c) => c.code === channelCode);
-    const rowLabel = (label: string) => (
-      <div className="sticky left-0 z-10 border-b shadow-[2px_0_4px_rgba(23,41,62,0.05)] border-[var(--nui-bg)] bg-surface px-3 py-1.5 pl-9 text-xs text-muted">{label}</div>
-    );
-    return (
-      <div className="contents" key={`r-${channelCode}|${typeId}`}>
-        <div className="sticky left-0 z-10 border-b shadow-[2px_0_4px_rgba(23,41,62,0.05)] border-[var(--nui-bg)] bg-surface-muted px-3 py-1.5 text-xs font-bold text-ink">
-          <span className="pl-4" />{ch?.name ?? channelCode}
+  // ---------- luoi "Ban phong theo loai phong" (RATES15) ----------
+  // Moi loai phong chi 2 dong (Phong trong + Gia ban). Ten loai phong + ma + nut thu gon
+  // om ca 2 dong (gridRow span 2) — khong con dong tieu de nhom rieng.
+  function renderTypeGroup(t: RoomType) {
+    const collapsed = collapsedTypes.has(t.id);
+    const left = roomsLeftByType[t.id] ?? [];
+    // Kênh đang xem: 1 kênh, hoặc tất cả các kênh (mỗi kênh 1 dòng giá).
+    const priceChannels = selectedChannel === "all" ? CHANNELS : CHANNELS.filter((c) => c.code === selectedChannel);
+    const rowSpan = (showAvailRow ? 1 : 0) + priceChannels.length;
+    const toggleCollapse = () =>
+      setCollapsedTypes((prev) => {
+        const next = new Set(prev);
+        if (next.has(t.id)) next.delete(t.id);
+        else next.add(t.id);
+        return next;
+      });
+    const nameInner = (
+      <div className="flex items-start gap-1.5">
+        <button
+          onClick={toggleCollapse}
+          className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-line bg-surface text-xs font-bold text-muted"
+          title={collapsed ? "Mở ra xem giá" : "Thu gọn loại phòng này"}
+        >
+          {collapsed ? "+" : "−"}
+        </button>
+        <div className="min-w-0">
+          <div className="text-[12px] font-bold leading-tight text-ink">{t.name}</div>
+          {t.code ? <div className="text-[10px] font-medium text-muted">Mã: {t.code}</div> : null}
         </div>
-        {days.map((d) => (
-          <div key={d} className="border-b border-l border-[var(--nui-bg)] bg-surface-muted" />
-        ))}
-        {rowLabel("Ngừng bán")}
-        {days.map((date) => {
-          const stopped = !!plan && !!restrictions[keyOf(plan.id, date)]?.stopSell;
-          const ib = inventoryBlockOn(invBlocks, channelCode, typeId, date);
-          if (ib) {
-            return (
-              <div key={date} className="border-b border-l border-[var(--nui-bg)] bg-primary-soft px-2 py-1.5 text-center text-xs font-medium text-muted" title="Đang bị đóng bán ở cấp kênh/loại phòng — sửa ở nút Đóng bán trên thanh công cụ">
-                bị khoá ↑
-              </div>
-            );
-          }
-          return (
-            <button
-              key={date}
-              onClick={() => void toggleStopSell(channelCode, typeId, date)}
-              className={`border-b border-l border-[var(--nui-bg)] px-2 py-1.5 text-center text-xs font-semibold ${stopped ? "bg-danger-soft text-danger" : "text-success"}`}
-              title={stopped ? "Đang ngừng bán — bấm để mở bán" : "Đang bán — bấm để ngừng bán ngày này"}
-            >
-              {stopped ? "✕ ngừng" : "✓ bán"}
-            </button>
-          );
-        })}
-        {rowLabel("Ở tối thiểu (đêm)")}
-        {days.map((date) => {
-          const v = plan ? restrictions[keyOf(plan.id, date)]?.minStay : undefined;
-          return (
-            <div key={date} className="border-b border-l border-[var(--nui-bg)] px-1 py-1 text-center">
-              <input
-                key={String(v ?? "")}
-                type="number" min={1} placeholder="—" defaultValue={v ?? ""}
-                onBlur={(e) => { if (plan) setRestriction(plan.id, date, { minStay: e.target.value ? Number(e.target.value) : undefined }); }}
-                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                className="w-14 rounded-md border border-line px-1 py-1 text-center text-xs text-ink outline-none focus:border-primary"
-              />
+      </div>
+    );
+    if (collapsed) {
+      const prices = priceChannels.flatMap((ch) => {
+        const p = standardPlanFor(ch.code, t.id);
+        if (!p) return [];
+        return days.map((d) => priceForCell(p, d)).filter((v): v is number => v !== undefined);
+      });
+      const lo = prices.length > 0 ? Math.min(...prices) : undefined;
+      const hi = prices.length > 0 ? Math.max(...prices) : undefined;
+      const rangeText = lo !== undefined && hi !== undefined ? (lo === hi ? fmt(lo) : `${fmt(lo)} – ${fmt(hi)}`) : null;
+      const singlePlan = priceChannels.length === 1 ? standardPlanFor(priceChannels[0].code, t.id) : undefined;
+      return (
+        <div className="contents" key={t.id}>
+          <div
+            className="sticky left-0 z-10 border-b border-[var(--nui-bg)] bg-primary-soft px-3 py-2 shadow-[2px_0_4px_rgba(23,41,62,0.05)]"
+            style={{ gridColumn: "span 2" }}
+          >
+            {nameInner}
+          </div>
+          <div
+            className="border-b border-l border-[var(--nui-bg)] px-3 py-2 text-[12px] text-muted"
+            style={{ gridColumn: `span ${days.length}` }}
+          >
+            {rangeText ? (
+              <>Giá {selectedChannel === "all" ? "tất cả kênh" : CHANNELS.find((c) => c.code === selectedChannel)?.name ?? selectedChannel}: {rangeText}</>
+            ) : singlePlan ? (
+              "Chưa có giá trong khoảng này"
+            ) : priceChannels.length === 1 ? (
+              <button
+                onClick={() => void openCreator(selectedChannel, t.id, days[0])}
+                className="rounded-md border border-dashed border-line px-2 py-0.5 text-xs font-semibold text-primary hover:bg-primary-soft"
+              >
+                — Đặt giá —
+              </button>
+            ) : (
+              "Chưa có giá trong khoảng này"
+            )}
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="contents" key={t.id}>
+        <div
+          className="sticky left-0 z-10 border-b border-[var(--nui-bg)] bg-primary-soft px-3 py-2 shadow-[2px_0_4px_rgba(23,41,62,0.05)]"
+          style={{ gridColumn: "1", gridRow: `span ${rowSpan}` }}
+        >
+          {nameInner}
+        </div>
+        {showAvailRow && (
+          <>
+            <div className="sticky left-[140px] z-10 border-b border-[var(--nui-bg)] bg-surface px-3 py-2 text-[12px] font-semibold text-muted shadow-[2px_0_4px_rgba(23,41,62,0.05)]">
+              Phòng trống
             </div>
-          );
-        })}
-        {rowLabel("Không nhận đến (CTA)")}
-        {days.map((date) => {
-          const on = !!plan && !!restrictions[keyOf(plan.id, date)]?.cta;
+            {days.map((date, i) => {
+              const n = left[i] ?? 0;
+              return (
+                <div
+                  key={date}
+                  className={`border-b border-l border-[var(--nui-bg)] px-2 py-2 text-center text-[12px] font-semibold tabular-nums ${n <= 0 ? "bg-warning-soft text-danger" : "text-muted"}`}
+                >
+                  {n}
+                </div>
+              );
+            })}
+          </>
+        )}
+        {priceChannels.map((ch) => {
+          const plan = standardPlanFor(ch.code, t.id);
+          // % cua rieng goi nay (co the khac nhau theo loai phong) — khong dung % chung cua kenh.
+          const pct = plan?.derivedFromId
+            ? getFormula(plan.formulaId)?.value
+            : ch.code === "website" ? undefined : channelCurrentPct(ch.code);
           return (
-            <button
-              key={date}
-              onClick={() => { if (plan) setRestriction(plan.id, date, { cta: !on }); }}
-              className={`border-b border-l border-[var(--nui-bg)] px-2 py-1.5 text-center text-xs font-semibold ${on ? "bg-danger-soft text-danger" : "text-success"}`}
-              title={on ? "Đang chặn khách đến ngày này — bấm để cho phép" : "Đang nhận khách đến — bấm để chặn ngày này"}
-            >
-              {on ? "✕ chặn" : "✓ nhận"}
-            </button>
-          );
-        })}
-        {rowLabel("Không cho trả (CTD)")}
-        {days.map((date) => {
-          const on = !!plan && !!restrictions[keyOf(plan.id, date)]?.ctd;
-          return (
-            <button
-              key={date}
-              onClick={() => { if (plan) setRestriction(plan.id, date, { ctd: !on }); }}
-              className={`border-b border-l border-[var(--nui-bg)] px-2 py-1.5 text-center text-xs font-semibold ${on ? "bg-danger-soft text-danger" : "text-success"}`}
-              title={on ? "Đang chặn trả phòng ngày này — bấm để cho phép" : "Đang cho trả phòng — bấm để chặn ngày này"}
-            >
-              {on ? "✕ chặn" : "✓ cho trả"}
-            </button>
+            <div className="contents" key={ch.code}>
+              <div className="sticky left-[140px] z-10 border-b border-[var(--nui-bg)] bg-surface px-3 py-2 shadow-[2px_0_4px_rgba(23,41,62,0.05)]">
+                <div className="flex items-center gap-1.5 text-[12px] font-semibold text-ink">
+                  Giá bán (VNĐ)
+                  {plan && (
+                    <button
+                      onClick={() => void openQuickUpdate(ch.code, t.id, days[0])}
+                      className="rounded p-0.5 text-muted hover:bg-primary-soft hover:text-primary"
+                      title="Sửa nhanh cả hàng giá này"
+                    >
+                      <IconEdit className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                {priceChannels.length > 1 && (
+                  <div className="text-[10px] font-medium text-muted">
+                    {ch.name}
+                    {ch.code === "website" ? " ★ Giá gốc" : ch.code === "frontdesk" ? " ±0%" : pct !== undefined ? ` +${pct}%` : ""}
+                  </div>
+                )}
+              </div>
+              {days.map((date) => renderPriceCell(plan, date, ch.code, t.id))}
+            </div>
           );
         })}
       </div>
     );
   }
 
+  // ---------- bang rieng 1 kenh o tab "Ban phong theo kenh" ----------
+  // ---------- tab "Ban phong theo kenh" (RATES18): SO LUONG PHONG, khong phai gia ----------
+  // Moi loai phong 1 dong: chon kenh o dropdown rieng, xem so phong con trong cua kenh do.
+  // O = 0 to vang (het phong); o "DONG BAN" la kenh dang dong ban. Bam 1 o de mo cua so Dong ban.
+  function renderChannelInventory() {
+    return (
+      <div className="overflow-x-auto rounded-xl border border-line bg-surface shadow-card">
+        <div className="grid min-w-[1340px]" style={gridColsInv}>
+          {DateHeader({ label: "Loại phòng", labelSpan: 2 })}
+          {visibleTypes.map((t) => {
+            const chCode = rowChannel(t.id);
+            const left = roomsLeftByType[t.id] ?? [];
+            return (
+              <div className="contents" key={t.id}>
+                <div className="sticky left-0 z-10 border-b border-[var(--nui-bg)] bg-surface px-3 py-2 shadow-[2px_0_4px_rgba(23,41,62,0.05)]">
+                  <div className="text-[12px] font-bold leading-tight text-ink">{t.name}</div>
+                  {t.code ? <div className="text-[10px] text-muted">Mã: {t.code}</div> : null}
+                </div>
+                <div className="sticky left-[180px] z-10 border-b border-[var(--nui-bg)] bg-surface px-3 py-2 shadow-[2px_0_4px_rgba(23,41,62,0.05)]">
+                  <select
+                    value={chCode}
+                    onChange={(e) => setChannelByType((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                    className="w-full rounded-lg border border-line bg-surface px-2 py-1 text-[12px] font-semibold text-primary outline-none focus:border-primary"
+                    title="Chọn kênh để xem số phòng còn trống của kênh đó"
+                  >
+                    {CHANNELS.map((c) => (
+                      <option key={c.code} value={c.code}>{c.name}</option>
+                    ))}
+                  </select>
+                  <div className="mt-1 text-[11px] font-medium text-muted">Phòng trống</div>
+                </div>
+                {days.map((date, i) => {
+                  const n = left[i] ?? 0;
+                  const ib = inventoryBlockOn(invBlocks, chCode, t.id, date);
+                  return (
+                    <div
+                      key={date}
+                      onClick={() => openInvForCell(chCode, t.id, date)}
+                      className={`cursor-pointer border-b border-l border-[var(--nui-bg)] px-2 py-2 text-center text-[12px] font-semibold tabular-nums hover:bg-primary-soft/70 ${ib ? "bg-danger-soft text-danger" : n <= 0 ? "bg-warning-soft text-danger" : "text-ink"}`}
+                      title={ib ? "Kênh này đang đóng bán ngày này — bấm để xem/xoá đóng bán" : n <= 0 ? "Hết phòng — bấm để đóng/mở bán kênh này ngày này" : `Còn ${n} phòng — bấm để đóng bán kênh này ngày này`}
+                    >
+                      {ib ? <span className="text-[11px]">ĐÓNG BÁN</span> : n}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  function renderChannelTable(channelCode: string) {
+    const ch = CHANNELS.find((c) => c.code === channelCode);
+    const isBase = channelCode === "website";
+    const pct = isBase ? undefined : channelCurrentPct(channelCode);
+    return (
+      <div key={channelCode}>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <span className="text-[15px] font-bold text-ink">{isBase ? "★ " : ""}{ch?.name ?? channelCode}</span>
+          {isBase ? (
+            <span className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-bold text-white">Giá gốc</span>
+          ) : (
+            <button
+              onClick={() => openMarkup(channelCode, pct ?? 0)}
+              className="rounded bg-primary-soft px-1.5 py-0.5 text-[11px] font-bold text-primary hover:bg-primary hover:text-white"
+              title="Bấm để đổi % cộng thêm của kênh này"
+            >
+              {pct !== undefined ? `+${pct}%` : "±0%"}
+            </button>
+          )}
+          {dirtyChannels.has(channelCode) && <span className="text-warning" title="Có thay đổi chưa đẩy lên Channex">●</span>}
+          {!isBase && (
+            <span className="text-xs text-muted">
+              Giá tự tính từ giá gốc {pct !== undefined ? `+${pct}%` : "±0%"} — bấm ô để đặt giá riêng.
+            </span>
+          )}
+        </div>
+        <div className="overflow-x-auto rounded-xl border border-line bg-surface shadow-card">
+          <div className="grid min-w-[1264px]" style={gridColsChannel}>
+            {DateHeader({ label: "Loại phòng", labelSpan: 1 })}
+            {visibleTypes.map((t) => {
+              const plan = standardPlanFor(channelCode, t.id);
+              return (
+                <div className="contents" key={t.id}>
+                  <div className="sticky left-0 z-10 border-b border-[var(--nui-bg)] bg-surface px-3 py-2 shadow-[2px_0_4px_rgba(23,41,62,0.05)]">
+                    <div className="text-[12px] font-bold leading-tight text-ink">{t.name}</div>
+                    {t.code ? <div className="text-[10px] text-muted">Mã: {t.code}</div> : null}
+                  </div>
+                  {days.map((date) => renderPriceCell(plan, date, channelCode, t.id))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------- luoi gop kieu RATES14 (muc "Tat ca" o tab "Ban phong theo kenh") ----------
+  function renderCombinedGrid() {
+    return (
+      <div className="overflow-x-auto rounded-xl border border-line bg-surface shadow-card">
+        <div className="grid min-w-[1264px]" style={gridColsChannel}>
+          {DateHeader({ label: "Ngày →", labelSpan: 1 })}
+          {visibleTypes.map((t) => (
+            <div key={t.id} className="contents">
+              {TypeHeader({ t })}
+              {days.map((d) => (
+                <div key={d} className="border-b border-l border-[var(--nui-bg)] bg-primary-soft" />
+              ))}
+              {!collapsedTypes.has(t.id) && (
+                <>
+                  {renderAvailabilitySlimRow(t.id)}
+                  {CHANNELS.map((c) => renderPriceRows(c.code, t.id))}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ---------- hop thoai Cap nhat hang loat (RATES15): 4 cau hoi ----------
+  // Ap dung cho kenh dang chon o dropdown Kenh ban; luu bang dung duong luu hien co
+  // (upsert rate_prices nhu applyQuickUpdate cho gia, setRestriction cho ngung ban / min-stay).
   // ---------- render ----------
   return (
     <div>
@@ -1814,137 +2114,30 @@ export default function RatesCalendar() {
         />
       )}
       {Toolbar()}
-      {view === "prices" && (
+      {mainTab === "byType" && (
         <>
           <div className="mt-4 overflow-x-auto rounded-xl border border-line bg-surface shadow-card">
-            <div className="grid min-w-[1500px]" style={gridCols}>
-              {DateHeader()}
-              {visibleTypes.map((t) => {
-                return (
-                  <div key={t.id} className="contents">
-                    {TypeHeader({ t })}
-                    {days.map((d) => (
-                      <div key={d} className="border-b border-l border-[var(--nui-bg)] bg-primary-soft" />
-                    ))}
-                    {!collapsedTypes.has(t.id) && (
-                      <>
-                        {renderAvailabilitySlimRow(t.id)}
-                        {visibleChannelList.map((c) => renderPriceRows(c.code, t.id))}
-                      </>
-                    )}
-                  </div>
-                );
-              })}
+            <div className="grid min-w-[1280px]" style={gridColsType}>
+              {DateHeader({ label: "Loại phòng", labelSpan: 2 })}
+              {visibleTypes.map((t) => renderTypeGroup(t))}
             </div>
           </div>
-          <p className="mt-2 text-xs text-muted">
-            Giá các kênh tự tính từ giá gốc (hàng Website, có ★) theo % cộng thêm ở đầu hàng. Kênh chưa có giá thì bấm “— Đặt giá —” để tạo giá. Bấm ô giá để đặt giá riêng cho kênh đó — thành giá sửa tay (tam giác đen ở góc ô), chỉ kênh đó đổi, các kênh khác không đổi; bấm nút “Xoá giá riêng” trong popup để về lại giá tự tính.
-          </p>
+          {showHint && (
+            <p className="mt-2 text-xs text-muted">
+              Dòng “Giá bán” hiện giá {selectedChannel === "all" ? "của tất cả các kênh (mỗi kênh 1 dòng)" : `của kênh ${CHANNELS.find((c) => c.code === selectedChannel)?.name ?? selectedChannel}`} (đổi ở dropdown Kênh bán). Giá kênh tự tính từ giá gốc (hàng Website, có ★) theo % cộng thêm ở đầu bảng kênh. Kênh chưa có giá thì bấm “— Đặt giá —” để tạo giá. Bấm ô giá để đặt giá riêng cho kênh đó — thành giá sửa tay (tam giác đen ở góc ô), chỉ kênh đó đổi, các kênh khác không đổi; bấm nút “Xoá giá riêng” trong popup để về lại giá tự tính.
+            </p>
+          )}
         </>
       )}
 
-      {view === "availability" && (
+      {mainTab === "byChannel" && (
         <>
-          <div className="mt-4 flex flex-wrap items-end gap-3 text-sm text-ink">
-            <label>
-              Kênh kiểm tra
-              <select value={invChannel} onChange={(e) => setInvChannel(e.target.value)} className={`${inputCls} ml-2`}>
-                <option value="all">Tất cả kênh (xem tồn chung)</option>
-                {CHANNELS.map((c) => (
-                  <option key={c.code} value={c.code}>{c.name}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className="mt-4 overflow-x-auto rounded-xl border border-line bg-surface shadow-card">
-            <div className="grid min-w-[1500px]" style={gridCols}>
-              {DateHeader()}
-              {visibleTypes.map((t) => {
-                const left = roomsLeftByType[t.id] ?? [];
-                return (
-                  <div key={t.id} className="contents">
-                    {TypeHeader({ t })}
-                    {days.map((d) => (
-                      <div key={d} className="border-b border-l border-[var(--nui-bg)] bg-primary-soft" />
-                    ))}
-                    {!collapsedTypes.has(t.id) && (
-                      <>
-                        <div className="sticky left-0 z-10 border-b shadow-[2px_0_4px_rgba(23,41,62,0.05)] border-[var(--nui-bg)] bg-surface px-3 py-2">
-                          <div className="text-sm font-bold text-ink">
-                            {t.name} {t.code ? <span className="ml-1.5 rounded-md bg-surface px-1.5 py-0.5 align-middle text-[11px] font-semibold text-muted">{t.code}</span> : null}
-                          </div>
-                          <div className="text-xs text-muted">Phòng trống</div>
-                        </div>
-                        {days.map((date, i) => {
-                          const n = left[i] ?? 0;
-                          if (invChannel !== "all") {
-                            const typePlans = plans.filter((p) => p.channelCode === invChannel && p.roomTypeId === t.id);
-                            if (typePlans.length === 0) {
-                              return (
-                                <div key={date} className="border-b border-l border-[var(--nui-bg)] bg-primary-soft px-2 py-2 text-center text-xs text-muted" title="Kênh này chưa có gói cho loại phòng này">
-                                  —
-                                </div>
-                              );
-                            }
-                            if (inventoryBlockOn(invBlocks, invChannel, t.id, date)) {
-                              return (
-                                <div key={date} className="border-b border-l border-[var(--nui-bg)] bg-primary-soft px-2 py-2 text-center text-xs font-semibold text-muted" title="Đang bị đóng bán cấp kênh hoặc cấp loại phòng">
-                                  Đóng
-                                </div>
-                              );
-                            }
-                            if (typePlans.every((p) => restrictions[keyOf(p.id, date)]?.stopSell)) {
-                              return (
-                                <div key={date} className="border-b border-l border-[var(--nui-bg)] bg-primary-soft px-2 py-2 text-center text-xs font-semibold text-muted" title="Mọi gói của kênh này đều đang ngừng bán ngày này">
-                                  Đóng
-                                </div>
-                              );
-                            }
-                          }
-                          return (
-                            <div key={date} className={`border-b border-l border-[var(--nui-bg)] px-2 py-2 text-center text-sm font-bold tabular-nums ${n <= 0 ? "bg-warning-soft text-danger" : n === 1 ? "text-danger" : "text-ink"}`}>
-                              {n}
-                            </div>
-                          );
-                        })}
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <p className="mt-2 text-xs text-muted">
-            Ô vàng = hết phòng. Chọn 1 kênh để xem kênh đó có bán được ngày đó không (ô “Đóng” = bị đóng bán, ô “—” = kênh chưa có gói). Chặn phòng hay đóng bán thì sang trang “Chặn phòng &amp; Đóng bán”:
-          </p>
-          <div className="mt-3">
-            <a href={`/${HOTEL_ID}/inventory`} className="cb-btn-ghost px-3 py-2 text-sm">
-              Quản lý chặn phòng &amp; đóng bán →
-            </a>
-          </div>
-        </>
-      )}
-
-      {view === "restrictions" && (
-        <>
-          <div className="mt-4 overflow-x-auto rounded-xl border border-line bg-surface shadow-card">
-            <div className="grid min-w-[1500px]" style={gridCols}>
-              {DateHeader()}
-              {visibleTypes.map((t) => (
-                <div key={t.id} className="contents">
-                  {TypeHeader({ t })}
-                  {days.map((d) => (
-                    <div key={d} className="border-b border-l border-[var(--nui-bg)] bg-primary-soft" />
-                  ))}
-                  {!collapsedTypes.has(t.id) &&
-                    visibleChannelList.map((c) => renderRestrictionRows(c.code, t.id))}
-                </div>
-              ))}
-            </div>
-          </div>
-          <p className="mt-2 text-xs text-muted">
-            Bấm vào ô để bật/tắt hạn chế từng ngày; ô Ở tối thiểu gõ số rồi bấm Enter.
-          </p>
+          <div className="mt-4">{renderChannelInventory()}</div>
+          {showHint && (
+            <p className="mt-2 text-xs text-muted">
+              Mỗi loại phòng chọn 1 kênh ở dropdown “Chọn kênh” để xem số phòng còn trống của kênh đó. Ô = 0 tô vàng (hết phòng); ô “ĐÓNG BÁN” là kênh đang đóng bán ngày đó. Bấm 1 ô để mở cửa sổ Đóng bán cho kênh + loại phòng + ngày đó. Giá bán xem ở tab “Bán phòng theo loại phòng”.
+            </p>
+          )}
         </>
       )}
 
@@ -1953,7 +2146,6 @@ export default function RatesCalendar() {
       {QuickUpdateModal()}
       {MarkupModal()}
       {CreateRateModal()}
-      {Toast()}
     </div>
   );
 }
