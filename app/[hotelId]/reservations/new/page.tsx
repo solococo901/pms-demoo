@@ -11,8 +11,10 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
 import NewReservationWizard from "@/components/NewReservationWizard";
+import { type StayRestrictions } from "@/lib/booking-rules";
 import {
   resolvePlanPrice,
+  type BaseRatePeriod,
   type InventoryBlock,
   type RatePlan,
   type Reservation,
@@ -38,10 +40,12 @@ export default function NewReservationPage() {
   const [roomBlocks, setRoomBlocks] = useState<RoomBlock[]>([]);
   const [invBlocks, setInvBlocks] = useState<InventoryBlock[]>([]);
   const [priceOverrides, setPriceOverrides] = useState<Record<string, number>>({});
+  const [baseRatePeriods, setBaseRatePeriods] = useState<BaseRatePeriod[]>([]);
+  const [restrictions, setRestrictions] = useState<StayRestrictions>({});
 
   useEffect(() => {
     (async () => {
-      const [res, rr, typesRes, roomsRes, plansRes, blocksRes, invRes] = await Promise.all([
+      const [res, rr, typesRes, roomsRes, plansRes, blocksRes, invRes, baseRes] = await Promise.all([
         supabase.from("reservations").select("*").eq("hotel_id", HOTEL_ID).order("booked_at", { ascending: false }),
         supabase.from("reservation_rooms").select("reservation_id, room_number"),
         supabase.from("room_types").select("*").eq("hotel_id", HOTEL_ID),
@@ -49,9 +53,10 @@ export default function NewReservationPage() {
         supabase.from("rate_plans").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("room_blocks").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("inventory_blocks").select("*").eq("hotel_id", HOTEL_ID),
+        supabase.from("base_rate_periods").select("*").eq("hotel_id", HOTEL_ID),
       ]);
       const firstErr =
-        res.error ?? rr.error ?? typesRes.error ?? roomsRes.error ?? plansRes.error ?? blocksRes.error ?? invRes.error;
+        res.error ?? rr.error ?? typesRes.error ?? roomsRes.error ?? plansRes.error ?? blocksRes.error ?? invRes.error ?? baseRes.error;
       if (firstErr) {
         setLoadError(firstErr.message);
         setLoading(false);
@@ -107,12 +112,12 @@ export default function NewReservationPage() {
         })),
       );
       // Bang gia theo ngay (Supabase tra toi da 1000 dong/lan).
-      let priceRows: { rate_plan_id: string; date: string; price: number }[] = [];
+      let priceRows: { rate_plan_id: string; date: string; price: number; min_stay: number | null; max_stay: number | null }[] = [];
       if ((plansRes.data ?? []).length > 0) {
         for (let from = 0; ; from += 1000) {
           const { data: page } = await supabase
             .from("rate_prices")
-            .select("rate_plan_id, date, price")
+            .select("rate_plan_id, date, price, min_stay, max_stay")
             .in("rate_plan_id", (plansRes.data ?? []).map((p) => p.id))
             .range(from, from + 999);
           priceRows = [...priceRows, ...(page ?? [])];
@@ -138,11 +143,31 @@ export default function NewReservationPage() {
           prices,
         };
       });
+      // Giai doan gia goc (de tinh gia suy ra cho ca goi goc lan goi ke thua).
+      const basePeriods: BaseRatePeriod[] = (baseRes.data ?? []).map((b) => ({
+        id: b.id,
+        roomTypeId: b.room_type_id,
+        from: b.from_date,
+        to: b.to_date,
+        price: Number(b.price),
+      }));
+      setBaseRatePeriods(basePeriods);
+      // Han che o toi thieu / toi da theo goi gia + ngay.
+      const restr: StayRestrictions = {};
+      for (const row of priceRows) {
+        if (row.min_stay != null || row.max_stay != null) {
+          restr[`${row.rate_plan_id}|${row.date}`] = {
+            minStay: row.min_stay ?? undefined,
+            maxStay: row.max_stay ?? undefined,
+          };
+        }
+      }
+      setRestrictions(restr);
       // Gia rieng cua goi ke thua (gia luu khac gia tinh theo cong thuc).
       const dbOverrides: Record<string, number> = {};
       for (const row of priceRows) {
         const plan = dbPlans.find((p) => p.id === row.rate_plan_id);
-        if (plan?.derivedFromId && resolvePlanPrice(plan, row.date, dbPlans, {}) !== Number(row.price)) {
+        if (plan?.derivedFromId && resolvePlanPrice(plan, row.date, dbPlans, {}, basePeriods) !== Number(row.price)) {
           dbOverrides[`${row.rate_plan_id}|${row.date}`] = Number(row.price);
         }
       }
@@ -208,6 +233,8 @@ export default function NewReservationPage() {
       roomBlocks={roomBlocks}
       invBlocks={invBlocks}
       priceOverrides={priceOverrides}
+      baseRatePeriods={baseRatePeriods}
+      restrictions={restrictions}
     />
   );
 }

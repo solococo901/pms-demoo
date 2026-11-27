@@ -9,6 +9,7 @@ import { useParams } from "next/navigation";
 import {
   getChannelName,
   resolvePlanPrice,
+  type BaseRatePeriod,
   type FolioItem,
   type InventoryBlock,
   type RatePlan,
@@ -37,6 +38,7 @@ import {
   validateExtend,
   validatePayment,
   type AvailabilityData,
+  type StayRestrictions,
 } from "@/lib/booking-rules";
 
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
@@ -86,6 +88,8 @@ export default function ReservationDetailPage() {
   const [roomBlocks, setRoomBlocks] = useState<RoomBlock[]>([]);
   const [invBlocks, setInvBlocks] = useState<InventoryBlock[]>([]);
   const [priceOverrides, setPriceOverrides] = useState<Record<string, number>>({});
+  const [baseRatePeriods, setBaseRatePeriods] = useState<BaseRatePeriod[]>([]);
+  const [restrictions, setRestrictions] = useState<StayRestrictions>({});
   const [catalog, setCatalog] = useState<{ roomTypes: RoomType[]; ratePlans: RatePlan[]; rooms: Room[] }>({
     roomTypes: [],
     ratePlans: [],
@@ -140,7 +144,7 @@ export default function ReservationDetailPage() {
   const detailPlan = detail ? catalog.ratePlans.find((p) => p.id === detail.ratePlanId) : undefined;
   const detailBreakdown =
     detail && detailPlan
-      ? priceBreakdown(detailPlan, catalog.ratePlans, detail.checkIn, detail.checkOut, detail.adults ?? detail.guests, detail.children ?? 0, priceOverrides)
+      ? priceBreakdown(detailPlan, catalog.ratePlans, detail.checkIn, detail.checkOut, detail.adults ?? detail.guests, detail.children ?? 0, priceOverrides, baseRatePeriods)
       : null;
 
   const availData: AvailabilityData = useMemo(
@@ -156,7 +160,7 @@ export default function ReservationDetailPage() {
   useEffect(() => {
     if (!HOTEL_ID || !RES_ID) return;
     (async () => {
-      const [res, rr, folio, typesRes, roomsRes, plansRes, blocksRes, invRes, notesRes, logsRes] = await Promise.all([
+      const [res, rr, folio, typesRes, roomsRes, plansRes, blocksRes, invRes, notesRes, logsRes, baseRes] = await Promise.all([
         supabase.from("reservations").select("*").eq("hotel_id", HOTEL_ID).order("booked_at", { ascending: false }),
         supabase.from("reservation_rooms").select("reservation_id, room_number"),
         supabase.from("folio_items").select("*").eq("hotel_id", HOTEL_ID),
@@ -167,6 +171,7 @@ export default function ReservationDetailPage() {
         supabase.from("inventory_blocks").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("reservation_notes").select("id, author, body, created_at").eq("reservation_id", RES_ID).order("created_at", { ascending: true }),
         supabase.from("audit_logs").select("id, actor_name, action, summary, created_at").eq("hotel_id", HOTEL_ID).eq("entity_type", "reservation").eq("entity_id", RES_ID).order("created_at", { ascending: false }).limit(100),
+        supabase.from("base_rate_periods").select("*").eq("hotel_id", HOTEL_ID),
       ]);
       const err = res.error ?? rr.error ?? folio.error ?? typesRes.error ?? roomsRes.error ?? plansRes.error ?? blocksRes.error ?? invRes.error ?? notesRes.error ?? logsRes.error;
       if (err) {
@@ -241,12 +246,12 @@ export default function ReservationDetailPage() {
         formulaId: row.formula_id ?? undefined,
       }));
       const planIds = new Set(dbPlans.map((p) => p.id));
-      let priceRows: { rate_plan_id: string; date: string; price: number }[] = [];
+      let priceRows: { rate_plan_id: string; date: string; price: number; min_stay: number | null; max_stay: number | null }[] = [];
       if (planIds.size > 0) {
         for (let from = 0; ; from += 1000) {
           const { data: page, error: priceErr } = await supabase
             .from("rate_prices")
-            .select("rate_plan_id, date, price")
+            .select("rate_plan_id, date, price, min_stay, max_stay")
             .in("rate_plan_id", [...planIds])
             .range(from, from + 999);
           if (priceErr) {
@@ -262,10 +267,29 @@ export default function ReservationDetailPage() {
         const plan = dbPlans.find((p) => p.id === row.rate_plan_id);
         if (plan && !plan.derivedFromId) plan.prices[row.date] = Number(row.price);
       }
+      // Giai doan gia goc (de tinh gia suy ra) + han che o toi thieu/toi da.
+      const basePeriods: BaseRatePeriod[] = (baseRes.data ?? []).map((b) => ({
+        id: b.id,
+        roomTypeId: b.room_type_id,
+        from: b.from_date,
+        to: b.to_date,
+        price: Number(b.price),
+      }));
+      setBaseRatePeriods(basePeriods);
+      const restr: StayRestrictions = {};
+      for (const row of priceRows) {
+        if (row.min_stay != null || row.max_stay != null) {
+          restr[`${row.rate_plan_id}|${row.date}`] = {
+            minStay: row.min_stay ?? undefined,
+            maxStay: row.max_stay ?? undefined,
+          };
+        }
+      }
+      setRestrictions(restr);
       const dbOverrides: Record<string, number> = {};
       for (const row of priceRows) {
         const plan = dbPlans.find((p) => p.id === row.rate_plan_id);
-        if (plan?.derivedFromId && resolvePlanPrice(plan, row.date, dbPlans, {}) !== Number(row.price)) {
+        if (plan?.derivedFromId && resolvePlanPrice(plan, row.date, dbPlans, {}, basePeriods) !== Number(row.price)) {
           dbOverrides[`${row.rate_plan_id}|${row.date}`] = Number(row.price);
         }
       }
@@ -450,7 +474,7 @@ export default function ReservationDetailPage() {
   const editNights = Math.max(0, Math.round((toTime(eCheckOut) - toTime(eCheckIn)) / DAY_MS));
   const editBreakdown =
     editPlan && editNights > 0
-      ? priceBreakdown(editPlan, catalog.ratePlans, eCheckIn, eCheckOut, eAdults, eChildren, priceOverrides)
+      ? priceBreakdown(editPlan, catalog.ratePlans, eCheckIn, eCheckOut, eAdults, eChildren, priceOverrides, baseRatePeriods)
       : null;
   const editTotal = editBreakdown ? editBreakdown.grandTotal : 0;
 
@@ -471,6 +495,8 @@ export default function ReservationDetailPage() {
       plan,
       allPlans: catalog.ratePlans,
       overrides: priceOverrides,
+      baseRatePeriods,
+      restrictions,
       channelCode: detail.channelCode,
       today: todayStr,
       booking: detail,
@@ -508,7 +534,7 @@ export default function ReservationDetailPage() {
   const extPlan = detail ? catalog.ratePlans.find((p) => p.id === detail.ratePlanId) : undefined;
   const extAdded =
     detail && extPlan && Number.isFinite(extNights) && extNights > 0
-      ? priceBreakdown(extPlan, catalog.ratePlans, detail.checkOut, extCheckOut, detail.adults ?? detail.guests, detail.children ?? 0, priceOverrides).grandTotal
+      ? priceBreakdown(extPlan, catalog.ratePlans, detail.checkOut, extCheckOut, detail.adults ?? detail.guests, detail.children ?? 0, priceOverrides, baseRatePeriods).grandTotal
       : 0;
   const extTotal = detail ? detail.totalAmount + extAdded : 0;
 
@@ -516,7 +542,7 @@ export default function ReservationDetailPage() {
     if (!detail) return;
     if (!extCheckOut) return setExtError("Chưa chọn ngày đi mới.");
     if (!extPlan) return setExtError("Không tìm thấy gói giá của đơn này — không tính được tiền các đêm thêm.");
-    const check = validateExtend(availData, detail, extCheckOut, extPlan, catalog.ratePlans, priceOverrides, detail.channelCode);
+    const check = validateExtend(availData, detail, extCheckOut, extPlan, catalog.ratePlans, priceOverrides, detail.channelCode, baseRatePeriods, restrictions);
     if (!check.ok) return setExtError(check.error ?? "Không gia hạn được.");
     if (check.warnings.length > 0 && !window.confirm(`${check.warnings.join("\n")}\nVẫn gia hạn?`)) return;
     const ok = await patchReservation(detail.id, { checkOut: extCheckOut, totalAmount: extTotal });

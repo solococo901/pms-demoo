@@ -182,13 +182,21 @@ body {
   animation: page-enter 0.28s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
-/* Moi nut bam deu co phan hoi an xuong nhe (ca nut dung class
-   Tailwind truc tiep, khong chi 2 lop cb-btn o tren). */
+/* Moi nut bam deu co phan hoi RO RANG khi an: an xuong + toi di
+   (ca nut dung class Tailwind truc tiep, khong chi 2 lop cb-btn o tren).
+   Quy tac bat buoc tu 2026-11-27: moi nut / hanh dong bam duoc tren PMS
+   deu phai co hieu ung de nguoi dung biet minh da bam. */
 button {
-  transition: transform 0.12s ease;
+  transition: transform 0.12s ease, filter 0.12s ease, background-color 0.15s ease;
 }
 button:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: scale(0.96);
+  filter: brightness(0.94);
+}
+/* Di bang ban phim (Tab) phai thay ro o nao dang chon. */
+button:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--nui-primary);
+  outline-offset: 1px;
 }
 
 /* Tat hieu ung neu may tinh dat che do giam chuyen dong. */

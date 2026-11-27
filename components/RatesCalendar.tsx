@@ -82,6 +82,7 @@ export default function RatesCalendar() {
   const [roomTypesDb, setRoomTypesDb] = useState<RoomType[]>(ROOM_TYPES);
   const [restrictions, setRestrictions] = useState<Record<CellKey, Restriction>>({});
   const [overrides, setOverrides] = useState<Record<CellKey, number>>({}); // gia sua tay cua goi suy ra
+  const [storedPrices, setStoredPrices] = useState<Record<CellKey, number | null>>({}); // gia goc luu trong rate_prices (null = dong chi co han che, khong khoa gia)
   const [basePeriods, setBasePeriods] = useState<BaseRatePeriod[]>([]); // giai doan gia goc (Base Rate)
   const [invBlocks, setInvBlocks] = useState<InventoryBlock[]>(INVENTORY_BLOCKS); // stop-sell cap kenh & loai phong
   // Phong/don/chan phong: bat dau la du lieu mau, loader duoi thay bang du lieu DB.
@@ -260,9 +261,13 @@ export default function RatesCalendar() {
       }
       const rows = allPriceRows.filter((r) => planIds.has(r.rate_plan_id));
       const dbOverrides: Record<CellKey, number> = {};
+      const dbStored: Record<CellKey, number | null> = {};
       for (const row of rows) {
         const plan = dbPlans.find((p) => p.id === row.rate_plan_id);
         if (!plan) continue;
+        dbStored[keyOf(row.rate_plan_id, row.date)] = row.price == null ? null : Number(row.price);
+        // Gia NULL = dong chi co han che, khong khoa gia — khong dua vao plan.prices / overrides.
+        if (row.price == null) continue;
         // Gia cua goi suy ra khong nam trong plan.prices — dong gia cua no CHINH LA gia sua tay (override).
         if (plan.derivedFromId) dbOverrides[keyOf(row.rate_plan_id, row.date)] = Number(row.price);
         else plan.prices[row.date] = Number(row.price);
@@ -281,6 +286,7 @@ export default function RatesCalendar() {
       }
       setPlans(dbPlans);
       setOverrides(dbOverrides);
+      setStoredPrices(dbStored);
       setRestrictions(dbRestrictions);
 
       // ---------- availability inputs from the database ----------
@@ -349,10 +355,19 @@ export default function RatesCalendar() {
     return bp ? bp.price : undefined;
   };
 
-  // Gia hien thi cua 1 o: goi goc lay gia da luu (ghi de thang gia goc, khong co thi gia goc theo giai doan);
-  // goi suy ra tinh tu gia goc (+ cong thuc), gia sua tay thang.
+  // Gia hien thi cua 1 o: goi goc lay gia sua tay (neu co), khong co thi gia goc
+  // theo giai doan + % cua chinh goi do (neu co); goi suy ra tinh tu gia goc
+  // (+ cong thuc), gia sua tay thang. (Goi goc khong doc thang plan.prices vi
+  // plan.prices da nap san gia goc theo giai doan — doc thang se bo qua %.)
   function priceForCell(plan: RatePlan, date: string): number | undefined {
-    if (!plan.derivedFromId) return plan.prices[date];
+    if (!plan.derivedFromId) {
+      const stored = storedPrices[keyOf(plan.id, date)];
+      if (stored !== undefined && stored !== null) return stored;
+      const base = baseRatePrice(plan.roomTypeId, date);
+      if (base === undefined) return undefined;
+      const f = getFormula(plan.formulaId);
+      return f ? applyFormula(base, f) : base;
+    }
     return resolvePlanPrice(plan, date, plans, overrides, basePeriods);
   }
 
@@ -366,7 +381,7 @@ export default function RatesCalendar() {
   }
 
   // ---------- Supabase: save one cell (price + restrictions) ----------
-  async function persistCell(planId: string, date: string, price: number, restr?: Restriction): Promise<boolean> {
+  async function persistCell(planId: string, date: string, price: number | null, restr?: Restriction): Promise<boolean> {
     const r = restr ?? restrictions[keyOf(planId, date)] ?? {};
     const { error } = await supabase.from("rate_prices").upsert({
       rate_plan_id: planId,
@@ -382,6 +397,7 @@ export default function RatesCalendar() {
       setDbError("Lưu giá không thành công: " + error.message);
       return false;
     }
+    setStoredPrices((prev) => ({ ...prev, [keyOf(planId, date)]: price }));
     queueChannexDates([date]);
     return true;
   }
@@ -441,6 +457,11 @@ export default function RatesCalendar() {
         if (error) setDbError("Xoá giá không thành công: " + error.message);
         else {
           queueChannexDates([date]);
+          setStoredPrices((prev) => {
+            const next = { ...prev };
+            delete next[keyOf(planId, date)];
+            return next;
+          });
           if (oldPrice !== undefined) {
             const { chName, typeName, dateShort } = priceLogLabel(plan, date);
             writeAuditLog({
@@ -463,7 +484,12 @@ export default function RatesCalendar() {
     const plan = plans.find((p) => p.id === planId);
     if (plan) {
       markDirty(plan.channelCode);
-      persistCell(planId, date, priceForCell(plan, date) ?? 0, merged);
+      // Luu han che RIENG, khong khoa gia: giu nguyen gia da luu (neu co),
+      // neu chua co dong nao thi ghi price = NULL (gia van tinh theo gia goc + %).
+      const k = keyOf(planId, date);
+      const storedPrice = storedPrices[k] ?? null;
+      setStoredPrices((prev) => ({ ...prev, [k]: storedPrice }));
+      persistCell(planId, date, storedPrice, merged);
     }
   }
 
@@ -843,6 +869,11 @@ export default function RatesCalendar() {
         const { error } = await supabase.from("rate_prices").delete().eq("rate_plan_id", plan.id).gte("date", from).lte("date", to);
         setQuSaving(false);
         if (error) { setDbError("Xoá giá không thành công: " + error.message); return; }
+        setStoredPrices((prev) => {
+          const next = { ...prev };
+          dates.forEach((d) => { delete next[keyOf(plan.id, d)]; });
+          return next;
+        });
         markDirty(plan.channelCode);
         queueChannexDates(dates);
         flashSaved(dates.map((d) => keyOf(plan.id, d)));
@@ -879,6 +910,11 @@ export default function RatesCalendar() {
       const { error } = await supabase.from("rate_prices").upsert(rows);
       setQuSaving(false);
       if (error) { setDbError("Lưu giá không thành công: " + error.message); return; }
+      setStoredPrices((prev) => {
+        const next = { ...prev };
+        dates.forEach((d) => { next[keyOf(plan.id, d)] = price; });
+        return next;
+      });
       markDirty(plan.channelCode);
       queueChannexDates(dates);
       flashSaved(dates.map((d) => keyOf(plan.id, d)));

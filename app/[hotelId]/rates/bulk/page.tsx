@@ -2,6 +2,7 @@
 // BULK12 — app/[hotelId]/rates/bulk/page.tsx (Trang rieng Cap nhat gia hang loat, toi gian kieu ezCloud + chon nhanh khoang ngay)
 // BULK12 (2026-11-25): them tab "Han che" (ngay o toi thieu + dong ban) ben canh tab "Gia"; mo thang tab Han che bang ?tab=restrictions&mode=stop_sell|min_stay.
 // BULK15 — gop BULKGRID1 (chi hien cot thu co that) + BULK14 (ghi nhat ky tab Han che); dong/mo ban ghi dung action stop_sell_set/removed.
+// BULK16 — luu han che (min-stay) RIENG khoi gia: ghi price = NULL (giu gia da luu neu co), khong con khoa gia suy ra; o chua co gia van luu duoc.
 // Khong the card: loai phong + ten loai sat trai, cac o theo thu trong khoang chum phai; Master hien cong thuc suy ra; nut nhanh 30/90/180 ngay, 1 nam, 500 ngay; o nhap hien dau cham ngan cach hang nghin khi go.
 // Gia goc = gia Website; kenh khac suy ra theo % hoa hong, nhap tay la override (xoa de ve lai gia suy ra).
 
@@ -14,6 +15,7 @@ import {
   CHANNEL_FORMULA,
   RATE_PLANS,
   ROOM_TYPES,
+  applyFormula,
   getFormula,
   inventoryBlockOn,
   resolvePlanPrice,
@@ -73,6 +75,7 @@ export default function BulkRatesPage() {
   const [roomTypesDb, setRoomTypesDb] = useState<RoomType[]>(ROOM_TYPES);
   const [restrictions, setRestrictions] = useState<Record<CellKey, Restriction>>({});
   const [overrides, setOverrides] = useState<Record<CellKey, number>>({}); // gia sua tay cua goi suy ra
+  const [storedPrices, setStoredPrices] = useState<Record<CellKey, number | null>>({}); // gia goc luu trong rate_prices (null = dong chi co han che, khong khoa gia)
   const [basePeriods, setBasePeriods] = useState<BaseRatePeriod[]>([]); // giai doan gia goc (Base Rate)
   const [dbError, setDbError] = useState("");
 
@@ -168,9 +171,13 @@ export default function BulkRatesPage() {
       }
       const rows = allPriceRows.filter((r) => planIds.has(r.rate_plan_id));
       const dbOverrides: Record<CellKey, number> = {};
+      const dbStored: Record<CellKey, number | null> = {};
       for (const row of rows) {
         const plan = dbPlans.find((p) => p.id === row.rate_plan_id);
         if (!plan) continue;
+        dbStored[keyOf(row.rate_plan_id, row.date)] = row.price == null ? null : Number(row.price);
+        // Gia NULL = dong chi co han che, khong khoa gia — khong dua vao plan.prices / overrides.
+        if (row.price == null) continue;
         // Gia cua goi suy ra khong nam trong plan.prices — dong gia cua no CHINH LA gia sua tay (override).
         if (plan.derivedFromId) dbOverrides[keyOf(row.rate_plan_id, row.date)] = Number(row.price);
         else plan.prices[row.date] = Number(row.price);
@@ -189,6 +196,7 @@ export default function BulkRatesPage() {
       }
       setPlans(dbPlans);
       setOverrides(dbOverrides);
+      setStoredPrices(dbStored);
       setRestrictions(dbRestrictions);
       setInvBlocks((invRes.data ?? []).map((r) => ({
         id: r.id,
@@ -222,14 +230,24 @@ export default function BulkRatesPage() {
     }
   }, []);
 
-  // Gia hien thi cua 1 o: goi goc lay gia da luu; goi suy ra tinh tu gia goc (+ cong thuc), gia sua tay thang.
+  // Gia hien thi cua 1 o: goi goc lay gia sua tay (neu co), khong co thi gia goc
+  // theo giai doan + % cua chinh goi do (neu co); goi suy ra tinh tu gia goc
+  // (+ cong thuc), gia sua tay thang. (Goi goc khong doc thang plan.prices vi
+  // plan.prices da nap san gia goc theo giai doan — doc thang se bo qua %.)
   function priceForCell(plan: RatePlan, date: string): number | undefined {
-    if (!plan.derivedFromId) return plan.prices[date];
+    if (!plan.derivedFromId) {
+      const stored = storedPrices[keyOf(plan.id, date)];
+      if (stored !== undefined && stored !== null) return stored;
+      const bp = basePeriods.find((x) => x.roomTypeId === plan.roomTypeId && x.from <= date && date <= x.to);
+      if (!bp) return undefined;
+      const f = getFormula(plan.formulaId);
+      return f ? applyFormula(bp.price, f) : bp.price;
+    }
     return resolvePlanPrice(plan, date, plans, overrides, basePeriods);
   }
 
   // ---------- Supabase: save one cell (price + restrictions giu nguyen) ----------
-  async function persistCell(planId: string, date: string, price: number, restr?: Restriction) {
+  async function persistCell(planId: string, date: string, price: number | null, restr?: Restriction) {
     const r = restr ?? restrictions[keyOf(planId, date)] ?? {};
     const { error } = await supabase.from("rate_prices").upsert({
       rate_plan_id: planId,
@@ -242,7 +260,10 @@ export default function BulkRatesPage() {
       ctd: !!r.ctd,
     });
     if (error) setDbError("Lưu giá không thành công: " + error.message);
-    else queueChannexDates([date]);
+    else {
+      setStoredPrices((prev) => ({ ...prev, [keyOf(planId, date)]: price }));
+      queueChannexDates([date]);
+    }
   }
 
   // Tra ve promise cua lenh ghi DB de saveAll cho ghi xong that moi bao "Da luu".
@@ -283,7 +304,14 @@ export default function BulkRatesPage() {
       .eq("date", date)
       .then(({ error }) => {
         if (error) setDbError("Xoá giá không thành công: " + error.message);
-        else queueChannexDates([date]);
+        else {
+          setStoredPrices((prev) => {
+            const next = { ...prev };
+            delete next[keyOf(planId, date)];
+            return next;
+          });
+          queueChannexDates([date]);
+        }
       });
   }
 
@@ -552,11 +580,10 @@ export default function BulkRatesPage() {
     setSaving(true);
     setProgress(0);
     if (restrMode === "min_stay") {
-      const snap = new Map<string, { planId: string; date: string; oldRestr?: Restriction; price?: number }>();
+      const snap = new Map<string, { planId: string; date: string; oldRestr?: Restriction; hadRow: boolean; oldPrice: number | null }>();
       const planCache = new Map<string, RatePlan | undefined>();
       const pending: Promise<void>[] = [];
       let done = 0;
-      let skipped = 0;
       const changedDates = new Set<string>();
       const savedTypes = new Set<string>();
       const savedDates = new Set<string>();
@@ -570,13 +597,14 @@ export default function BulkRatesPage() {
         if (!planCache.has(t.typeId)) planCache.set(t.typeId, await ensureStandardPlan(channel, t.typeId));
         const plan = planCache.get(t.typeId);
         if (!plan) continue;
-        // Cot price NOT NULL nen o chua co gia thi khong the upsert min-stay — bo qua, bao trong toast.
-        const price = priceForCell(plan, t.date);
-        if (price === undefined) { skipped++; continue; }
+        // Luu han che RIENG, khong khoa gia: giu nguyen gia da luu (neu co),
+        // neu chua co dong nao thi ghi price = NULL (gia van tinh theo gia goc + %).
         const k = keyOf(plan.id, t.date);
-        if (!snap.has(k)) snap.set(k, { planId: plan.id, date: t.date, oldRestr: restrictions[k] ? { ...restrictions[k] } : undefined, price });
+        const storedPrice = storedPrices[k] ?? null;
+        if (!snap.has(k)) snap.set(k, { planId: plan.id, date: t.date, oldRestr: restrictions[k] ? { ...restrictions[k] } : undefined, hadRow: storedPrices[k] !== undefined, oldPrice: storedPrice });
         const r = { ...(restrictions[k] ?? {}), minStay: t.value };
-        pending.push(persistCell(plan.id, t.date, price, r));
+        pending.push(persistCell(plan.id, t.date, storedPrice, r));
+        setStoredPrices((prev) => ({ ...prev, [k]: storedPrice }));
         setRestrictions((prev) => ({ ...prev, [k]: r }));
         changedDates.add(t.date);
         savedTypes.add(t.typeId);
@@ -592,22 +620,29 @@ export default function BulkRatesPage() {
         const minStayList = [...new Set(restrTargets.map((t) => t.value).filter((v): v is number => v !== undefined))];
         writeAuditLog({
           hotelId: HOTEL_ID, accountId: ACCOUNT_ID, action: "price_updated", entityType: "rate_price", entityId: channel,
-          summary: `Đổi số đêm tối thiểu ${restrTypeNames} · ${chName} · ${range.from} ~ ${range.to}: ${minStayList.join(", ")} đêm (${savedDates.size} ngày)${skipped > 0 ? ` — bỏ qua ${skipped} ô chưa có giá` : ""}`,
-          details: { channel, roomTypeIds: [...savedTypes], from: range.from, to: range.to, days: savedDates.size, minStayValues: minStayList, skipped },
+          summary: `Đổi số đêm tối thiểu ${restrTypeNames} · ${chName} · ${range.from} ~ ${range.to}: ${minStayList.join(", ")} đêm (${savedDates.size} ngày)`,
+          details: { channel, roomTypeIds: [...savedTypes], from: range.from, to: range.to, days: savedDates.size, minStayValues: minStayList },
         });
       }
       const typeCount = savedTypes.size;
       const dayCount = savedDates.size;
       showToast(
-        `Đã cập nhật ngày ở tối thiểu cho ${typeCount} loại phòng, ${dayCount} ngày.${skipped > 0 ? ` Bỏ qua ${skipped} ô chưa có giá.` : ""}`,
+        `Đã cập nhật ngày ở tối thiểu cho ${typeCount} loại phòng, ${dayCount} ngày.`,
         "success",
         () => {
           snap.forEach((cell) => {
             const r = cell.oldRestr ? { ...cell.oldRestr } : {};
-            if (cell.price !== undefined) void persistCell(cell.planId, cell.date, cell.price, r);
+            const k = keyOf(cell.planId, cell.date);
+            if (cell.hadRow) void persistCell(cell.planId, cell.date, cell.oldPrice, r);
+            else void supabase.from("rate_prices").delete().eq("rate_plan_id", cell.planId).eq("date", cell.date);
+            setStoredPrices((prev) => {
+              const next = { ...prev };
+              if (cell.hadRow) next[k] = cell.oldPrice;
+              else delete next[k];
+              return next;
+            });
             setRestrictions((prev) => {
               const next = { ...prev };
-              const k = keyOf(cell.planId, cell.date);
               if (cell.oldRestr) next[k] = { ...cell.oldRestr };
               else delete next[k];
               return next;

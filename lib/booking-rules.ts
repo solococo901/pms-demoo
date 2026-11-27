@@ -23,6 +23,7 @@ import {
   inventoryBlockOn,
   resolvePlanPrice,
   roomBlockOn,
+  type BaseRatePeriod,
   type InventoryBlock,
   type RatePlan,
   type Reservation,
@@ -211,16 +212,39 @@ export function priceBreakdown(
   adults: number,
   children: number,
   overrides?: Record<string, number>,
+  baseRatePeriods?: BaseRatePeriod[],
 ): PriceBreakdown {
   const dates = stayDates(checkIn, checkOut);
   const perNight = dates.map((date) => {
-    const price = resolvePlanPrice(plan, date, allPlans, overrides);
+    const price = resolvePlanPrice(plan, date, allPlans, overrides, baseRatePeriods);
     return { date, price: price === undefined ? null : price };
   });
   const unpriced = perNight.filter((n) => n.price === null).map((n) => n.date);
   const roomTotal = perNight.reduce((s, n) => s + (n.price ?? 0), 0);
   const feesTotal = extraFeesPerNight(plan, adults, children).total * dates.length;
   return { perNight, unpriced, roomTotal, feesTotal, grandTotal: roomTotal + feesTotal };
+}
+
+// ---------- o toi thieu / toi da ----------
+
+/** Han che o toi thieu / toi da theo goi gia + ngay (tu rate_prices). Khoa: `${planId}|${date}`. */
+export type StayRestriction = { minStay?: number; maxStay?: number };
+export type StayRestrictions = Record<string, StayRestriction>;
+
+/** Kiem tra so dem theo han che cua ngay nhan phong. Tra ve loi neu vi pham. */
+export function stayLengthError(
+  restrictions: StayRestrictions | undefined,
+  planId: string,
+  checkIn: string,
+  nights: number,
+): string | undefined {
+  const r = restrictions?.[`${planId}|${checkIn}`];
+  if (!r) return undefined;
+  if (r.minStay != null && nights < r.minStay)
+    return `Ngày nhận phòng ${fmtDateShort(checkIn)} yêu cầu ở tối thiểu ${r.minStay} đêm — đơn này chỉ ${nights} đêm.`;
+  if (r.maxStay != null && nights > r.maxStay)
+    return `Ngày nhận phòng ${fmtDateShort(checkIn)} chỉ cho ở tối đa ${r.maxStay} đêm — đơn này ${nights} đêm.`;
+  return undefined;
 }
 
 // ---------- tao don moi ----------
@@ -236,6 +260,8 @@ export type CreateInput = {
   plan?: RatePlan; // goi gia cua kenh + loai phong nay (thieu -> chan)
   allPlans: RatePlan[];
   overrides?: Record<string, number>;
+  baseRatePeriods?: BaseRatePeriod[];
+  restrictions?: StayRestrictions;
   channelCode: string;
   roomNumber?: string; // gan phong ngay (neu co)
   today: string;
@@ -264,6 +290,7 @@ export function validateCreate(
     input.adults,
     input.children,
     input.overrides,
+    input.baseRatePeriods,
   );
   if (breakdown.unpriced.length > 0)
     return {
@@ -274,6 +301,8 @@ export function validateCreate(
     };
   if (breakdown.grandTotal <= 0)
     return { ...fail("Tổng đơn đang là 0₫ — kiểm tra lại giá các đêm ở Lịch giá."), breakdown };
+  const stayErr = stayLengthError(input.restrictions, input.plan.id, input.checkIn, nightsBetween(input.checkIn, input.checkOut));
+  if (stayErr) return { ...fail(stayErr), breakdown };
   if (input.roomNumber) {
     const room = input.data.rooms.find((rm) => rm.number === input.roomNumber);
     if (!room) return { ...fail(`Không tìm thấy phòng ${input.roomNumber}.`), breakdown };
@@ -331,6 +360,8 @@ export function validateExtend(
   allPlans: RatePlan[],
   overrides: Record<string, number> | undefined,
   channelCode: string,
+  baseRatePeriods?: BaseRatePeriod[],
+  restrictions?: StayRestrictions,
 ): RuleResult & { addedTotal?: number } {
   if (!["pending", "confirmed", "in_house"].includes(booking.status))
     return fail("Chỉ gia hạn được đơn đang chờ, đã xác nhận hoặc đang ở.");
@@ -344,11 +375,14 @@ export function validateExtend(
     booking.adults ?? booking.guests,
     booking.children ?? 0,
     overrides,
+    baseRatePeriods,
   );
   if (breakdown.unpriced.length > 0)
     return fail(
       `Chưa có giá đêm ${breakdown.unpriced.map(fmtDateShort).join(", ")} — nhập giá ở Lịch giá rồi gia hạn.`,
     );
+  const stayErr = stayLengthError(restrictions, plan.id, booking.checkIn, nightsBetween(booking.checkIn, newCheckOut));
+  if (stayErr) return fail(stayErr);
   if (booking.roomNumbers.length > 0) {
     for (const n of booking.roomNumbers) {
       const room = data.rooms.find((rm) => rm.number === n);

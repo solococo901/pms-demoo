@@ -12,6 +12,7 @@ import {
   CHANNELS,
   CHANNEL_FORMULA,
   getChannelName,
+  type BaseRatePeriod,
   type InventoryBlock,
   type RatePlan,
   type Reservation,
@@ -25,9 +26,11 @@ import {
   priceBreakdown,
   roomFits,
   roomsLeftRange,
+  stayLengthError,
   validateCreate,
   type AvailabilityData,
   type PriceBreakdown,
+  type StayRestrictions,
 } from "@/lib/booking-rules";
 import { DatePicker } from "@/components/DatePicker";
 import { IconBed, IconCalendar, IconCheck, IconSearch } from "@/components/icons";
@@ -44,6 +47,8 @@ type WizardProps = {
   roomBlocks: RoomBlock[];
   invBlocks: InventoryBlock[];
   priceOverrides: Record<string, number>;
+  baseRatePeriods: BaseRatePeriod[];
+  restrictions: StayRestrictions;
 };
 
 // 1 phong trong gio = 1 don se tao (moi don 1 ma rieng).
@@ -96,6 +101,8 @@ export default function NewReservationWizard({
   roomBlocks,
   invBlocks,
   priceOverrides,
+  baseRatePeriods,
+  restrictions,
 }: WizardProps) {
   const { showToast } = useToast();
   const [step, setStep] = useState(1);
@@ -161,18 +168,19 @@ export default function NewReservationWizard({
         const left = roomsLeftRange(avail, t.id, checkIn, checkOut, source);
         const g = rowGuests[t.id] ?? { adults, children };
         const bd = plan
-          ? priceBreakdown(plan, ratePlans, checkIn, checkOut, g.adults, g.children, priceOverrides)
+          ? priceBreakdown(plan, ratePlans, checkIn, checkOut, g.adults, g.children, priceOverrides, baseRatePeriods)
           : null;
-        return { type: t, plan, left: left.minLeft, worstDate: left.worstDate, bd, guests: g };
+        const stayErr = plan ? stayLengthError(restrictions, plan.id, checkIn, nights) : undefined;
+        return { type: t, plan, left: left.minLeft, worstDate: left.worstDate, bd, guests: g, stayErr };
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched, nights, roomTypes, source, checkIn, checkOut, adults, children, rowGuests, avail, ratePlans, priceOverrides]);
+  }, [searched, nights, roomTypes, source, checkIn, checkOut, adults, children, rowGuests, avail, ratePlans, priceOverrides, baseRatePeriods, restrictions]);
 
   // Gia cua 1 phong trong gio (tinh lai theo ngay/so khach hien tai).
   const breakdownFor = (item: CartItem): PriceBreakdown | null => {
     const plan = ratePlans.find((p) => p.id === item.planId);
     if (!plan) return null;
-    return priceBreakdown(plan, ratePlans, checkIn, checkOut, item.adults, item.children, priceOverrides);
+    return priceBreakdown(plan, ratePlans, checkIn, checkOut, item.adults, item.children, priceOverrides, baseRatePeriods);
   };
 
   const addonAmount = (a: AddOn) => a.unitPrice * a.qty * (a.basis === "night" ? Math.max(nights, 0) : 1);
@@ -268,6 +276,8 @@ export default function NewReservationWizard({
       plan: plan ?? undefined,
       allPlans: ratePlans,
       overrides: priceOverrides,
+      baseRatePeriods,
+      restrictions,
       channelCode: source,
       roomNumber: item.roomNumber || undefined,
       today: todayStr,
@@ -657,7 +667,7 @@ export default function NewReservationWizard({
                     const unpriced = o.bd !== null && o.bd.unpriced.length > 0;
                     const already = cart.filter((i) => i.roomTypeId === o.type.id).length;
                     const soldOut = o.left - already < 1;
-                    const disabled = noPlan || unpriced || soldOut || overCapacity;
+                    const disabled = noPlan || unpriced || soldOut || overCapacity || !!o.stayErr;
                     const minNight =
                       o.bd && o.bd.perNight.length > 0
                         ? Math.min(...o.bd.perNight.map((n) => n.price ?? Number.POSITIVE_INFINITY))
@@ -678,6 +688,9 @@ export default function NewReservationWizard({
                             <div className="mt-1 text-xs text-warning">
                               Chưa có giá đêm {o.bd.unpriced.map(fmtDate).join(", ")} — nhập giá ở Lịch giá.
                             </div>
+                          )}
+                          {o.stayErr && (
+                            <div className="mt-1 text-xs text-warning">{o.stayErr}</div>
                           )}
                           {soldOut && !noPlan && !unpriced && (
                             <div className="mt-1 text-xs text-danger">

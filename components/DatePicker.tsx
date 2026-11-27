@@ -94,7 +94,7 @@ function CalendarPopup({ rect, view, setView, dayClass, onDay, onHover, footer }
               type="button"
               onClick={() => onDay(day)}
               onMouseEnter={() => onHover?.(day)}
-              className={`rounded-lg py-1.5 text-sm ${dayClass(day)} ${day === todayISO ? "ring-1 ring-primary" : ""}`}
+              className={`rounded-lg py-1.5 text-sm transition-colors duration-100 active:bg-primary-soft active:scale-90 ${dayClass(day)} ${day === todayISO ? "ring-1 ring-primary" : ""}`}
             >
               {toDate(day).getDate()}
             </button>
@@ -160,7 +160,7 @@ export function DatePicker({ value, onChange, min, rangeStart, placeholder, clea
     if (rangeStart && hover && day > rangeStart && day <= hover) return "bg-primary-soft";
     if (rangeStart && !hover && value && day > rangeStart && day < value) return "bg-primary-soft";
     if (day === value) return "bg-primary font-bold text-white";
-    return "hover:bg-[var(--nui-bg)]";
+    return "hover:bg-primary-soft active:bg-primary-soft";
   };
   const pick = (day: string) => {
     if (min && day < min) return;
@@ -187,7 +187,13 @@ export function DatePicker({ value, onChange, min, rangeStart, placeholder, clea
                   </p>
                 )}
                 <div className="flex items-center justify-between gap-2">
-                  <button type="button" className="cb-btn-ghost px-3 py-1 text-xs" onClick={() => { onChange(localISO(new Date())); setOpen(false); }}>
+                  <button
+                    type="button"
+                    className="cb-btn-ghost px-3 py-1 text-xs disabled:opacity-40"
+                    disabled={!!min && localISO(new Date()) < min}
+                    title={min && localISO(new Date()) < min ? "Hôm nay chưa đến ngày sớm nhất được chọn" : undefined}
+                    onClick={() => { onChange(localISO(new Date())); setOpen(false); }}
+                  >
                     Hôm nay
                   </button>
                   {clearable && value && (
@@ -251,7 +257,7 @@ export function DateRangePicker({ from, to, onChange, min, fromLabel, toLabel, c
     if (!start && from && (day === from || day === to)) return "bg-primary font-bold text-white";
     if (!start && from && to && day > from && day < to) return "bg-primary-soft";
     if (start && hover && day > start && day <= hover) return "bg-primary-soft";
-    return "hover:bg-[var(--nui-bg)]";
+    return "hover:bg-primary-soft active:bg-primary-soft";
   };
   const label = from && to ? `${fmtDate(from)} → ${fmtDate(to)}` : "Chọn ngày đến → ngày đi";
   return (

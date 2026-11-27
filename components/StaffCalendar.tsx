@@ -11,6 +11,7 @@ import {
   getRoomTypeName,
   resolvePlanPrice,
   roomBlockOn,
+  type BaseRatePeriod,
   type InventoryBlock,
   type RatePlan,
   type Reservation,
@@ -21,12 +22,15 @@ import {
   canCancel,
   canCheckIn,
   canCheckOut,
+  nightsBetween,
   priceBreakdown,
   roomFits,
+  stayLengthError,
   validateAssign,
   validateBlock,
   validateDrop,
   type AvailabilityData,
+  type StayRestrictions,
 } from "@/lib/booking-rules";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
@@ -101,6 +105,8 @@ export default function StaffCalendar() {
   // keo doi ngay / gan sang loai phong khac.
   const [planObjs, setPlanObjs] = useState<RatePlan[]>([]);
   const [priceOverrides, setPriceOverrides] = useState<Record<string, number>>({});
+  const [basePeriods, setBasePeriods] = useState<BaseRatePeriod[]>([]);
+  const [restrictions, setRestrictions] = useState<StayRestrictions>({});
 
   // Du lieu dung chung cho bo kiem tra: phong + don + chan phong + dong ban.
   const availData: AvailabilityData = useMemo(
@@ -161,7 +167,7 @@ export default function StaffCalendar() {
   // ---------- load everything from Supabase ----------
   useEffect(() => {
     (async () => {
-      const [roomsRes, resRes, rrRes, blocksRes, typesRes, hotelRes, plansRes, invRes] = await Promise.all([
+      const [roomsRes, resRes, rrRes, blocksRes, typesRes, hotelRes, plansRes, invRes, baseRes] = await Promise.all([
         supabase.from("rooms").select("*").eq("hotel_id", HOTEL_ID).order("number"),
         supabase.from("reservations").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("reservation_rooms").select("reservation_id, room_number"),
@@ -170,6 +176,7 @@ export default function StaffCalendar() {
         supabase.from("hotels").select("currency").eq("id", HOTEL_ID).single(),
         supabase.from("rate_plans").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("inventory_blocks").select("*").eq("hotel_id", HOTEL_ID),
+        supabase.from("base_rate_periods").select("*").eq("hotel_id", HOTEL_ID),
       ]);
       const err = roomsRes.error ?? resRes.error ?? rrRes.error ?? blocksRes.error;
       if (err) return setDbError(err.message);
@@ -269,6 +276,11 @@ export default function StaffCalendar() {
         derivedFromId: p.derived_from_id ?? undefined,
         formulaId: p.formula_id ?? undefined,
       }));
+      // Giai doan gia goc (de tinh gia suy ra) — dung cho rack + tinh lai tien.
+      const baseList: BaseRatePeriod[] = (baseRes.data ?? []).map((r) => ({
+        id: r.id, roomTypeId: r.room_type_id, from: r.from_date, to: r.to_date, price: Number(r.price),
+      }));
+      setBasePeriods(baseList);
       const chosen = new Map<string, RatePlan>();
       for (const p of [...planObjs].sort((a, b) => a.name.localeCompare(b.name))) {
         const cur = chosen.get(p.roomTypeId);
@@ -290,29 +302,37 @@ export default function StaffCalendar() {
           if (pl?.derivedFromId) needIds.add(pl.derivedFromId);
         }
         // Supabase tra toi da 1000 dong/lan — lay theo trang
-        let priceRows: { rate_plan_id: string; date: string; price: number }[] = [];
+        let priceRows: { rate_plan_id: string; date: string; price: number; min_stay: number | null; max_stay: number | null }[] = [];
         for (let from = 0; ; from += 1000) {
           const { data: page } = await supabase
             .from("rate_prices")
-            .select("rate_plan_id, date, price")
+            .select("rate_plan_id, date, price, min_stay, max_stay")
             .in("rate_plan_id", [...needIds])
             .range(from, from + 999);
           priceRows = [...priceRows, ...(page ?? [])];
           if (!page || page.length < 1000) break;
         }
         const overrides: Record<string, number> = {};
+        const restr: StayRestrictions = {};
         for (const row of priceRows) {
           const pl = planObjs.find((x) => x.id === row.rate_plan_id);
           if (!pl) continue;
           if (pl.derivedFromId) overrides[`${pl.id}|${row.date}`] = row.price;
           else pl.prices[row.date] = row.price;
+          if (row.min_stay != null || row.max_stay != null) {
+            restr[`${row.rate_plan_id}|${row.date}`] = {
+              minStay: row.min_stay ?? undefined,
+              maxStay: row.max_stay ?? undefined,
+            };
+          }
         }
+        setRestrictions(restr);
         const rackMap: Record<string, Record<string, number>> = {};
         const allDates = [...new Set(priceRows.map((r) => r.date))];
         for (const [tid, pl] of chosen) {
           const m: Record<string, number> = {};
           for (const d of allDates) {
-            const v = resolvePlanPrice(pl, d, planObjs, overrides);
+            const v = resolvePlanPrice(pl, d, planObjs, overrides, baseList);
             if (v != null) m[d] = v;
           }
           rackMap[tid] = m;
@@ -570,12 +590,14 @@ export default function StaffCalendar() {
     if (effType !== res.roomTypeId) {
       const newPlan = standardPlanFor(res.channelCode, effType);
       if (!newPlan) { showToast(`Kênh ${getChannelName(res.channelCode)} chưa có gói giá cho loại phòng này — không gán sang loại khác được.`, "error"); return; }
-      const bd = priceBreakdown(newPlan, planObjs, res.checkIn, res.checkOut, res.adults ?? res.guests, res.children ?? 0, priceOverrides);
+      const bd = priceBreakdown(newPlan, planObjs, res.checkIn, res.checkOut, res.adults ?? res.guests, res.children ?? 0, priceOverrides, basePeriods);
       if (bd.unpriced.length > 0) {
         showToast(`Chưa có giá cho đêm ${bd.unpriced.join(", ")} ở loại phòng mới — nhập giá ở Lịch giá rồi gán lại.`, "error");
         return;
       }
       if (bd.grandTotal <= 0) { showToast("Tổng tiền mới bằng 0 — kiểm tra lại giá loại phòng mới.", "error"); return; }
+      const stayErrNew = stayLengthError(restrictions, newPlan.id, res.checkIn, nightsBetween(res.checkIn, res.checkOut));
+      if (stayErrNew) { showToast(stayErrNew, "error"); return; }
       if (bd.grandTotal !== res.totalAmount && !window.confirm(`Đổi sang loại phòng mới, tổng tiền đổi từ ${fmtPrice(res.totalAmount)} thành ${fmtPrice(bd.grandTotal)}. Áp giá mới?`)) return;
       newTotal = bd.grandTotal;
       newPlanId = newPlan.id;
@@ -681,12 +703,14 @@ export default function StaffCalendar() {
     if (newCheckIn !== res.checkIn || newCheckOut !== res.checkOut) {
       const plan = planObjs.find((p) => p.id === res.ratePlanId);
       if (!plan) { showToast("Không tìm thấy gói giá của đơn này — không tính được tiền ngày mới.", "error"); return; }
-      const bd = priceBreakdown(plan, planObjs, newCheckIn, newCheckOut, res.adults ?? res.guests, res.children ?? 0, priceOverrides);
+      const bd = priceBreakdown(plan, planObjs, newCheckIn, newCheckOut, res.adults ?? res.guests, res.children ?? 0, priceOverrides, basePeriods);
       if (bd.unpriced.length > 0) {
         showToast(`Chưa có giá cho đêm ${bd.unpriced.join(", ")} — nhập giá ở Lịch giá rồi kéo lại.`, "error");
         return;
       }
       if (bd.grandTotal <= 0) { showToast("Tổng tiền mới bằng 0 — kiểm tra lại giá các đêm mới.", "error"); return; }
+      const stayErrDrag = stayLengthError(restrictions, plan.id, newCheckIn, nightsBetween(newCheckIn, newCheckOut));
+      if (stayErrDrag) { showToast(stayErrDrag, "error"); return; }
       if (bd.grandTotal !== res.totalAmount && !window.confirm(`Đổi ngày: tổng tiền đổi từ ${fmtPrice(res.totalAmount)} thành ${fmtPrice(bd.grandTotal)}. Áp giá mới?`)) return;
       newTotal = bd.grandTotal;
     }
