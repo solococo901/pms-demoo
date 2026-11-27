@@ -320,11 +320,12 @@ export const applyFormula = (price: number, formula: PriceFormula): number => {
 export type BaseRatePeriod = { id: string; roomTypeId: string; from: string; to: string; price: number };
 
 // The price of a plan on a date, resolved live:
-// - base plan: its stored price (gia sua tay / override); khong co thi
-//   lay gia goc theo giai doan; khong nam trong giai doan nao thi khong co gia.
-// - derived plan: the base plan's resolved price + its formula.
-//   An entry in "overrides" (key "planId|date") is a SPECIAL price
-//   set by hand on that date — it wins over the formula.
+// - gia luu rieng (gia sua tay, khac null) thang truoc.
+// - khong co gia luu thi lay gia goc theo giai doan, roi cong % cua
+//   goi (neu co); khong co % thi ke thua gia goc. Khong co giai doan
+//   gia goc thi khong co gia.
+// - % ap dung TRUC TIEP vao gia goc (khong cong don qua goi cha),
+//   nen Website va OTA deu co % rieng tren cung gia goc.
 export const resolvePlanPrice = (
   plan: RatePlan,
   date: string,
@@ -332,20 +333,15 @@ export const resolvePlanPrice = (
   overrides?: Record<string, number>,
   baseRatePeriods?: BaseRatePeriod[]
 ): number | undefined => {
-  if (plan.derivedFromId) {
-    const special = overrides?.[`${plan.id}|${date}`];
-    if (special !== undefined) return special;
-    const base = allPlans.find((p) => p.id === plan.derivedFromId);
-    if (!base) return undefined;
-    const basePrice = resolvePlanPrice(base, date, allPlans, overrides, baseRatePeriods);
-    if (basePrice === undefined) return undefined;
-    const formula = getFormula(plan.formulaId);
-    return formula ? applyFormula(basePrice, formula) : basePrice;
-  }
-  const direct = plan.prices[date];
-  if (direct !== undefined) return direct;
+  // Gia luu rieng (chi khi co gia that, khac null).
+  const stored = plan.derivedFromId
+    ? overrides?.[`${plan.id}|${date}`]
+    : plan.prices[date];
+  if (stored !== undefined && stored !== null) return stored;
   const period = baseRatePeriods?.find((x) => x.roomTypeId === plan.roomTypeId && x.from <= date && date <= x.to);
-  return period ? period.price : undefined;
+  if (!period) return undefined;
+  const formula = getFormula(plan.formulaId);
+  return formula ? applyFormula(period.price, formula) : period.price;
 };
 
 export const mealPlanLabel = (plan: RatePlan): string =>

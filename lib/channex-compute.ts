@@ -11,6 +11,7 @@
 // tren Channex chi gui restrictions, Channex tu suy gia tu goi
 // goc. Goi suy ra tu gia Website khong co tren Channex nen
 // PMS phai gui gia da tinh.
+// CHANFIX2 — gui ro stop-sell/CTA/CTD cho ca goi suy ra (Gap 2).
 // ============================================================
 
 import { supabase } from "@/lib/supabase";
@@ -229,17 +230,14 @@ export async function computeChannexValues(
           (b.scope === "room_type" ||
             (b.scope === "channel" && b.channel_code === p.channel_code))
       );
-      // Luon gui ro trang thai cac cong tac, ke ca false: neu
-      // thieu truong, Channex giu gia tri cu — viec TAT trong
-      // PMS se khong bao gio an sang Channex. Loai phong tat
-      // ban thi stop-sell luon, ke ca khong co dong gia nao.
-      if (!channexDerivesPrice || row) {
-        v.stop_sell = !!(row?.stopSell || blocked || typeActive.get(p.room_type_id) === false);
-        v.closed_to_arrival = !!row?.cta;
-        v.closed_to_departure = !!row?.ctd;
-        if (v.stop_sell || v.closed_to_arrival || v.closed_to_departure || p.derived_from_id)
-          hasValue = true;
-      }
+      // Luon gui ro trang thai cac cong tac, ke ca false, cho MOI goi
+      // (ke ca goi suy ra): neu thieu truong, Channex giu gia tri cu —
+      // viec TAT dong ban se khong bao gio an sang Channex cho goi suy ra.
+      v.stop_sell = !!(row?.stopSell || blocked || typeActive.get(p.room_type_id) === false);
+      v.closed_to_arrival = !!row?.cta;
+      v.closed_to_departure = !!row?.ctd;
+      if (v.stop_sell || v.closed_to_arrival || v.closed_to_departure || p.derived_from_id)
+        hasValue = true;
       if (hasValue) restrictions.push(v);
     }
   }

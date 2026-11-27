@@ -463,6 +463,7 @@ export function validateBlock(
   roomNumber: string,
   from: string,
   to: string,
+  blocks: RoomBlock[] = [],
 ): RuleResult {
   if (!from || !to || to < from)
     return fail("Ngày chặn chưa đúng (ngày kết thúc phải sau ngày bắt đầu).");
@@ -476,6 +477,15 @@ export function validateBlock(
   if (clash)
     return fail(
       `Phòng ${roomNumber} đang có khách ${clash.guestName} (${fmtDateShort(clash.checkIn)} → ${fmtDateShort(clash.checkOut)}) — chuyển khách đi trước rồi chặn phòng.`,
+    );
+  // Phong da co lan chan trung ngay thi khong chan them nua
+  // (truoc day chi kiem tra khach, khong kiem tra lan chan cu).
+  const dup = blocks.find(
+    (b) => b.roomNumber === roomNumber && b.from <= to && from <= b.to,
+  );
+  if (dup)
+    return fail(
+      `Phòng ${roomNumber} đã bị chặn từ ${fmtDateShort(dup.from)} đến ${fmtDateShort(dup.to)} (${dup.kind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng"}: ${dup.reason}) — xoá lần chặn cũ hoặc chọn ngày khác.`,
     );
   return pass();
 }

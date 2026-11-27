@@ -1,7 +1,8 @@
 "use client";
 // BULK12 — app/[hotelId]/rates/bulk/page.tsx (Trang rieng Cap nhat gia hang loat, toi gian kieu ezCloud + chon nhanh khoang ngay)
 // BULK12 (2026-11-25): them tab "Han che" (ngay o toi thieu + dong ban) ben canh tab "Gia"; mo thang tab Han che bang ?tab=restrictions&mode=stop_sell|min_stay.
-// Khong the card: loai phong + ten loai sat trai, 7 o T2-CN chum phai; Master hien cong thuc suy ra; nut nhanh 30/90/180 ngay, 1 nam, 500 ngay; o nhap hien dau cham ngan cach hang nghin khi go.
+// BULK15 — gop BULKGRID1 (chi hien cot thu co that) + BULK14 (ghi nhat ky tab Han che); dong/mo ban ghi dung action stop_sell_set/removed.
+// Khong the card: loai phong + ten loai sat trai, cac o theo thu trong khoang chum phai; Master hien cong thuc suy ra; nut nhanh 30/90/180 ngay, 1 nam, 500 ngay; o nhap hien dau cham ngan cach hang nghin khi go.
 // Gia goc = gia Website; kenh khac suy ra theo % hoa hong, nhap tay la override (xoa de ve lai gia suy ra).
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -22,6 +23,7 @@ import {
   type RoomType,
 } from "@/lib/mock-data";
 import { supabase } from "@/lib/supabase";
+import { writeAuditLog } from "@/lib/audit-log";
 import { currentHotelId } from "@/lib/current-hotel";
 import { queueChannexDates, rangeDates } from "@/lib/channex-outbox";
 import { DateRangePicker } from "@/components/DatePicker";
@@ -499,6 +501,15 @@ export default function BulkRatesPage() {
     });
   }
 
+  // Chi hien cac cot thu co that trong khoang ngay da chon
+  // (vd khoang 27–29/11 chi co T6, T7, CN — khong hien T2–T5).
+  const visibleDows = useMemo(() => {
+    if (!range.from || !range.to || range.to < range.from) return DOW_ORDER;
+    const set = new Set<number>();
+    for (const date of rangeDates(range.from, range.to)) set.add(dayParts(date).dow);
+    return DOW_ORDER.filter((dow) => set.has(dow));
+  }, [range.from, range.to]);
+
   // So o han che se luu (de mo/khoa nut Cap nhat): min-stay = o da nhap so >= 1;
   // stop-sell = ngay ma tick muon doi khac trang thai hien tai (chi tinh o da cham).
   const restrTargets = useMemo(() => {
@@ -576,6 +587,15 @@ export default function BulkRatesPage() {
       await flush();
       setProgress(100);
       queueChannexDates([...changedDates], HOTEL_ID);
+      if (done > 0) {
+        const restrTypeNames = [...savedTypes].map((id) => roomTypesDb.find((t) => t.id === id)?.name ?? id).join(", ");
+        const minStayList = [...new Set(restrTargets.map((t) => t.value).filter((v): v is number => v !== undefined))];
+        writeAuditLog({
+          hotelId: HOTEL_ID, accountId: ACCOUNT_ID, action: "price_updated", entityType: "rate_price", entityId: channel,
+          summary: `Đổi số đêm tối thiểu ${restrTypeNames} · ${chName} · ${range.from} ~ ${range.to}: ${minStayList.join(", ")} đêm (${savedDates.size} ngày)${skipped > 0 ? ` — bỏ qua ${skipped} ô chưa có giá` : ""}`,
+          details: { channel, roomTypeIds: [...savedTypes], from: range.from, to: range.to, days: savedDates.size, minStayValues: minStayList, skipped },
+        });
+      }
       const typeCount = savedTypes.size;
       const dayCount = savedDates.size;
       showToast(
@@ -669,6 +689,26 @@ export default function BulkRatesPage() {
       setInvBlocks(working);
       setProgress(100);
       queueChannexDates([...changedDates], HOTEL_ID);
+      if (changedDates.size > 0) {
+        const blockedDays = restrTargets.filter((t) => t.wantBlocked).length;
+        const unblockedDays = restrTargets.filter((t) => !t.wantBlocked).length;
+        const stopTypeNames = [...new Set(restrTargets.map((t) => t.typeId))].map((id) => roomTypesDb.find((t) => t.id === id)?.name ?? id).join(", ");
+        const stopTypeIds = [...new Set(restrTargets.map((t) => t.typeId))];
+        if (blockedDays > 0) {
+          writeAuditLog({
+            hotelId: HOTEL_ID, accountId: ACCOUNT_ID, action: "stop_sell_set", entityType: "inventory_block", entityId: channel,
+            summary: `Đóng bán ${stopTypeNames} · ${chName} · ${range.from} ~ ${range.to} (${blockedDays} ngày)`,
+            details: { channel, roomTypeIds: stopTypeIds, from: range.from, to: range.to, days: changedDates.size, blockedDays, unblockedDays },
+          });
+        }
+        if (unblockedDays > 0) {
+          writeAuditLog({
+            hotelId: HOTEL_ID, accountId: ACCOUNT_ID, action: "stop_sell_removed", entityType: "inventory_block", entityId: channel,
+            summary: `Mở bán lại ${stopTypeNames} · ${chName} · ${range.from} ~ ${range.to} (${unblockedDays} ngày)`,
+            details: { channel, roomTypeIds: stopTypeIds, from: range.from, to: range.to, days: changedDates.size, blockedDays, unblockedDays },
+          });
+        }
+      }
       const typeCount = new Set(restrTargets.map((t) => t.typeId)).size;
       const dayCount = new Set(restrTargets.map((t) => t.date)).size;
       showToast(`Đã cập nhật đóng bán cho ${typeCount} loại phòng, ${dayCount} ngày.`, "success", () => {
@@ -838,7 +878,7 @@ export default function BulkRatesPage() {
       <div className="mt-4 flex justify-end">
         <div className="flex items-start gap-2">
           <div className="w-7" />
-          {DOW_ORDER.map((dow) => (
+          {visibleDows.map((dow) => (
             <div key={dow} className={`w-[104px] text-center text-sm font-semibold ${dow === 0 || dow === 6 ? "text-danger" : "text-muted"}`}>
               {WEEKDAY_FULL[dow]}
             </div>
@@ -875,7 +915,7 @@ export default function BulkRatesPage() {
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                   </svg>
                 </button>
-                {DOW_ORDER.map((dow) => {
+                {visibleDows.map((dow) => {
                   const cur = currentWeekdayPrice(type.id, dow);
                   return (
                     <div key={dow} className="w-[104px]">
@@ -929,7 +969,7 @@ export default function BulkRatesPage() {
                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                       </svg>
                     </button>
-                    {DOW_ORDER.map((dow) => {
+                    {visibleDows.map((dow) => {
                       const cur = currentWeekdayMinStay(type.id, dow);
                       return (
                         <div key={dow} className="w-[104px]">
@@ -956,7 +996,7 @@ export default function BulkRatesPage() {
               ) : (
                 <div className="flex items-start gap-2">
                   <div className="w-7" />
-                  {DOW_ORDER.map((dow) => {
+                  {visibleDows.map((dow) => {
                     const key = `${type.id}|${dow}`;
                     const checked = stopValues[key] ?? currentWeekdayBlocked(type.id, dow);
                     const isBlocked = currentWeekdayBlocked(type.id, dow);

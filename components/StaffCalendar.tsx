@@ -1,5 +1,7 @@
 "use client";
 // CALTIDY23 — components/StaffCalendar.tsx (Lich phong, y het Cloudbeds)
+// BLOCKEDIT1 — sua/noi dai lan chan cu tai cho (form dung chung tao + sua).
+// BLOCKVIS1 — form chan phong cuon vao tam nhin + hieu ung hien ro khi mo.
 // Ghi log (AUDIT): doi trang thai don (huy/nhan/tra/khong den) + chan/mo lai phong thi ghi vao audit_logs.
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -121,9 +123,22 @@ export default function StaffCalendar() {
   const [bfTo, setBfTo] = useState(TODAY);
   const [bfKind, setBfKind] = useState<RoomBlock["kind"]>("out_of_order");
   const [bfReason, setBfReason] = useState("");
+  // Lan chan dang sua (null = dang tao moi).
+  const [editingBlock, setEditingBlock] = useState<RoomBlock | null>(null);
+  // Ref toi form chan phong (de cuon toi khi mo ra).
+  const blockFormRef = useRef<HTMLDivElement>(null);
 
   const selectedBlock = blocks.find((b) => b.id === selectedBlockId) ?? null;
   const typeName = (tid: string) => typeNames[tid] ?? getRoomTypeName(tid);
+
+  // Khi form chan phong mo ra (tao moi hay sua), cuon toi cho no
+  // de nguoi dung thay ngay no vua xuat hien (form nam tren dau
+  // trang, con nut Sua thi o duoi lich — khong cuon thi khong thay).
+  useEffect(() => {
+    if (showBlockForm) {
+      blockFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [showBlockForm, editingBlock]);
 
   const days = useMemo(
     () => Array.from({ length: WINDOW }, (_, i) => addDays(startDate, i)),
@@ -309,37 +324,93 @@ export default function StaffCalendar() {
     })();
   }, []);
 
-  async function addBlock() {
+  // Mo form chan phong o che do tao moi.
+  function openNewBlock() {
+    setEditingBlock(null);
+    setBfRoom("");
+    setBfFrom(TODAY);
+    setBfTo(TODAY);
+    setBfKind("out_of_order");
+    setBfReason("");
+    setShowBlockForm(true);
+  }
+
+  // Mo form chan phong o che do sua lan co san.
+  function openEditBlock(b: RoomBlock) {
+    setEditingBlock(b);
+    setBfRoom(b.roomNumber);
+    setBfFrom(b.from);
+    setBfTo(b.to);
+    setBfKind(b.kind);
+    setBfReason(b.reason);
+    setSelectedBlockId(null);
+    setShowBlockForm(true);
+  }
+
+  // Luu lan chan: tao moi, hoac cap nhat lan dang sua.
+  async function saveBlock() {
     if (!bfRoom || !bfFrom || !bfTo || bfTo < bfFrom) return;
-    // Khong chan duoc phong dang co khach o trong khoang nay.
-    const check = validateBlock(reservations, bfRoom, bfFrom, bfTo);
+    // Khong chan duoc phong dang co khach o trong khoang nay,
+    // va khong chan trung len lan chan da co cua phong.
+    // Khi sua, loai chinh lan dang sua ra khoi danh sach kiem tra
+    // (neu khong no se luon "trung voi chinh no").
+    const others = editingBlock ? blocks.filter((b) => b.id !== editingBlock.id) : blocks;
+    const check = validateBlock(reservations, bfRoom, bfFrom, bfTo, others);
     if (!check.ok) { showToast(check.error ?? "Có lỗi xảy ra.", "error"); return; }
-    const nb: RoomBlock = {
-      id: `blk-${Date.now()}`,
-      roomNumber: bfRoom,
-      from: bfFrom,
-      to: bfTo,
-      kind: bfKind,
-      reason: bfReason || (bfKind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng"),
-    };
-    const { error } = await supabase.from("room_blocks").insert({
-      id: nb.id, hotel_id: HOTEL_ID, account_id: ACCOUNT_ID,
-      room_number: nb.roomNumber, from_date: nb.from, to_date: nb.to, kind: nb.kind, reason: nb.reason,
-    });
-    if (error) { showToast("Lưu chặn phòng không thành công: " + error.message, "error"); return; }
-    setBlocks((prev) => [...prev, nb]);
-    // Ghi log chan phong (AUDIT).
+    const reason = bfReason || (bfKind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng");
     const dShort = (d: string) => d.split("-").reverse().join("/");
-    writeAuditLog({
-      hotelId: HOTEL_ID,
-      accountId: ACCOUNT_ID,
-      action: "room_blocked",
-      entityType: "room_block",
-      entityId: nb.id,
-      summary: `Chặn phòng ${nb.roomNumber} · ${dShort(nb.from)} → ${dShort(nb.to)} (${nb.kind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng"}: ${nb.reason})`,
-      details: { blockId: nb.id, roomNumber: nb.roomNumber, from: nb.from, to: nb.to, kind: nb.kind, reason: nb.reason },
-    });
-    if (nb.kind === "out_of_order") queueChannexDates(rangeDates(nb.from, nb.to));
+    if (editingBlock) {
+      const { error } = await supabase.from("room_blocks").update({
+        room_number: bfRoom, from_date: bfFrom, to_date: bfTo, kind: bfKind, reason,
+      }).eq("id", editingBlock.id);
+      if (error) { showToast("Lưu chặn phòng không thành công: " + error.message, "error"); return; }
+      const updated: RoomBlock = { ...editingBlock, roomNumber: bfRoom, from: bfFrom, to: bfTo, kind: bfKind, reason };
+      setBlocks((prev) => prev.map((b) => (b.id === editingBlock.id ? updated : b)));
+      writeAuditLog({
+        hotelId: HOTEL_ID,
+        accountId: ACCOUNT_ID,
+        action: "room_blocked",
+        entityType: "room_block",
+        entityId: editingBlock.id,
+        summary: `Sửa chặn phòng ${bfRoom} · ${dShort(bfFrom)} → ${dShort(bfTo)} (${bfKind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng"}: ${reason})`,
+        details: { blockId: editingBlock.id, roomNumber: bfRoom, from: bfFrom, to: bfTo, kind: bfKind, reason, oldFrom: editingBlock.from, oldTo: editingBlock.to, oldKind: editingBlock.kind, oldRoomNumber: editingBlock.roomNumber },
+      });
+      // Day Channex tinh lai ton cho ca khoang cu + moi
+      // (neu 1 trong 2 loai la Phong hong).
+      if (editingBlock.kind === "out_of_order" || bfKind === "out_of_order") {
+        const from = editingBlock.from < bfFrom ? editingBlock.from : bfFrom;
+        const to = editingBlock.to > bfTo ? editingBlock.to : bfTo;
+        queueChannexDates(rangeDates(from, to));
+      }
+      showToast(`Đã sửa chặn phòng ${bfRoom} · ${dShort(bfFrom)} → ${dShort(bfTo)}.`, "success");
+      setEditingBlock(null);
+    } else {
+      const nb: RoomBlock = {
+        id: `blk-${Date.now()}`,
+        roomNumber: bfRoom,
+        from: bfFrom,
+        to: bfTo,
+        kind: bfKind,
+        reason,
+      };
+      const { error } = await supabase.from("room_blocks").insert({
+        id: nb.id, hotel_id: HOTEL_ID, account_id: ACCOUNT_ID,
+        room_number: nb.roomNumber, from_date: nb.from, to_date: nb.to, kind: nb.kind, reason: nb.reason,
+      });
+      if (error) { showToast("Lưu chặn phòng không thành công: " + error.message, "error"); return; }
+      setBlocks((prev) => [...prev, nb]);
+      writeAuditLog({
+        hotelId: HOTEL_ID,
+        accountId: ACCOUNT_ID,
+        action: "room_blocked",
+        entityType: "room_block",
+        entityId: nb.id,
+        summary: `Chặn phòng ${nb.roomNumber} · ${dShort(nb.from)} → ${dShort(nb.to)} (${nb.kind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng"}: ${nb.reason})`,
+        details: { blockId: nb.id, roomNumber: nb.roomNumber, from: nb.from, to: nb.to, kind: nb.kind, reason: nb.reason },
+      });
+      if (nb.kind === "out_of_order") queueChannexDates(rangeDates(nb.from, nb.to));
+      showToast(`Đã chặn phòng ${nb.roomNumber} · ${dShort(nb.from)} → ${dShort(nb.to)}.`, "success");
+    }
     setBfReason("");
     setShowBlockForm(false);
   }
@@ -855,10 +926,19 @@ export default function StaffCalendar() {
 
       {/* Block-a-room form (mo bang muc Chan phong trong menu + xanh) */}
       {showBlockForm && (
-        <div className="cb-card mb-4 flex flex-wrap items-end gap-3 p-4 text-sm text-ink">
+        <div
+          key={editingBlock ? editingBlock.id : "new"}
+          ref={blockFormRef}
+          className="cb-card page-enter mb-4 flex flex-wrap items-end gap-3 p-4 text-sm text-ink ring-2 ring-primary"
+        >
+          <div className="flex w-full items-center justify-between">
+            <span className="text-base font-bold text-primary">{editingBlock ? `Sửa chặn phòng ${editingBlock.roomNumber}` : "Chặn phòng mới"}</span>
+            <button onClick={() => { setShowBlockForm(false); setEditingBlock(null); }} className="cb-btn-ghost px-3 py-1.5 text-sm">Huỷ</button>
+          </div>
           <label>
             Phòng
             <select value={bfRoom} onChange={(e) => setBfRoom(e.target.value)} className="ml-2 rounded-lg border border-line px-2 py-2">
+              <option value="">— Chọn phòng —</option>
               {rooms.map((r) => (
                 <option key={r.number} value={r.number}>{r.number} — {typeName(r.roomTypeId)}</option>
               ))}
@@ -879,7 +959,7 @@ export default function StaffCalendar() {
             Lý do
             <input value={bfReason} onChange={(e) => setBfReason(e.target.value)} className="ml-2 rounded-lg border border-line px-2 py-2" placeholder="VD: Sửa điều hoà" />
           </label>
-          <button onClick={addBlock} className="cb-btn-primary px-4 py-2 text-sm">Thêm chặn</button>
+          <button onClick={saveBlock} className="cb-btn-primary px-4 py-2 text-sm">{editingBlock ? "Lưu sửa" : "Thêm chặn"}</button>
         </div>
       )}
 
@@ -1091,7 +1171,7 @@ export default function StaffCalendar() {
                       <div className="fixed inset-0 z-40" onClick={() => setQuickOpen(false)} />
                       <div className="absolute left-0 top-10 z-50 w-60 overflow-hidden rounded-xl border border-line bg-surface shadow-2xl">
                         <a href={`/${HOTEL_ID}/reservations/new`} className="block px-3 py-2 text-sm font-medium text-ink hover:bg-primary-soft">＋ Tạo đặt phòng mới</a>
-                        <button onClick={() => { setShowBlockForm(true); setQuickOpen(false); }} className="block w-full px-3 py-2 text-left text-sm font-medium text-ink hover:bg-primary-soft">⊘ Chặn phòng</button>
+                        <button onClick={() => { openNewBlock(); setQuickOpen(false); }} className="block w-full px-3 py-2 text-left text-sm font-medium text-ink hover:bg-primary-soft">⊘ Chặn phòng</button>
                       </div>
                     </>
                   )}
@@ -1299,6 +1379,7 @@ export default function StaffCalendar() {
           <span>{selectedBlock.from} → {selectedBlock.to} (đến đêm {selectedBlock.to})</span>
           <span className="text-muted">{selectedBlock.reason}</span>
           <span className="ml-auto flex gap-2">
+            <button onClick={() => openEditBlock(selectedBlock)} className="cb-btn-ghost px-3 py-1.5 text-sm">Sửa</button>
             <button onClick={() => removeBlock(selectedBlock.id)} className="rounded-lg border border-danger px-3 py-1.5 text-sm font-semibold text-danger hover:bg-danger-soft">
               Xoá chặn (mở phòng lại)
             </button>

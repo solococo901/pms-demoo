@@ -87,7 +87,7 @@ const MENU = [
   { label: "5. Kênh bán", href: "/channels", icon: "channels", group: "Thiết lập khách sạn", adminOnly: true },
   { label: "6. Lịch giá", href: "/rates", icon: "rates", group: "Thiết lập khách sạn", adminOnly: true },
   { label: "Giá gốc (Base Rate)", href: "/rates/base", icon: "rates", group: "Thiết lập khách sạn", adminOnly: true },
-  { label: "Giá kênh OTA", href: "/rates/ota", icon: "channels", group: "Thiết lập khách sạn", adminOnly: true },
+  { label: "Giá kênh bán", href: "/rates/ota", icon: "channels", group: "Thiết lập khách sạn", adminOnly: true },
   { label: "7. Chặn phòng & Đóng bán", href: "/inventory", icon: "archive", group: "Thiết lập khách sạn", adminOnly: true },
   { label: "Tổng quan", href: "/dashboard", icon: "dashboard", group: "Vận hành" },
   { label: "Lịch phòng", href: "/calendar", icon: "calendar", group: "Vận hành" },

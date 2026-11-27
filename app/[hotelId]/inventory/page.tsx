@@ -1,24 +1,23 @@
 "use client";
-// INV1 — app/[hotelId]/inventory/page.tsx (Chặn phòng & Đóng bán)
-// Layout moi theo nghien cuu 8 PMS: danh sach lam chinh (tab + bo loc
-// + chon nhieu dong), lich lam phu; form mo bang popup giua man hinh.
-// Du lieu, cach ghi DB va day Channex giu nguyen nhu ban cu.
+// INV4 — app/[hotelId]/inventory/page.tsx (Chặn phòng & Đóng bán)
+// Theo chuan PMS lon: trang nay chi la BANG KIEM TRA (xem + xoa).
+// Chan phong tao o Lich phong; dong ban + han che tao o Lich gia /
+// Cap nhat gia hang loat. Du lieu, cach ghi DB, day Channex giu nguyen.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useParams } from "next/navigation";
-import { CHANNELS, getChannelName, type InventoryBlock, type Reservation, type Room, type RoomBlock, type RoomType } from "@/lib/mock-data";
-import { validateBlock } from "@/lib/booking-rules";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { CHANNELS, getChannelName, type InventoryBlock, type Room, type RoomBlock, type RoomType } from "@/lib/mock-data";
 import { supabase } from "@/lib/supabase";
 import { currentHotelId } from "@/lib/current-hotel";
 import { queueChannexDates, rangeDates } from "@/lib/channex-outbox";
-import { DatePicker, DateRangePicker } from "@/components/DatePicker";
+import { DatePicker } from "@/components/DatePicker";
 import { useToast } from "@/components/Toast";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { writeAuditLog } from "@/lib/audit-log";
 
 const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
 const OTA_CHANNELS = CHANNELS.filter((c) => c.type === "ota");
-const BLOCK_REASONS = ["Sửa điều hoà", "Sơn lại tường", "Vệ sinh sâu", "Khách sạn giữ phòng"];
-const STOP_REASONS = ["Chủ ở", "Bảo trì", "Đóng theo mùa", "Hết phòng"];
 
 const fmtDate = (s: string) => {
   const [y, m, d] = s.split("-");
@@ -51,8 +50,6 @@ const STATUS_LABEL: Record<RowStatus, string> = { active: "Đang chạy", upcomi
 const STATUS_DOT: Record<RowStatus, string> = { active: "#1db584", upcoming: "#f59e0b", expired: "#9aa7b4" };
 
 const inputSm = "rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
-const chipBtn = (on: boolean) =>
-  `rounded-full border px-3 py-1.5 text-xs font-semibold ${on ? "border-primary bg-primary text-white" : "border-line bg-surface text-muted"}`;
 
 type ListRow = {
   key: string;
@@ -91,13 +88,12 @@ export default function InventoryPage() {
   const { showToast } = useToast();
   const params = useParams();
   const HOTEL_ID = typeof params.hotelId === "string" ? params.hotelId : currentHotelId();
+  const router = useRouter();
   const today = todayStr();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [roomBlocks, setRoomBlocks] = useState<RoomBlock[]>([]);
   const [invBlocks, setInvBlocks] = useState<InventoryBlock[]>([]);
-  // Don dang hoat dong — chi de kiem tra phong co khach truoc khi chan.
-  const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
 
@@ -112,42 +108,27 @@ export default function InventoryPage() {
   const [fSearch, setFSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Popup chan phong.
-  const [blockOpen, setBlockOpen] = useState(false);
-  const [editingBlock, setEditingBlock] = useState<RoomBlock | null>(null);
-  const [rbRoom, setRbRoom] = useState("");
-  const [rbFrom, setRbFrom] = useState(today);
-  const [rbTo, setRbTo] = useState(today);
-  const [rbKind, setRbKind] = useState<RoomBlock["kind"]>("out_of_order");
-  const [rbReason, setRbReason] = useState("");
-
-  // Popup dong ban (2 buoc: nhap -> xem lai).
-  const [stopOpen, setStopOpen] = useState(false);
-  const [stopStep, setStopStep] = useState<1 | 2>(1);
-  const [editingStop, setEditingStop] = useState<InventoryBlock | null>(null);
-  const [ssScope, setSsScope] = useState<"all" | "channels">("all");
-  const [ssChannels, setSsChannels] = useState<string[]>([]);
-  const [ssTypes, setSsTypes] = useState<string[]>([]);
-  const [ssFrom, setSsFrom] = useState(today);
-  const [ssTo, setSsTo] = useState(today);
-  const [ssReason, setSsReason] = useState("");
 
   // Lich + chi tiet 1 o chan phong tren lich.
   const [calStart, setCalStart] = useState(today);
   const [calBlock, setCalBlock] = useState<RoomBlock | null>(null);
 
+  // Hop xac nhan dung chung (thay cho confirm() cua trinh duyet).
+  const [confirmReq, setConfirmReq] = useState<{ message: string; confirmLabel: string; resolve: (ok: boolean) => void } | null>(null);
+  function askConfirm(message: string, confirmLabel = "Xác nhận") {
+    return new Promise<boolean>((resolve) => setConfirmReq({ message, confirmLabel, resolve }));
+  }
+
   useEffect(() => {
     (async () => {
-      const [roomsRes, typesRes, rbRes, ibRes, resRes, rrRes] = await Promise.all([
+      const [roomsRes, typesRes, rbRes, ibRes] = await Promise.all([
         supabase.from("rooms").select("*").eq("hotel_id", HOTEL_ID).order("number"),
         supabase.from("room_types").select("*").eq("hotel_id", HOTEL_ID),
         supabase.from("room_blocks").select("*").eq("hotel_id", HOTEL_ID).order("from_date"),
         supabase.from("inventory_blocks").select("*").eq("hotel_id", HOTEL_ID).order("from_date"),
-        supabase.from("reservations").select("*").eq("hotel_id", HOTEL_ID),
-        supabase.from("reservation_rooms").select("reservation_id, room_number"),
       ]);
-      if (roomsRes.error || typesRes.error || rbRes.error || ibRes.error || resRes.error || rrRes.error) {
-        setLoadError((roomsRes.error ?? typesRes.error ?? rbRes.error ?? ibRes.error ?? resRes.error ?? rrRes.error)?.message ?? "Không đọc được dữ liệu");
+      if (roomsRes.error || typesRes.error || rbRes.error || ibRes.error) {
+        setLoadError((roomsRes.error ?? typesRes.error ?? rbRes.error ?? ibRes.error)?.message ?? "Không đọc được dữ liệu");
         setLoading(false);
         return;
       }
@@ -174,32 +155,6 @@ export default function InventoryPage() {
         id: b.id, scope: b.scope as InventoryBlock["scope"],
         channelCode: b.channel_code ?? undefined, roomTypeId: b.room_type_id,
         from: b.from_date, to: b.to_date, reason: b.reason ?? undefined,
-      })));
-      const roomsMap = new Map<string, string[]>();
-      for (const row of rrRes.data ?? []) {
-        const list = roomsMap.get(row.reservation_id) ?? [];
-        list.push(row.room_number);
-        roomsMap.set(row.reservation_id, list);
-      }
-      setReservations((resRes.data ?? []).map((r) => ({
-        id: r.id,
-        guestName: r.guest_name,
-        guestPhone: r.guest_phone ?? "",
-        channelCode: r.channel_code,
-        paymentCollector: r.payment_collector,
-        roomNumbers: roomsMap.get(r.id) ?? [],
-        roomTypeId: r.room_type_id,
-        ratePlanId: r.rate_plan_id ?? "",
-        checkIn: r.check_in,
-        checkOut: r.check_out,
-        guests: (r.adults ?? 0) + (r.children ?? 0),
-        adults: r.adults,
-        children: r.children,
-        totalAmount: r.total_amount,
-        paidAmount: r.paid_amount,
-        status: r.status,
-        createdAt: String(r.booked_at).slice(0, 10),
-        note: r.note ?? undefined,
       })));
       setLoading(false);
     })();
@@ -262,138 +217,30 @@ export default function InventoryPage() {
     });
   }, [rows, tab, fFrom, fTo, fType, fChannel, fStatus, fSearch, roomTypes]);
 
-  function openBlockForm(b?: RoomBlock, presetRoom?: string, presetDate?: string) {
-    if (b) {
-      setEditingBlock(b);
-      setRbRoom(b.roomNumber); setRbFrom(b.from); setRbTo(b.to);
-      setRbKind(b.kind); setRbReason(b.reason ?? "");
-    } else {
-      setEditingBlock(null);
-      setRbRoom(presetRoom ?? rooms[0]?.number ?? "");
-      setRbFrom(presetDate ?? today); setRbTo(presetDate ?? today);
-      setRbKind("out_of_order"); setRbReason("");
-    }
-    setBlockOpen(true);
-  }
-
-  async function saveRoomBlock() {
-    if (!rbRoom || !rbFrom || !rbTo) { showToast("Chọn phòng và khoảng ngày.", "error"); return; }
-    if (rbTo < rbFrom) { showToast("Ngày đến phải từ ngày đi trở đi.", "error"); return; }
-    // Khong chan duoc phong dang co khach o trong khoang nay.
-    const check = validateBlock(reservations, rbRoom, rbFrom, rbTo);
-    if (!check.ok) { showToast(check.error ?? "Có lỗi xảy ra.", "error"); return; }
-    const reason = rbReason || (rbKind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng");
-    const label = rbKind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng";
-    if (editingBlock) {
-      const { error } = await supabase.from("room_blocks").update({
-        room_number: rbRoom, from_date: rbFrom, to_date: rbTo, kind: rbKind, reason,
-      }).eq("id", editingBlock.id);
-      if (error) { showToast("Lưu chặn phòng không thành công: " + error.message, "error"); return; }
-      setRoomBlocks((prev) => prev.map((b) => (b.id === editingBlock.id ? { ...b, roomNumber: rbRoom, from: rbFrom, to: rbTo, kind: rbKind, reason } : b)));
-      // Dong bo lai ca khoang cu (ngay duoc tra lai) lan khoang moi.
-      queueChannexDates([...rangeDates(editingBlock.from, editingBlock.to), ...rangeDates(rbFrom, rbTo)]);
-      writeAuditLog({ hotelId: HOTEL_ID, accountId: ACCOUNT_ID, action: "room_blocked", entityType: "room_block", entityId: editingBlock.id, summary: `Chặn phòng ${rbRoom} · ${fmtDate(rbFrom)} → ${fmtDate(rbTo)} (${label}: ${reason})` });
-      showToast("Đã lưu thay đổi chặn phòng.");
-    } else {
-      const nb: RoomBlock = { id: `blk-${Date.now()}`, roomNumber: rbRoom, from: rbFrom, to: rbTo, kind: rbKind, reason };
-      const { error } = await supabase.from("room_blocks").insert({
-        id: nb.id, hotel_id: HOTEL_ID, account_id: ACCOUNT_ID,
-        room_number: nb.roomNumber, from_date: nb.from, to_date: nb.to, kind: nb.kind, reason: nb.reason,
-      });
-      if (error) { showToast("Lưu chặn phòng không thành công: " + error.message, "error"); return; }
-      setRoomBlocks((prev) => [...prev, nb]);
-      if (nb.kind === "out_of_order") queueChannexDates(rangeDates(nb.from, nb.to));
-      writeAuditLog({ hotelId: HOTEL_ID, accountId: ACCOUNT_ID, action: "room_blocked", entityType: "room_block", entityId: nb.id, summary: `Chặn phòng ${nb.roomNumber} · ${fmtDate(nb.from)} → ${fmtDate(nb.to)} (${label}: ${nb.reason})` });
-      showToast("Đã chặn phòng.");
-    }
-    setBlockOpen(false);
-    setEditingBlock(null);
-  }
-
   async function deleteRoomBlock(id: string, silent = false) {
     const blk = roomBlocks.find((b) => b.id === id);
+    if (blk && !silent) {
+      const ok = await askConfirm(`Mở phòng ${blk.roomNumber} (${fmtDate(blk.from)} – ${fmtDate(blk.to)})? Phòng sẽ bán lại như bình thường.`, "Mở phòng");
+      if (!ok) return false;
+    }
     const { error } = await supabase.from("room_blocks").delete().eq("id", id);
-    if (error) { showToast("Xoá chặn phòng không thành công: " + error.message, "error"); return; }
+    if (error) { showToast("Xoá chặn phòng không thành công: " + error.message, "error"); return false; }
     setRoomBlocks((prev) => prev.filter((b) => b.id !== id));
     setSelected((prev) => { const next = new Set(prev); next.delete(`rb-${id}`); return next; });
     if (blk?.kind === "out_of_order") queueChannexDates(rangeDates(blk.from, blk.to));
     if (blk) writeAuditLog({ hotelId: HOTEL_ID, accountId: ACCOUNT_ID, action: "room_unblocked", entityType: "room_block", entityId: id, summary: `Mở phòng ${blk.roomNumber} · ${fmtDate(blk.from)} → ${fmtDate(blk.to)}` });
     if (!silent) showToast("Đã mở phòng.");
-  }
-
-  function openStopForm(b?: InventoryBlock) {
-    if (b) {
-      setEditingStop(b);
-      setSsScope(b.scope === "channel" ? "channels" : "all");
-      setSsChannels(b.channelCode ? [b.channelCode] : []);
-      setSsTypes([b.roomTypeId]);
-      setSsFrom(b.from); setSsTo(b.to); setSsReason(b.reason ?? "");
-    } else {
-      setEditingStop(null);
-      setSsScope("all"); setSsChannels([]);
-      setSsTypes(roomTypes.map((t) => t.id));
-      setSsFrom(today); setSsTo(today); setSsReason("");
-    }
-    setStopStep(1);
-    setStopOpen(true);
-  }
-
-  const ssCombos = useMemo(() => {
-    if (ssTypes.length === 0) return [];
-    const chans: (string | null)[] = ssScope === "all" ? [null] : ssChannels;
-    const out: { channelCode: string | null; roomTypeId: string }[] = [];
-    for (const ch of chans) for (const t of ssTypes) out.push({ channelCode: ch, roomTypeId: t });
-    return out;
-  }, [ssScope, ssChannels, ssTypes]);
-
-  function stopFormValid() {
-    if (ssTypes.length === 0) return "Chọn ít nhất 1 loại phòng.";
-    if (!ssFrom || !ssTo) return "Chọn khoảng ngày.";
-    if (ssTo < ssFrom) return "Ngày đến phải từ ngày đi trở đi.";
-    if (ssScope === "channels" && ssChannels.length === 0) return "Chọn ít nhất 1 kênh.";
-    return "";
-  }
-
-  async function saveStopSell() {
-    const err = stopFormValid();
-    if (err) { showToast(err, "error"); return; }
-    const created: InventoryBlock[] = [];
-    for (const c of ssCombos) {
-      const nb: InventoryBlock = {
-        id: `ib-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        scope: c.channelCode ? "channel" : "room_type",
-        channelCode: c.channelCode ?? undefined,
-        roomTypeId: c.roomTypeId,
-        from: ssFrom, to: ssTo, reason: ssReason || undefined,
-      };
-      const { error } = await supabase.from("inventory_blocks").insert({
-        id: nb.id, hotel_id: HOTEL_ID, account_id: ACCOUNT_ID,
-        scope: nb.scope, channel_code: nb.channelCode ?? null, room_type_id: nb.roomTypeId,
-        from_date: nb.from, to_date: nb.to, reason: nb.reason ?? null,
-      });
-      if (error) { showToast("Lưu đóng bán không thành công: " + error.message, "error"); return; }
-      created.push(nb);
-    }
-    // Sua dong cu: luu dong moi xong moi xoa dong cu.
-    if (editingStop) {
-      await supabase.from("inventory_blocks").delete().eq("id", editingStop.id);
-      setInvBlocks((prev) => prev.filter((b) => b.id !== editingStop.id));
-      writeAuditLog({ hotelId: HOTEL_ID, accountId: ACCOUNT_ID, action: "stop_sell_removed", entityType: "inventory_block", entityId: editingStop.id, summary: `Mở bán ${editingStop.scope === "channel" ? getChannelName(editingStop.channelCode ?? "") : "Tất cả kênh"} × ${roomTypeName(editingStop.roomTypeId)} · ${fmtDate(editingStop.from)} → ${fmtDate(editingStop.to)}` });
-    }
-    setInvBlocks((prev) => [...prev, ...created]);
-    queueChannexDates(rangeDates(ssFrom, ssTo));
-    for (const nb of created) {
-      writeAuditLog({ hotelId: HOTEL_ID, accountId: ACCOUNT_ID, action: "stop_sell_set", entityType: "inventory_block", entityId: nb.id, summary: `Đóng bán ${nb.scope === "channel" ? getChannelName(nb.channelCode ?? "") : "Tất cả kênh"} × ${roomTypeName(nb.roomTypeId)} · ${fmtDate(nb.from)} → ${fmtDate(nb.to)}${nb.reason ? ` (${nb.reason})` : ""}` });
-    }
-    showToast(editingStop ? "Đã lưu thay đổi đóng bán." : `Đã đóng bán (${created.length} dòng).`);
-    setStopOpen(false);
-    setEditingStop(null);
+    return true;
   }
 
   async function deleteInvBlock(id: string, silent = false) {
     const blk = invBlocks.find((b) => b.id === id);
+    if (blk && !silent) {
+      const ok = await askConfirm(`Xoá đóng bán ${blk.scope === "channel" ? getChannelName(blk.channelCode ?? "") : "Tất cả kênh"} × ${roomTypeName(blk.roomTypeId)} (${fmtDate(blk.from)} – ${fmtDate(blk.to)})? Kênh sẽ bán lại loại phòng này trong khoảng ngày đó.`, "Xoá");
+      if (!ok) return false;
+    }
     const { error } = await supabase.from("inventory_blocks").delete().eq("id", id);
-    if (error) { showToast("Xoá đóng bán không thành công: " + error.message, "error"); return; }
+    if (error) { showToast("Xoá đóng bán không thành công: " + error.message, "error"); return false; }
     setInvBlocks((prev) => prev.filter((b) => b.id !== id));
     setSelected((prev) => { const next = new Set(prev); next.delete(`ib-${id}`); return next; });
     if (blk) {
@@ -401,11 +248,14 @@ export default function InventoryPage() {
       writeAuditLog({ hotelId: HOTEL_ID, accountId: ACCOUNT_ID, action: "stop_sell_removed", entityType: "inventory_block", entityId: id, summary: `Mở bán ${blk.scope === "channel" ? getChannelName(blk.channelCode ?? "") : "Tất cả kênh"} × ${roomTypeName(blk.roomTypeId)} · ${fmtDate(blk.from)} → ${fmtDate(blk.to)}` });
     }
     if (!silent) showToast("Đã mở bán.");
+    return true;
   }
 
   async function deleteSelected() {
     const deletable = rows.filter((r) => selected.has(r.key) && !r.managedElsewhere);
     if (deletable.length === 0) { showToast("Không có dòng nào xoá được.", "error"); return; }
+    const ok = await askConfirm(`Xoá ${deletable.length} dòng đã chọn? Hành động này không hoàn tác được.`, "Xoá");
+    if (!ok) return;
     for (const r of deletable) {
       if (r.kind === "room") await deleteRoomBlock(r.rawId, true);
       else await deleteInvBlock(r.rawId, true);
@@ -427,7 +277,8 @@ export default function InventoryPage() {
       setTab("stop"); setFType(room.roomTypeId); setView("list");
       return;
     }
-    openBlockForm(undefined, room.number, date);
+    // O trong: sang Lich phong de chan phong (trang nay chi xem + xoa).
+    router.push(`/${HOTEL_ID}/calendar`);
   }
 
   if (loading) {
@@ -456,12 +307,12 @@ export default function InventoryPage() {
         <div>
           <h1 className="text-2xl font-bold text-ink">Chặn phòng & Đóng bán</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted">
-            Chặn phòng (phòng hỏng, tạm đóng) và đóng bán theo kênh / loại phòng. Chặn phòng cũng làm được từ Lịch phòng; đóng bán theo loạt làm ở Cập nhật giá hàng loạt (tab Hạn chế).
+            Bảng kiểm tra chung: mọi lần chặn phòng và đóng bán đang có. Chặn phòng mới làm ở Lịch phòng; đóng bán và hạn chế làm ở Lịch giá / Cập nhật giá hàng loạt.
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="cb-btn-ghost px-4 py-2 text-sm" onClick={() => openBlockForm()}>+ Chặn phòng</button>
-          <button className="cb-btn-primary px-4 py-2 text-sm" onClick={() => openStopForm()}>+ Đóng bán</button>
+          <Link href={`/${HOTEL_ID}/calendar`} className="cb-btn-ghost px-4 py-2 text-sm">+ Chặn phòng</Link>
+          <Link href={`/${HOTEL_ID}/rates/bulk?tab=restrictions&mode=stop_sell`} className="cb-btn-primary px-4 py-2 text-sm">+ Đóng bán</Link>
         </div>
       </div>
 
@@ -602,16 +453,7 @@ export default function InventoryPage() {
                     {r.managedElsewhere ? (
                       <span className="text-xs text-muted" title="Tắt bằng công tắc ở trang Kênh bán — bật lại công tắc ở đó để mở bán">Quản lý ở Kênh bán</span>
                     ) : (
-                      <span className="whitespace-nowrap">
-                        <button
-                          className="mr-3 font-medium text-primary hover:underline"
-                          onClick={() => {
-                            if (r.kind === "room") { const b = roomBlocks.find((x) => x.id === r.rawId); if (b) openBlockForm(b); }
-                            else { const b = invBlocks.find((x) => x.id === r.rawId); if (b) openStopForm(b); }
-                          }}
-                        >Sửa</button>
-                        <button className="font-medium text-danger hover:underline" onClick={() => { if (r.kind === "room") deleteRoomBlock(r.rawId); else deleteInvBlock(r.rawId); }}>{r.kind === "room" ? "Mở phòng" : "Xoá"}</button>
-                      </span>
+                      <button className="font-medium text-danger hover:underline" onClick={() => { if (r.kind === "room") deleteRoomBlock(r.rawId); else deleteInvBlock(r.rawId); }}>{r.kind === "room" ? "Mở phòng" : "Xoá"}</button>
                     )}
                   </td>
                 </tr>
@@ -665,7 +507,7 @@ export default function InventoryPage() {
                         ? `${blk.kind === "out_of_order" ? "Phòng hỏng" : "Tạm đóng"}: ${blk.reason ?? ""} (${fmtDate(blk.from)} – ${fmtDate(blk.to)})`
                         : stop
                           ? "Đóng bán loại phòng này ngày này — bấm để xem danh sách"
-                          : `${room.number} · ${fmtDate(d)} — bấm để chặn phòng`;
+                          : `${room.number} · ${fmtDate(d)} — bấm để sang Lịch phòng`;
                       return (
                         <td key={d} className="p-0.5">
                           <button
@@ -685,120 +527,8 @@ export default function InventoryPage() {
               </tbody>
             </table>
           </div>
-          <p className="mt-3 text-xs text-muted">Bấm ô trống để chặn phòng ngày đó; bấm ô đỏ để xem / mở phòng; bấm ô vàng để xem các lần đóng bán của loại phòng đó.</p>
+          <p className="mt-3 text-xs text-muted">Bấm ô trống để sang Lịch phòng chặn phòng ngày đó; bấm ô đỏ để xem / mở phòng; bấm ô vàng để xem các lần đóng bán của loại phòng đó.</p>
         </div>
-      )}
-
-      {/* Popup chan phong */}
-      {blockOpen && (
-        <Modal onClose={() => setBlockOpen(false)}>
-          <h2 className="text-lg font-bold text-ink">{editingBlock ? "Sửa chặn phòng" : "Chặn phòng mới"}</h2>
-          <div className="mt-4 flex flex-col gap-3">
-            <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
-              Phòng
-              <select className={inputSm} value={rbRoom} onChange={(e) => setRbRoom(e.target.value)}>
-                {rooms.map((r) => (<option key={r.number} value={r.number}>{r.number} · {roomTypeName(r.roomTypeId)}</option>))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
-              Loại
-              <select className={inputSm} value={rbKind} onChange={(e) => setRbKind(e.target.value as RoomBlock["kind"])}>
-                <option value="out_of_order">Phòng hỏng (trừ tồn, đẩy sang Channex)</option>
-                <option value="out_of_service">Tạm đóng (chỉ chặn xếp phòng trong PMS)</option>
-              </select>
-            </label>
-            <div>
-              <span className="text-xs font-semibold text-muted">Từ đêm → đến đêm</span>
-              <div className="mt-1"><DateRangePicker from={rbFrom} to={rbTo} onChange={(f, t) => { setRbFrom(f); setRbTo(t); }} fullWidth /></div>
-              <p className="mt-1 text-xs text-muted">{nights(rbFrom, rbTo)} đêm</p>
-            </div>
-            <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
-              Lý do
-              <input className={inputSm} placeholder="Lý do" value={rbReason} onChange={(e) => setRbReason(e.target.value)} />
-            </label>
-            <div className="flex flex-wrap gap-1.5">
-              {BLOCK_REASONS.map((r) => (
-                <button key={r} className="rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-muted hover:border-primary hover:text-primary" onClick={() => setRbReason(r)}>{r}</button>
-              ))}
-            </div>
-          </div>
-          <div className="mt-5 flex justify-end gap-2">
-            <button className="cb-btn-ghost px-4 py-2 text-sm" onClick={() => setBlockOpen(false)}>Huỷ</button>
-            <button className="cb-btn-primary px-4 py-2 text-sm" onClick={saveRoomBlock}>{editingBlock ? "Lưu thay đổi" : "Chặn phòng"}</button>
-          </div>
-        </Modal>
-      )}
-
-      {/* Popup dong ban (2 buoc) */}
-      {stopOpen && (
-        <Modal onClose={() => setStopOpen(false)} wide>
-          {stopStep === 1 ? (
-            <>
-              <h2 className="text-lg font-bold text-ink">{editingStop ? "Sửa đóng bán" : "Đóng bán mới"}</h2>
-              <div className="mt-4 flex flex-col gap-4">
-                <div>
-                  <span className="text-xs font-semibold text-muted">Phạm vi</span>
-                  <div className="mt-1 flex gap-2">
-                    <button className={chipBtn(ssScope === "all")} onClick={() => setSsScope("all")}>Tất cả kênh</button>
-                    <button className={chipBtn(ssScope === "channels")} onClick={() => setSsScope("channels")}>Chọn kênh</button>
-                  </div>
-                  {ssScope === "channels" && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {OTA_CHANNELS.map((c) => (
-                        <button key={c.code} className={chipBtn(ssChannels.includes(c.code))} onClick={() => setSsChannels((prev) => (prev.includes(c.code) ? prev.filter((x) => x !== c.code) : [...prev, c.code]))}>{c.name}</button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <span className="text-xs font-semibold text-muted">Loại phòng</span>
-                  <div className="mt-1 flex flex-wrap gap-1.5">
-                    {roomTypes.map((t) => (
-                      <button key={t.id} className={chipBtn(ssTypes.includes(t.id))} onClick={() => setSsTypes((prev) => (prev.includes(t.id) ? prev.filter((x) => x !== t.id) : [...prev, t.id]))}>{t.name}</button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <span className="text-xs font-semibold text-muted">Từ ngày → đến ngày</span>
-                  <div className="mt-1"><DateRangePicker from={ssFrom} to={ssTo} onChange={(f, t) => { setSsFrom(f); setSsTo(t); }} fullWidth /></div>
-                  <p className="mt-1 text-xs text-muted">{nights(ssFrom, ssTo)} đêm</p>
-                </div>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
-                  Lý do
-                  <input className={inputSm} placeholder="Lý do" value={ssReason} onChange={(e) => setSsReason(e.target.value)} />
-                </label>
-                <div className="flex flex-wrap gap-1.5">
-                  {STOP_REASONS.map((r) => (
-                    <button key={r} className="rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-muted hover:border-primary hover:text-primary" onClick={() => setSsReason(r)}>{r}</button>
-                  ))}
-                </div>
-              </div>
-              <div className="mt-5 flex justify-end gap-2">
-                <button className="cb-btn-ghost px-4 py-2 text-sm" onClick={() => setStopOpen(false)}>Huỷ</button>
-                <button className="cb-btn-primary px-4 py-2 text-sm" onClick={() => { const err = stopFormValid(); if (err) { showToast(err, "error"); return; } setStopStep(2); }}>Xem lại thay đổi →</button>
-              </div>
-            </>
-          ) : (
-            <>
-              <h2 className="text-lg font-bold text-ink">Xem lại thay đổi</h2>
-              <p className="mt-1 text-sm text-muted">Kiểm tra kỹ trước khi lưu — các dòng sau sẽ được tạo:</p>
-              <div className="mt-4 flex flex-col gap-2">
-                {ssCombos.map((c) => (
-                  <div key={`${c.channelCode ?? "all"}-${c.roomTypeId}`} className="flex items-center justify-between gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2 text-sm">
-                    <span><b>{c.channelCode ? getChannelName(c.channelCode) : "Tất cả kênh"}</b> × {roomTypeName(c.roomTypeId)}</span>
-                    <span className="whitespace-nowrap text-muted">{fmtDate(ssFrom)} – {fmtDate(ssTo)} ({nights(ssFrom, ssTo)} đêm)</span>
-                  </div>
-                ))}
-              </div>
-              {ssReason && <p className="mt-3 text-sm text-muted">Lý do: {ssReason}</p>}
-              <p className="mt-3 text-sm font-semibold text-ink">Tạo {ssCombos.length} dòng đóng bán.</p>
-              <div className="mt-5 flex justify-end gap-2">
-                <button className="cb-btn-ghost px-4 py-2 text-sm" onClick={() => setStopStep(1)}>← Quay lại</button>
-                <button className="cb-btn-primary px-4 py-2 text-sm" onClick={saveStopSell}>Xác nhận đóng bán</button>
-              </div>
-            </>
-          )}
-        </Modal>
       )}
 
       {/* Chi tiet 1 o chan phong tren lich */}
@@ -814,10 +544,19 @@ export default function InventoryPage() {
           </div>
           <div className="mt-5 flex justify-end gap-2">
             <button className="cb-btn-ghost px-4 py-2 text-sm" onClick={() => setCalBlock(null)}>Đóng</button>
-            <button className="cb-btn-ghost px-4 py-2 text-sm" onClick={() => { const b = calBlock; setCalBlock(null); openBlockForm(b); }}>Sửa</button>
-            <button className="cb-btn-primary px-4 py-2 text-sm" onClick={() => { const id = calBlock.id; setCalBlock(null); deleteRoomBlock(id); }}>Mở phòng</button>
+            <button className="cb-btn-primary px-4 py-2 text-sm" onClick={async () => { const ok = await deleteRoomBlock(calBlock.id); if (ok) setCalBlock(null); }}>Mở phòng</button>
           </div>
         </Modal>
+      )}
+
+      {/* Hop xac nhan dung chung */}
+      {confirmReq && (
+        <ConfirmDialog
+          message={confirmReq.message}
+          confirmLabel={confirmReq.confirmLabel}
+          onConfirm={() => { const r = confirmReq.resolve; setConfirmReq(null); r(true); }}
+          onCancel={() => { const r = confirmReq.resolve; setConfirmReq(null); r(false); }}
+        />
       )}
     </div>
   );

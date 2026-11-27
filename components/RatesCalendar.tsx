@@ -1,5 +1,6 @@
 "use client";
 // RATES19 — components/RatesCalendar.tsx (Lich gia kieu ezCloud)
+// RATEWEB1 — kenh mac dinh la Website (truoc la Agoda/Airbnb con sot tu luc test).
 // Bo nut tab 'Lich phong' khoi thanh tab (chi con 2 tab xem gia); Lich phong van vao duoc tu menu + nut tren thanh tren.
 // 2 tab: Ban phong theo kenh | Ban phong theo loai phong (mac dinh).
 // Moi loai phong chi 2 dong (Phong trong + Gia ban); ten loai phong om 2 dong (rowspan).
@@ -68,7 +69,7 @@ export default function RatesCalendar() {
   const [mainTab, setMainTab] = useState<MainTab>("byType");
   const [typeFilter, setTypeFilter] = useState<string | null>(null); // null = tat ca loai phong
   const [policyFilter, setPolicyFilter] = useState<string>("all");
-  const [selectedChannel, setSelectedChannel] = useState<string>("agoda");
+  const [selectedChannel, setSelectedChannel] = useState<string>("website");
   const [showAvailRow, setShowAvailRow] = useState(true);
   const [showHint, setShowHint] = useState(true);
   // Kênh đang xem của từng loại phòng ở tab "Bán phòng theo kênh" (mỗi dòng 1 dropdown riêng).
@@ -130,7 +131,7 @@ export default function RatesCalendar() {
   // Cua so Dong ban cap kenh & cap loai phong.
   const [invOpen, setInvOpen] = useState(false);
   const [ibScope, setIbScope] = useState<"channel" | "room_type">("channel");
-  const [ibChannel, setIbChannel] = useState<string>("airbnb");
+  const [ibChannel, setIbChannel] = useState<string>("website");
   const [ibType, setIbType] = useState<string>("deluxe");
   const [ibFrom, setIbFrom] = useState(TODAY);
   const [ibTo, setIbTo] = useState(addDays(TODAY, 2));
